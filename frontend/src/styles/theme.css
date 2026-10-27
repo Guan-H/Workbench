@@ -1,0 +1,71 @@
+:root {
+  color: #252a28;
+  background: #fafaf8;
+  font-family:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  --color-background: #fafaf8;
+  --color-surface: #ffffff;
+  --color-sidebar: #f2f3f0;
+  --color-primary: #39765b;
+  --color-primary-hover: #2e624a;
+  --color-selection: #e7efe9;
+  --color-text: #252a28;
+  --color-text-muted: #66706a;
+  --color-border: #e1e6e1;
+  --color-warning: #b66a13;
+  --color-danger: #b54747;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-background);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.startup-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.startup-panel {
+  width: min(100%, 560px);
+  padding: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.startup-panel h1 {
+  margin: 4px 0 12px;
+  font-size: clamp(24px, 5vw, 32px);
+}
+
+.startup-panel p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.7;
+}
+
+.startup-panel .eyebrow {
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}

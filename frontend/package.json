@@ -1,0 +1,33 @@
+{
+  "name": "private-space-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run type-check && npm run build-only",
+    "build-only": "vite build",
+    "type-check": "vue-tsc --build --force",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "pinia": "^3.0.3",
+    "vue": "^3.5.22",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^22.18.12",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/test-utils": "2.4.6",
+    "@vue/tsconfig": "^0.8.1",
+    "happy-dom": "^20.0.7",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4",
+    "vue-tsc": "^3.1.1"
+  }
+}

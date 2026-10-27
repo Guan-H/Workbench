@@ -1,0 +1,2 @@
+-- Flyway baseline for the confirmed project skeleton.
+-- Business tables are introduced with their owning module in later migrations.

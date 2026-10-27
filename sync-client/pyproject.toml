@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "privatespace-sync"
+version = "0.1.0"
+description = "Windows sync client for Private Space"
+requires-python = ">=3.13"
+
+[project.scripts]
+privatespace-sync = "privatespace_sync.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["privatespace_sync*"]

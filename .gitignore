@@ -1,0 +1,31 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Backend
+backend/target/
+.m2-cache/
+
+# Python
+sync-client/.venv/
+sync-client/.pytest_cache/
+sync-client/**/__pycache__/
+sync-client/build/
+sync-client/dist/
+sync-client/*.egg-info/
+
+# Local configuration and runtime data
+.env
+*.local
+data/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
