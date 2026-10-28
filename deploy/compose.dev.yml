@@ -1,12 +1,14 @@
+name: private-space
+
 services:
   mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:0f51e63e537a1f176423fa03ef559aabe6fa4372a53160a44bc7e75da7d15364
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Configure MYSQL_DATABASE in deploy/.env}
+      MYSQL_USER: ${MYSQL_USER:?Configure MYSQL_USER in deploy/.env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Configure MYSQL_PASSWORD in deploy/.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Configure MYSQL_ROOT_PASSWORD in deploy/.env}
       TZ: Asia/Shanghai
     command:
       - --character-set-server=utf8mb4
@@ -16,9 +18,7 @@ services:
     volumes:
       - private-space-mysql:/var/lib/mysql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD}
+      test: [CMD-SHELL, 'MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u $$MYSQL_USER -D $$MYSQL_DATABASE -e "SELECT 1" >/dev/null']
       interval: 10s
       timeout: 5s
       retries: 10

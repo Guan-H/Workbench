@@ -1,0 +1,20 @@
+name: private-space-integration
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:0f51e63e537a1f176423fa03ef559aabe6fa4372a53160a44bc7e75da7d15364
+    environment:
+      MYSQL_DATABASE: private_space_it
+      MYSQL_USER: private_space_it
+      MYSQL_PASSWORD: ${IT_DB_PASSWORD:?Run scripts/test-integration.ps1}
+      MYSQL_ROOT_PASSWORD: ${IT_ROOT_PASSWORD:?Run scripts/test-integration.ps1}
+    ports:
+      - "127.0.0.1::3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD=$$MYSQL_PASSWORD mysql --protocol=TCP -h 127.0.0.1 -u $$MYSQL_USER -D $$MYSQL_DATABASE -e "SELECT 1" >/dev/null']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 15s

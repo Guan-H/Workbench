@@ -1,0 +1,13 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "include": ["verification/**/*.ts"],
+  "compilerOptions": {
+    "types": ["node", "vite/client"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
+}

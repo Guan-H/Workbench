@@ -5,21 +5,45 @@ spring:
     url: ${DB_URL:jdbc:mysql://localhost:3306/private_space?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${DB_USERNAME:private_space}
     password: ${DB_PASSWORD:}
+    hikari:
+      connection-timeout: 3000
+      validation-timeout: 1000
   flyway:
     locations: classpath:db/migration
   jackson:
     time-zone: UTC
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 52MB
 
 server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
   shutdown: graceful
 
 management:
   endpoints:
     web:
+      base-path: /api/system
       exposure:
-        include: health,info
+        include: health
   endpoint:
     health:
+      show-details: never
+      show-components: never
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,db,privateStorage,diskSpace
+  health:
+    diskspace:
+      path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}
+
+private-space:
+  setup-token: ${PRIVATE_SPACE_SETUP_TOKEN:}
+  secure-cookie: ${PRIVATE_SPACE_SECURE_COOKIE:false}
+  allowed-origins: ${PRIVATE_SPACE_ALLOWED_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}
+  storage:
+    path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}

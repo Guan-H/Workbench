@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320">
+  <rect width="640" height="320" fill="#fafaf8"/>
+  <rect x="16" y="16" width="608" height="288" rx="12" fill="#fff" stroke="#d5ded7" stroke-width="2"/>
+  <rect x="16" y="16" width="608" height="64" rx="12" fill="#39765b"/>
+  <rect x="16" y="56" width="608" height="24" fill="#39765b"/>
+  <g font-family="Microsoft YaHei, sans-serif">
+    <text x="40" y="57" fill="#fff" font-size="24" font-weight="bold">M0 相对图片路径验收</text>
+    <rect x="40" y="106" width="72" height="72" rx="8" fill="#39765b"/>
+    <rect x="128" y="106" width="72" height="72" rx="8" fill="#e5a13a"/>
+    <rect x="216" y="106" width="72" height="72" rx="8" fill="#467ca5"/>
+    <circle cx="355" cy="142" r="32" fill="none" stroke="#39765b" stroke-width="10"/>
+    <text x="412" y="138" fill="#252a28" font-size="20">640 × 320 PNG</text>
+    <text x="412" y="166" fill="#66706a" font-size="14">中文 · 彩色图形 · 相对路径</text>
+    <text x="40" y="224" fill="#252a28" font-size="19">看到这段文字和彩色图形，说明图片已正常显示。</text>
+    <text x="40" y="264" fill="#66706a" font-size="14">独立验收素材，不包含账号、密码或私人内容。</text>
+  </g>
+</svg>
