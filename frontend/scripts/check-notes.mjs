@@ -7,6 +7,7 @@ import vue from '@vitejs/plugin-vue'
 import { checkNoteMoves } from './check-note-moves.mjs'
 import { checkNoteImports } from './check-note-imports.mjs'
 import { checkRecycleSelection } from './check-recycle-selection.mjs'
+import { checkNoteCreation } from './check-note-creation.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.NOTES_BACKEND
@@ -73,7 +74,7 @@ try {
     assert.equal((await request('/notes', 'POST', { path: 'CON.md', type: 'note', content: '' })).status, 400)
 
     await page.getByRole('button', { name: '写下第一篇笔记' }).click()
-    await page.getByLabel('笔记路径', { exact: true }).fill('中文 & 测试.md')
+    await page.getByLabel('笔记名称', { exact: true }).fill('中文 & 测试.md')
     await page.getByRole('button', { name: '创建', exact: true }).click()
     const editor = page.getByTestId('markdown-editor')
     await editor.waitFor()
@@ -198,16 +199,19 @@ try {
       await page.screenshot({ path: fileURLToPath(new URL(`workspace-${width}.png`, output)), fullPage: true })
     }
     await page.setViewportSize({ width: 1440, height: 960 })
+    const createState = await checkNoteCreation(page, request, output)
     const moveState = await checkNoteMoves(page, request, list, context, origin, output)
     await checkRecycleSelection(page, request, output)
     const importState = await checkNoteImports(page, request, context, origin, output)
-    await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, moveState, importState }))
+    await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, createState, moveState, importState }))
   } else {
     const state = JSON.parse(await readFile(new URL('state.json', output), 'utf8'))
     const note = await request('/notes/' + state.id)
     assert.equal(note.status, 200)
     assert.equal(note.body.content, '# 第一版\n\n中文内容 📝\n')
     assert.equal(note.body.favorite, true)
+    assert.equal((await request('/notes/' + state.createState.folderId)).body.path, '交互测试')
+    assert.equal((await request('/notes/' + state.createState.noteId)).body.path, state.createState.notePath)
     assert.ok((await request('/notes/' + state.id + '/history')).body.length >= 5)
     assert.equal((await request('/notes/' + state.moveState.id)).body.path, state.moveState.path)
     assert.equal((await request('/notes/' + state.moveState.child)).body.path, '归档/项目/子/内部.md')

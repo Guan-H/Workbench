@@ -91,6 +91,20 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .tree-row svg { color: var(--color-text-muted); }
 .tree-row.selected { background: var(--color-selection); color: var(--color-primary); }
 .tree-row.selected svg { color: var(--color-primary); }
+.tree-item { display: flex; align-items: center; margin-right: 6px; }
+.tree-item .tree-row { min-width: 0; flex: 1; width: auto; margin: 2px 0; padding: 6px; min-height: 38px; }
+.tree-toggle, .tree-toggle-space { width: 28px; flex-shrink: 0; }
+.tree-toggle { min-height: 38px; padding: 0; background: transparent; border: 0; }
+.current-folder { margin: 0 12px 8px; font-size: 11px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.root-drop-target.active { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-selection); }
+.file-context-menu { max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow: auto; }
+.context-location { margin: 4px 7px 7px; font-size: 11px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.create-dialog { display: flex; flex-direction: column; }
+.create-body { padding: 20px 24px 0; overflow: auto; min-height: 0; }
+.create-body > input { width: 100%; }
+.create-body > label:not(:first-child) { margin-top: 20px; }
+.create-path { overflow-wrap: anywhere; }
+.create-dialog > footer { padding: 0 24px 20px; flex-shrink: 0; }
 .root-drop-target { margin: 0 12px 8px; justify-content: flex-start; background: transparent; border: 1px dashed var(--color-border); color: var(--color-text-muted); font-size: 11px; }
 .tree-row.drop-target, .root-drop-target.drop-target { outline: 2px solid var(--color-primary); outline-offset: -2px; background: var(--color-selection); }
 .file-context-menu { position: fixed; z-index: 40; width: 192px; padding: 5px; border: 1px solid var(--color-border); border-radius: 6px; background: white; box-shadow: 0 6px 20px #252a2820; }

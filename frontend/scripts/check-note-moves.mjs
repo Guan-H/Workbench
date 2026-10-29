@@ -64,7 +64,8 @@ export async function checkNoteMoves(page, request, list, context, origin, outpu
   assert.ok(moved.content.includes(`![图片](../${attachment.path})`))
   assert.ok((await read(reference.id)).content.includes(`${encodeURIComponent('归档')}/${encodeURIComponent('已改名.md')}`))
   // Expand the destination and drag back to the explicit root target.
-  if (await row('归档').getAttribute('aria-expanded') !== 'true') await row('归档').click()
+  const archiveToggle = page.getByRole('button', { name: '展开文件夹：归档', exact: true })
+  if (await archiveToggle.count()) await archiveToggle.click()
   await row('归档/已改名.md').dragTo(page.getByRole('button', { name: '根目录 /', exact: true }))
   await page.getByRole('button', { name: '确认移动', exact: true }).click()
   await page.getByRole('dialog', { name: '移动文件', exact: true }).waitFor({ state: 'hidden' })

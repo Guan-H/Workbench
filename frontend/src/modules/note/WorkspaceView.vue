@@ -8,6 +8,7 @@ import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, ty
 import MarkdownEditor from './MarkdownEditor.vue'
 import FileTree from './FileTree.vue'
 import FileContextMenu from './FileContextMenu.vue'
+import CreateItemDialog from './CreateItemDialog.vue'
 import MoveNoteDialog from './MoveNoteDialog.vue'
 import ImportDirectoryDialog from './ImportDirectoryDialog.vue'
 import RecycleRestoreDialog from './RecycleRestoreDialog.vue'
@@ -58,12 +59,18 @@ function resizeKey(event: KeyboardEvent) {
 const query = ref('')
 const searchResults = ref<Note[]>([])
 const folder = ref('')
+const treeSelection = ref('')
+function selectFolder(path: string) {
+  folder.value = path
+  treeSelection.value = items.value.find(item => item.type === 'folder' && item.path === path)?.id ?? ''
+}
 const treeVisible = ref(true)
 const outlineVisible = ref(true)
 const mobileNav = ref(false)
-const modal = ref<'create' | 'history' | 'conflict' | null>(null)
-const createType = ref<'note' | 'folder'>('note')
-const createPath = ref('')
+const modal = ref<'history' | 'conflict' | null>(null)
+const createRequest = ref<{ type: 'note' | 'folder'; destination: string }>()
+const revealPath = ref('')
+const treeScroll = ref<HTMLElement>()
 const modalBusy = ref(false)
 const revisions = ref<Revision[]>([])
 const historic = ref<Note>()
@@ -82,10 +89,12 @@ function confirmAction(message: string, title = '确认操作', confirmLabel = '
     confirmation.value = { message, title, confirmLabel, answer: value => { confirmation.value = undefined; resolve(value) } }
   })
 }
-async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore') {
+async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore' | 'new-note' | 'new-folder') {
   const note = contextMenu.value?.note
+  const destination = note?.type === 'folder' ? note.path : contextMenu.value?.destination ?? ''
   contextMenu.value?.anchor.focus()
   contextMenu.value = undefined
+  if (action === 'new-note' || action === 'new-folder') { await openCreate(action === 'new-note' ? 'note' : 'folder', destination); return }
   if (!note) return
   if (action === 'restore') { await beginRecycle(note); return }
   if (action === 'delete') await removeNote(note)
@@ -93,9 +102,18 @@ async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore') {
 }
 const exportFeedback = ref('')
 const previewArea = ref<HTMLElement>()
-const contextMenu = ref<{ note: Note; x: number; y: number; anchor: HTMLElement }>()
+const contextMenu = ref<{ note?: Note; destination?: string; x: number; y: number; anchor: HTMLElement }>()
 const moveRequest = ref<{ note: Note; mode: 'rename' | 'move'; destination?: string; draftIds: string[] }>()
 const rootDragOver = ref(false)
+function blankContext(event: MouseEvent | KeyboardEvent, destination = folder.value) {
+  if (view.value === 'trash') return
+  if (event instanceof KeyboardEvent && (event.target !== event.currentTarget || event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))) return
+  event.preventDefault(); event.stopPropagation()
+  const anchor = event.currentTarget as HTMLElement
+  const bounds = anchor.getBoundingClientRect()
+  const mouse = event instanceof MouseEvent ? event : undefined
+  contextMenu.value = { destination, x: mouse?.clientX || bounds.left + 20, y: mouse?.clientY || bounds.top + 20, anchor }
+}
 function resultContext(event: MouseEvent | KeyboardEvent, note: Note) {
   if (event instanceof KeyboardEvent && event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
   event.preventDefault(); event.stopPropagation()
@@ -170,6 +188,7 @@ async function moved(note: Note) {
     try { applyNote(await api<Note>(`/notes/${current.value.id}`)) }
     catch (error) { problem.value = message(error) }
   }
+  treeSelection.value = note.id
   saveFeedback.value = { kind: 'success', text: '路径和可修复的相对链接已保存到服务器。' }
 }
 const dirty = computed(() => !!current.value && text.value !== savedText.value)
@@ -233,6 +252,7 @@ async function refresh() {
 function applyNote(note: Note) {
   saveFeedback.value = undefined
   current.value = note
+  treeSelection.value = note.id
   text.value = note.content ?? ''
   savedText.value = text.value
   pending = undefined
@@ -253,8 +273,9 @@ function applyNote(note: Note) {
 }
 
 async function openNote(note: Note) {
-  if (note.type === 'attachment') { window.open(`/api/v1/files/content?path=${encodeURIComponent(note.path)}`, '_blank', 'noopener,noreferrer'); return }
-  if (note.type === 'folder' || note.id === current.value?.id) return
+  if (note.type === 'attachment') { treeSelection.value = note.id; window.open(`/api/v1/files/content?path=${encodeURIComponent(note.path)}`, '_blank', 'noopener,noreferrer'); return }
+  if (note.type === 'folder') { selectFolder(note.path); return }
+  if (note.id === current.value?.id) { treeSelection.value = note.id; return }
   if (!await leaveNote()) return
   problem.value = ''
   try { applyNote(await api<Note>(`/notes/${note.id}`)); mobileNav.value = false }
@@ -338,30 +359,28 @@ function edit(value: string) {
   if (!conflict.value) timer = setTimeout(() => void saveNow(), 1000)
 }
 
-function openCreate(type: 'note' | 'folder') {
-  createType.value = type
-  createPath.value = (folder.value ? folder.value + '/' : '') + (type === 'note' ? '新建笔记.md' : '新建文件夹')
-  modal.value = 'create'
+async function openCreate(type: 'note' | 'folder', destination = folder.value) {
+  if (createRequest.value || !await leaveNote()) return
+  createRequest.value = { type, destination }
 }
-
-async function create() {
-  modalBusy.value = true
-  problem.value = ''
-  try {
-    if (!await leaveNote()) return
-    const note = await write<Note>('/notes', 'POST', { path: createPath.value, type: createType.value, content: '' })
-    await refresh()
-    if (note.type === 'note') applyNote(note)
-    else folder.value = note.path
-    modal.value = null
-  } catch (error) { problem.value = message(error) }
-  finally { modalBusy.value = false }
+async function created(note: Note) {
+  createRequest.value = undefined
+  view.value = 'notes'; query.value = ''
+  folder.value = note.type === 'folder' ? note.path : note.path.split('/').slice(0, -1).join('/')
+  await refresh()
+  if (note.type === 'note') applyNote(note)
+  treeSelection.value = note.id
+  revealPath.value = note.path
+  saveFeedback.value = { kind: 'success', text: `已创建${note.type === 'folder' ? '文件夹' : '笔记'}：${note.path}` }
+  await nextTick()
+  const row = treeScroll.value?.querySelector<HTMLElement>(`[data-file-id="${note.id}"]`)
+  row?.scrollIntoView({ block: 'nearest' }); row?.focus({ preventScroll: true })
 }
 
 async function switchView(next: typeof view.value) {
   if (!await leaveNote()) return
   view.value = next !== 'notes' && view.value === next ? 'notes' : next
-  folder.value = ''
+  selectFolder('')
   query.value = ''
   mobileNav.value = false
   if (view.value === 'trash') {
@@ -438,6 +457,7 @@ async function removeNote(note: Note) {
     if (!await confirmAction(detail, '删除文件', '移入回收站')) return
     await write(`/notes/${target.id}?baseVersion=${target.version}&fingerprint=${plan.fingerprint}`, 'DELETE')
     for (const item of plan.targets) localStorage.removeItem(draftKey(item.id))
+    if (plan.targets.some(item => item.id === treeSelection.value)) treeSelection.value = ''
     if (plan.targets.some(item => item.id === current.value?.id)) {
       current.value = undefined
       text.value = ''; savedText.value = ''; status.value = '已移入回收站'
@@ -540,7 +560,7 @@ function message(error: unknown) {
 function displayTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '—' }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || pending) { persistDraft(); event.preventDefault(); event.returnValue = '' } }
 function shortcut(event: KeyboardEvent) {
-  if (moveRequest.value || contextMenu.value || directoryImport.value || exportDialog.value || confirmation.value || recycleRequest.value || restoring.value) return
+  if (createRequest.value || moveRequest.value || contextMenu.value || directoryImport.value || exportDialog.value || confirmation.value || recycleRequest.value || restoring.value) return
   if (modal.value && event.key === 'Tab') {
     const controls = [...document.querySelectorAll<HTMLElement>('.modal button:not(:disabled), .modal input, .modal [tabindex="0"]')]
     const first = controls[0]
@@ -606,19 +626,20 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <aside v-show="treeVisible" class="file-sidebar">
       <div class="file-sidebar-title"><strong>{{ view === 'trash' ? '回收站' : '我的笔记' }}</strong><button class="icon-button" title="收起文件树" aria-label="收起文件树" @click="treeVisible = false"><ChevronsLeft :size="17" /></button></div>
       <div class="search-field"><Search :size="16" /><input id="note-search" v-model="query" placeholder="搜索笔记…" aria-label="搜索笔记" /><kbd>⌘ K</kbd></div>
-      <div class="file-actions"><button @click="openCreate('note')"><Plus :size="16" />新建笔记</button><button class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></button></div>
+      <div v-if="view !== 'trash'" class="file-actions"><button @click="openCreate('note')"><Plus :size="16" />新建笔记</button><button class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></button></div>
       <div v-if="view !== 'trash' && !query" class="quick-filters"><button :class="{ active: view === 'favorites' }" @click="switchView('favorites')"><Star :size="14" />收藏</button><button :class="{ active: view === 'recent' }" @click="switchView('recent')"><Clock3 :size="14" />最近访问</button></div>
       <div class="tree-heading"><span>{{ query ? '搜索结果' : view === 'trash' ? '已删除的内容' : '文件目录' }}</span><button class="icon-button" @click="refresh" title="刷新目录" aria-label="刷新目录"><RefreshCw :size="13" /></button></div>
-      <button v-if="view === 'notes' && !query" class="root-drop-target" :class="{ 'drop-target': rootDragOver }" @click="folder = ''" @dragover="rootOver" @dragleave="rootDragOver = false" @drop="rootDrop" title="点击切换根目录，或将文件拖到这里移回根目录">根目录 /</button>
-      <div class="tree-scroll">
+      <button v-if="view === 'notes' && !query" class="root-drop-target" :class="{ 'drop-target': rootDragOver, active: !treeSelection }" :aria-pressed="!treeSelection" @contextmenu="blankContext($event, '')" @keydown="blankContext($event, '')" @click="selectFolder('')" @dragover="rootOver" @dragleave="rootDragOver = false" @drop="rootDrop" title="点击切换根目录，或将文件拖到这里移回根目录">根目录 /</button>
+      <p v-if="view !== 'trash'" class="current-folder" :title="folder || '根目录 /'" role="status">新建位置：{{ folder || '根目录 /' }}</p>
+      <div ref="treeScroll" class="tree-scroll" tabindex="0" aria-label="文件目录空白区域" @contextmenu="blankContext($event)" @keydown="blankContext($event)">
         <p v-if="loading" class="sidebar-empty" role="status">正在加载目录…</p>
         <template v-else-if="query || view !== 'notes'">
           <button v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" aria-haspopup="menu" @click="view === 'trash' ? (note.type === 'folder' ? beginRecycle(note) : history(note)) : openNote(note)"><component :is="note.type === 'folder' ? Folder : FileText" :size="16" /><span>{{ note.path }}<small v-if="view === 'trash' && !note.deleted"> · 尚有待恢复子项</small></span></button>
           <p v-if="!(query || view === 'trash' ? searchResults : visibleItems).length" class="sidebar-empty">{{ view === 'trash' ? '回收站为空' : '暂无匹配的笔记' }}</p>
         </template>
-        <template v-else><FileTree :items="items.filter(item => !item.deleted)" :selected="current?.id" @open="openNote" @folder="folder = $event" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
+        <template v-else><FileTree :items="items.filter(item => !item.deleted)" :selected="treeSelection" :reveal-path="revealPath" @open="openNote" @folder="selectFolder" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
       </div>
-      <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><button @click="directoryImport = true"><Upload :size="15" />批量导入目录</button><button :disabled="exporting" @click="exportNotes"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small><small v-if="folder">当前目录：{{ folder }} <button @click="folder = ''">回到根目录</button></small></div>
+      <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><button @click="directoryImport = true"><Upload :size="15" />批量导入目录</button><button :disabled="exporting" @click="exportNotes"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small><small v-if="folder">当前目录：{{ folder }} <button @click="selectFolder('')">回到根目录</button></small></div>
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
@@ -644,6 +665,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <aside v-if="outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><button v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</button><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
     <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
+    <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" />
     <ExportNotesDialog v-if="exportDialog" :items="items" @close="exportDialog = false" @exported="exported" />
     <RecycleRestoreDialog v-if="recycleRequest" :note="recycleRequest" :items="items" @close="recycleRequest = undefined" @restored="recovered" />
     <FileContextMenu v-if="contextMenu" v-bind="contextMenu" :trash="view === 'trash'" @close="contextMenu = undefined" @action="fileAction" />
@@ -651,10 +673,9 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <ImportDirectoryDialog v-if="directoryImport" :items="items" :destination="folder" @close="directoryImport = false" @imported="refresh" />
     <input ref="attachmentInput" type="file" hidden @change="($event.target as HTMLInputElement).files?.[0] && upload(($event.target as HTMLInputElement).files![0]!)" />
     <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
-      <section class="modal" :class="{ 'wide-modal': modal !== 'create' }" role="dialog" aria-modal="true" :aria-label="modal === 'create' ? '新建内容' : modal === 'history' ? '笔记历史' : '处理冲突'">
-        <header><h2>{{ modal === 'create' ? createType === 'note' ? '新建笔记' : '新建文件夹' : modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><button class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></button></header>
-        <form v-if="modal === 'create'" @submit.prevent="create"><label for="create-path">{{ createType === 'note' ? '笔记路径' : '文件夹路径' }}</label><input id="create-path" v-model="createPath" required autofocus /><p class="field-help">使用 / 分隔已有文件夹层级。同名内容不会被覆盖。</p><p v-if="problem" class="error-message">{{ problem }}</p><footer><button type="button" @click="modal = null">取消</button><button class="primary" :disabled="modalBusy">{{ modalBusy ? '创建中…' : '创建' }}</button></footer></form>
-        <div v-else-if="modal === 'history'" class="history-layout"><div class="revision-list"><p v-if="modalBusy">正在读取历史…</p><button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" @click="selectRevision(revision.version)"><strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong><small>{{ displayTime(revision.createdAt) }}</small></button></div><div class="history-detail"><template v-if="historic"><p>历史内容 · {{ historic.path }}</p><p v-if="current?.type === 'folder'" class="field-help">目录恢复使用删除前的整树快照，包含本次一起删除的全部文件和子目录。</p><pre v-else>{{ historic.content }}</pre><button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button></template><p v-else>选择一个历史版本查看内容</p></div></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" :aria-label="modal === 'history' ? '笔记历史' : '处理冲突'">
+        <header><h2>{{ modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><button class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></button></header>
+        <div v-if="modal === 'history'" class="history-layout"><div class="revision-list"><p v-if="modalBusy">正在读取历史…</p><button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" @click="selectRevision(revision.version)"><strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong><small>{{ displayTime(revision.createdAt) }}</small></button></div><div class="history-detail"><template v-if="historic"><p>历史内容 · {{ historic.path }}</p><p v-if="current?.type === 'folder'" class="field-help">目录恢复使用删除前的整树快照，包含本次一起删除的全部文件和子目录。</p><pre v-else>{{ historic.content }}</pre><button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button></template><p v-else>选择一个历史版本查看内容</p></div></div>
         <div v-else class="conflict-detail"><p>删除线为服务器内容，新增内容为本机草稿。可关闭对话框，在编辑区完成手动合并后再提交。</p><pre><template v-for="(part, index) in difference" :key="index"><span :class="{ 'diff-added': part.added, 'diff-removed': part.removed }">{{ part.value }}</span></template></pre><footer><button @click="resolveConflict(true)">采用服务器版本</button><button class="primary" @click="resolveConflict(false)">提交当前草稿（以最新版本为基线）</button></footer></div>
       </section>
     </div>

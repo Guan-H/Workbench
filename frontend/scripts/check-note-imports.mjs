@@ -156,7 +156,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   await dialog.getByRole('heading', { name: '导入成功', exact: true }).waitFor()
   await page.screenshot({ path: fileURLToPath(new URL('import-success.png', output)) })
   await dialog.getByRole('button', { name: '完成', exact: true }).click()
-  await page.locator('.tree-row[data-file-path="批量目录"]').click()
+  await page.getByRole('button', { name: '展开文件夹：批量目录', exact: true }).click()
   await page.locator('.tree-row[data-file-path="批量目录/中文, 特殊.md"]').click()
   await page.waitForFunction(() => {
     const image = document.querySelector('.markdown-preview img[alt="相对图片"]')
