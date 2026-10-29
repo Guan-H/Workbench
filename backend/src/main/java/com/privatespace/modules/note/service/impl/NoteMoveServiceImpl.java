@@ -97,7 +97,7 @@ public class NoteMoveServiceImpl implements NoteMoveService {
             target = parent.path() + target.substring(target.lastIndexOf('/'));
         }
         if (target.equals(source.path())) throw new ApiException(400, "NO_CHANGE", "名称和目录没有变化。");
-        if (source.type().equals("note") && !target.endsWith(".md")) throw new ApiException(400, "INVALID_PATH", "笔记文件名必须以 .md 结尾。");
+        if (source.type().equals("note") && !target.toLowerCase(Locale.ROOT).endsWith(".md")) throw new ApiException(400, "INVALID_PATH", "笔记文件名必须以 .md 结尾。");
         if (source.type().equals("folder") && nested(target, source.path())) throw new ApiException(400, "INVALID_PATH", "不能把文件夹移动到自身或子文件夹中。");
         var catalog = mapper.moveCatalog();
         Map<String, NoteFileEntity> byPath = new HashMap<>();

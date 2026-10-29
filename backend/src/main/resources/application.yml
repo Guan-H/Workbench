@@ -15,9 +15,13 @@ spring:
   servlet:
     multipart:
       max-file-size: 50MB
-      max-request-size: 52MB
+      max-request-size: ${PRIVATE_SPACE_IMPORT_REQUEST_SIZE:1030MB}
 
 server:
+  tomcat:
+    max-part-count: 4100
+    max-parameter-count: 10000
+    max-swallow-size: ${PRIVATE_SPACE_IMPORT_REQUEST_SIZE:1030MB}
   address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
   shutdown: graceful
@@ -42,6 +46,9 @@ management:
       path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}
 
 private-space:
+  import:
+    max-files: ${PRIVATE_SPACE_IMPORT_MAX_FILES:2000}
+    max-bytes: ${PRIVATE_SPACE_IMPORT_MAX_BYTES:1073741824}
   setup-token: ${PRIVATE_SPACE_SETUP_TOKEN:}
   secure-cookie: ${PRIVATE_SPACE_SECURE_COOKIE:false}
   allowed-origins: ${PRIVATE_SPACE_ALLOWED_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}

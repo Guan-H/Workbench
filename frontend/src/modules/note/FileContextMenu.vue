@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { FolderInput, Pencil } from 'lucide-vue-next'
+import { FolderInput, Pencil, Trash2, RotateCcw } from 'lucide-vue-next'
 import type { Note } from '../../shared/api/client'
 
-const props = defineProps<{ note: Note; x: number; y: number; anchor: HTMLElement }>()
-const emit = defineEmits<{ close: []; action: [action: 'rename' | 'move'] }>()
+const props = withDefaults(defineProps<{ note: Note; x: number; y: number; anchor: HTMLElement; trash?: boolean }>(), { trash: false })
+const emit = defineEmits<{ close: []; action: [action: 'rename' | 'move' | 'delete' | 'restore'] }>()
 const menu = ref<HTMLElement>()
 const left = Math.max(8, Math.min(props.x, window.innerWidth - 200))
 const top = Math.max(8, Math.min(props.y, window.innerHeight - 120))
@@ -27,7 +27,11 @@ onBeforeUnmount(() => { window.removeEventListener('pointerdown', outside); wind
 </script>
 <template>
   <div ref="menu" role="menu" :aria-label="note.path + ' 的文件操作'" class="file-context-menu" :style="{ left: left + 'px', top: top + 'px' }" @keydown="key" @contextmenu.prevent>
-    <button role="menuitem" @click="emit('action', 'rename')"><Pencil :size="16" />重命名</button>
-    <button role="menuitem" @click="emit('action', 'move')"><FolderInput :size="16" />移动到…</button>
+    <button v-if="trash" role="menuitem" @click="emit('action', 'restore')"><RotateCcw :size="16" />恢复</button>
+    <template v-else>
+      <button role="menuitem" @click="emit('action', 'rename')"><Pencil :size="16" />重命名</button>
+      <button role="menuitem" @click="emit('action', 'move')"><FolderInput :size="16" />移动到…</button>
+      <button role="menuitem" class="danger-action" @click="emit('action', 'delete')"><Trash2 :size="16" />删除</button>
+    </template>
   </div>
 </template>

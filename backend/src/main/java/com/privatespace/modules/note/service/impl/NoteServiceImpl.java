@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -38,8 +39,12 @@ public class NoteServiceImpl implements NoteService {
     }
 
     public Map<String, Object> list(boolean deleted, String cursor, String query) {
+        return list(deleted, cursor, query, false);
+    }
+
+    public Map<String, Object> list(boolean deleted, String cursor, String query, boolean includeGroups) {
         String after = cursor == null || cursor.isEmpty() ? "" : UUID.fromString(cursor).toString();
-        var rows = mapper.list(deleted, after, query == null ? "" : query);
+        var rows = mapper.list(deleted, after, query == null ? "" : query, deleted && includeGroups);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("items", rows.stream().limit(200).map(row -> response(row, null)).toList());
         result.put("nextCursor", rows.size() > 200 ? rows.get(199).id() : null);
@@ -59,7 +64,7 @@ public class NoteServiceImpl implements NoteService {
         if (previous != null) return previous;
         String path = validatePath(request.path());
         if (!List.of("note", "folder").contains(request.type())) throw new ApiException(400, "UNSUPPORTED_FORMAT", "请选择笔记或文件夹。");
-        if ("note".equals(request.type()) && !path.endsWith(".md")) throw new ApiException(400, "INVALID_PATH", "笔记文件名应以 .md 结尾。");
+        if ("note".equals(request.type()) && !path.toLowerCase(Locale.ROOT).endsWith(".md")) throw new ApiException(400, "INVALID_PATH", "笔记文件名应以 .md 结尾。");
         parent(path);
         if (mapper.byPath(path) != null) throw new ApiException(409, "PATH_CONFLICT", "同名文件已存在或位于回收站，请更换名称。");
         byte[] bytes = content("note".equals(request.type()) ? request.content() : "");
@@ -92,15 +97,44 @@ public class NoteServiceImpl implements NoteService {
 
     @Transactional
     public NoteResponse delete(String id, String baseVersion, String operation) {
+        return delete(id, baseVersion, operation, null);
+    }
+
+    @Transactional
+    public com.privatespace.modules.note.dto.DeletePreviewResponse deletePreview(String id, String baseVersion) {
         mapper.lock();
-        var previous = previous(operation, "delete:" + id, baseVersion);
+        var current = required(id);
+        expected(current, baseVersion);
+        if (current.deleted()) throw new ApiException(409, "VERSION_CONFLICT", "内容已删除，请刷新目录。");
+        return deletionPlan(current);
+    }
+
+    private com.privatespace.modules.note.dto.DeletePreviewResponse deletionPlan(NoteFileEntity current) {
+        var affected = current.type().equals("folder") ? mapper.subtree(current.path()) : List.of(current);
+        var targets = affected.stream().map(file -> new com.privatespace.modules.note.dto.DeletePreviewResponse.Target(
+                file.id(), file.path(), file.type(), Long.toString(file.version()))).toList();
+        return new com.privatespace.modules.note.dto.DeletePreviewResponse(digest(json.writeValueAsBytes(targets)), targets);
+    }
+
+    @Transactional
+    public NoteResponse delete(String id, String baseVersion, String operation, String fingerprint) {
+        mapper.lock();
+        Object input = fingerprint == null ? baseVersion : List.of(baseVersion, fingerprint);
+        var previous = previous(operation, "delete:" + id, input);
         if (previous != null) return previous;
         var current = required(id);
         expected(current, baseVersion);
-        if ("folder".equals(current.type()) && mapper.children(current.path()) > 0) throw new ApiException(409, "FOLDER_NOT_EMPTY", "请先处理文件夹内的文件。");
-        mapper.update(id, current.version() + 1, current.objectId(), current.content(), current.size(), current.sha256(), true);
-        publish(id);
-        return remember(operation, "delete:" + id, baseVersion, read(id, false));
+        if (current.deleted()) throw new ApiException(409, "VERSION_CONFLICT", "内容已删除，请刷新目录。");
+        var plan = deletionPlan(current);
+        if (fingerprint != null && !fingerprint.equals(plan.fingerprint())) throw new ApiException(409, "PREVIEW_EXPIRED", "目录内容已变化，请重新确认删除范围。");
+        for (var target : plan.targets()) {
+            var file = required(target.id());
+            if (current.type().equals("folder")) mapper.deleteMember(new com.privatespace.modules.note.entity.DeleteMemberEntity(
+                    current.id(), current.version() + 1, file.id(), file.version(), file.version() + 1, file.path()));
+            mapper.update(file.id(), file.version() + 1, file.objectId(), file.content(), file.size(), file.sha256(), true);
+            publish(file.id());
+        }
+        return remember(operation, "delete:" + id, input, read(id, false));
     }
 
     @Transactional
@@ -111,6 +145,33 @@ public class NoteServiceImpl implements NoteService {
         if (previous != null) return previous;
         var current = required(id);
         expected(current, baseVersion);
+        if (current.type().equals("folder") && current.deleted()) {
+            var members = mapper.deleteMembers(current.id(), current.version());
+            if (!members.isEmpty()) {
+                var root = members.stream().filter(member -> member.fileId().equals(current.id())).findFirst().orElseThrow();
+                if (!Long.toString(root.beforeVersion()).equals(version)) throw new ApiException(409, "DIRECTORY_SNAPSHOT_REQUIRED", "请选择目录删除前的版本，恢复删除时的完整目录。");
+                parent(current.path());
+                for (var member : members) {
+                    var file = required(member.fileId());
+                    if (!file.deleted() || file.version() != member.deletedVersion() || !file.path().equals(member.path())) {
+                        throw new ApiException(409, "VERSION_CONFLICT", "目录中的内容已变化，未覆盖任何文件，请先核对回收站。");
+                    }
+                    var occupied = mapper.byPath(member.path());
+                    if (occupied != null && !occupied.id().equals(file.id())) throw new ApiException(409, "PATH_CONFLICT", "原路径存在重名内容，目录未恢复。");
+                }
+                // Read and verify each immutable historical object; any failure rolls back the whole tree.
+                for (var member : members) {
+                    var file = required(member.fileId());
+                    var historic = mapper.revision(file.id(), member.beforeVersion());
+                    if (historic == null || historic.deleted()) throw new ApiException(409, "HISTORY_UNAVAILABLE", "目录快照不完整，未恢复任何内容。");
+                    byte[] bytes = historic.objectId() == null ? new byte[0] : objects.read(historic.objectId());
+                    mapper.update(file.id(), file.version() + 1, historic.objectId(), file.type().equals("note") ? text(bytes) : null,
+                            bytes.length, historic.objectId() == null ? null : digest(bytes), false);
+                    publish(file.id());
+                }
+                return remember(operation, "restore:" + id, input, read(id, false));
+            }
+        }
         var historic = mapper.revision(id, Long.parseLong(version));
         if (historic == null || historic.deleted()) throw new ApiException(404, "NOT_FOUND", "可恢复版本不存在。");
         parent(current.path());
@@ -199,7 +260,7 @@ public class NoteServiceImpl implements NoteService {
         if (request.contentBase64() == null || request.contentBase64().length() > 70 * 1024 * 1024) throw new ApiException(413, "FILE_TOO_LARGE", "同步文件超出限额。");
         byte[] bytes = java.util.Base64.getDecoder().decode(request.contentBase64());
         if (!digest(bytes).equals(request.sha256())) throw new ApiException(400, "CHECKSUM_MISMATCH", "同步内容摘要校验失败，未发布版本。");
-        String type = current == null ? (path.endsWith(".md") ? "note" : "attachment") : current.type();
+        String type = current == null ? (path.toLowerCase(Locale.ROOT).endsWith(".md") ? "note" : "attachment") : current.type();
         if (bytes.length > ("note".equals(type) ? 1024 * 1024 : 50 * 1024 * 1024)) throw new ApiException(413, "FILE_TOO_LARGE", "同步文件超出限额。");
         String body = "note".equals(type) ? text(bytes) : null;
         if (current != null && current.sha256().equals(request.sha256())) return remember(operation, scope, request, read(current.id(), false));

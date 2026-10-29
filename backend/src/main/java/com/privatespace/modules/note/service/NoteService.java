@@ -9,10 +9,13 @@ import com.privatespace.modules.note.dto.SyncWriteRequest;
 
 public interface NoteService {
     Map<String, Object> list(boolean deleted, String cursor, String query);
+    Map<String, Object> list(boolean deleted, String cursor, String query, boolean includeGroups);
     NoteResponse read(String id, boolean track);
     NoteResponse create(WriteNoteRequest request, String operation);
     NoteResponse save(String id, WriteNoteRequest request, String operation);
     NoteResponse delete(String id, String baseVersion, String operation);
+    NoteResponse delete(String id, String baseVersion, String operation, String fingerprint);
+    com.privatespace.modules.note.dto.DeletePreviewResponse deletePreview(String id, String baseVersion);
     NoteResponse restore(String id, String version, String baseVersion, String operation);
     List<Map<String, Object>> history(String id);
     NoteResponse revision(String id, String version);

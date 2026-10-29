@@ -31,8 +31,9 @@ public class NoteController {
 
     @GetMapping
     public Map<String, Object> list(@RequestParam(defaultValue = "false") boolean deleted,
-            @RequestParam(defaultValue = "") String cursor, @RequestParam(defaultValue = "") String query) {
-        return service.list(deleted, cursor, query);
+            @RequestParam(defaultValue = "") String cursor, @RequestParam(defaultValue = "") String query,
+            @RequestParam(defaultValue = "false") boolean includeGroups) {
+        return service.list(deleted, cursor, query, includeGroups);
     }
 
     @GetMapping("/{id}")
@@ -49,8 +50,14 @@ public class NoteController {
     }
 
     @DeleteMapping("/{id}")
-    public NoteResponse delete(@PathVariable String id, @RequestParam String baseVersion, @RequestHeader("Idempotency-Key") String operation) {
-        return service.delete(id, baseVersion, operation);
+    public NoteResponse delete(@PathVariable String id, @RequestParam String baseVersion,
+            @RequestParam(required = false) String fingerprint, @RequestHeader("Idempotency-Key") String operation) {
+        return service.delete(id, baseVersion, operation, fingerprint);
+    }
+
+    @GetMapping("/{id}/delete-preview")
+    public com.privatespace.modules.note.dto.DeletePreviewResponse deletePreview(@PathVariable String id, @RequestParam String baseVersion) {
+        return service.deletePreview(id, baseVersion);
     }
 
     @GetMapping("/{id}/history")

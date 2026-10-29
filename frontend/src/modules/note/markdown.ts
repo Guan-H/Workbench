@@ -20,6 +20,11 @@ export function renderMarkdown(source: string, path: string) {
   const md = new MarkdownIt({ html: false, linkify: true, highlight(code, language) {
     return language && hljs.getLanguage(language) ? hljs.highlight(code, { language }).value : ''
   } }).use(taskLists, { enabled: false })
+  md.renderer.rules.heading_open = (tokens, index, options, _env, renderer) => {
+    const line = tokens[index]?.map?.[0]
+    if (line !== undefined) tokens[index]!.attrSet('data-source-line', String(line))
+    return renderer.renderToken(tokens, index, options)
+  }
   md.renderer.rules.image = (tokens, index) => {
     const token = tokens[index]!
     const target = relativePath(path, String(token.attrGet('src') ?? ''))
@@ -31,12 +36,12 @@ export function renderMarkdown(source: string, path: string) {
     const token = tokens[index]!
     const href = String(token.attrGet('href') ?? '')
     const target = relativePath(path, href)
-    if (target?.endsWith('.md')) { token.attrSet('href', '#'); token.attrSet('data-note-path', target) }
+    if (target && /\.md$/i.test(target)) { token.attrSet('href', '#'); token.attrSet('data-note-path', target) }
     else {
       if (target) token.attrSet('href', `/api/v1/files/content?path=${encodeURIComponent(target)}`)
       token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer')
     }
     return defaultLink ? defaultLink(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)
   }
-  return DOMPurify.sanitize(md.render(source), { FORBID_TAGS: ['style', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'], ADD_ATTR: ['data-note-path'] })
+  return DOMPurify.sanitize(md.render(source), { FORBID_TAGS: ['style', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'], ADD_ATTR: ['data-note-path', 'data-source-line'] })
 }

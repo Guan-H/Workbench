@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NotebookPen, FileText, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
+import { NotebookPen, FileText, Folder, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
   ChevronsLeft, PanelLeft, Columns2, Code2, Eye, Clock3, Star, Upload, X, ChevronRight, ListTree, Save,
-  FilePlus2, Paperclip, Menu, RotateCcw } from 'lucide-vue-next'
+  FilePlus2, Paperclip, Menu, RotateCcw, Download } from 'lucide-vue-next'
 import { diffLines } from 'diff'
-import { api, write, listNotes, ApiError, type Note, type Revision } from '../../shared/api/client'
+import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
 import MarkdownEditor from './MarkdownEditor.vue'
 import FileTree from './FileTree.vue'
 import FileContextMenu from './FileContextMenu.vue'
 import MoveNoteDialog from './MoveNoteDialog.vue'
+import ImportDirectoryDialog from './ImportDirectoryDialog.vue'
+import RecycleRestoreDialog from './RecycleRestoreDialog.vue'
+import ExportNotesDialog from './ExportNotesDialog.vue'
+import UploadProgressBar from '../../shared/UploadProgressBar.vue'
+import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import { renderMarkdown } from './markdown'
 
 const props = defineProps<{ username: string }>()
@@ -65,18 +70,64 @@ const historic = ref<Note>()
 const serverCopy = ref<Note>()
 const attachmentInput = ref<HTMLInputElement>()
 const importInput = ref<HTMLInputElement>()
+const directoryImport = ref(false)
+const exporting = ref(false)
+const uploadProgress = ref<UploadProgress>()
+const exportDialog = ref(false)
+const recycleRequest = ref<Note>()
+const restoring = ref(false)
+const confirmation = ref<{ message: string; title: string; confirmLabel: string; answer: (value: boolean) => void }>()
+function confirmAction(message: string, title = '确认操作', confirmLabel = '确认') {
+  return new Promise<boolean>(resolve => {
+    confirmation.value = { message, title, confirmLabel, answer: value => { confirmation.value = undefined; resolve(value) } }
+  })
+}
+async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore') {
+  const note = contextMenu.value?.note
+  contextMenu.value?.anchor.focus()
+  contextMenu.value = undefined
+  if (!note) return
+  if (action === 'restore') { await beginRecycle(note); return }
+  if (action === 'delete') await removeNote(note)
+  else await beginMove(note, action)
+}
+const exportFeedback = ref('')
 const previewArea = ref<HTMLElement>()
 const contextMenu = ref<{ note: Note; x: number; y: number; anchor: HTMLElement }>()
 const moveRequest = ref<{ note: Note; mode: 'rename' | 'move'; destination?: string; draftIds: string[] }>()
 const rootDragOver = ref(false)
 function resultContext(event: MouseEvent | KeyboardEvent, note: Note) {
-  if (view.value === 'trash') return
   if (event instanceof KeyboardEvent && event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
   event.preventDefault(); event.stopPropagation()
   const anchor = event.currentTarget as HTMLElement
   const bounds = anchor.getBoundingClientRect()
   const mouse = event instanceof MouseEvent ? event : undefined
   contextMenu.value = { note, x: mouse?.clientX || bounds.left + 20, y: mouse?.clientY || bounds.bottom, anchor }
+}
+
+async function beginRecycle(note: Note) {
+  if (restoring.value) return
+  if (note.type === 'folder') { recycleRequest.value = note; return }
+  restoring.value = true; problem.value = ''; status.value = '正在恢复文件…'
+  try {
+    const candidate = await api<RecycleCandidates>(`/recycle/${note.id}`)
+    const request: RecycleRequest = { baseVersion: candidate.baseVersion, mode: 'files', ids: [note.id], destination: 'original', target: '' }
+    const reviewed = await api<RecyclePreview>(`/recycle/${note.id}/preview`, { method: 'POST', body: JSON.stringify(request) })
+    await recovered(await write<RecycleResult>(`/recycle/${note.id}/restore`, 'POST', { ...request, fingerprint: reviewed.fingerprint }))
+  } catch (cause) { problem.value = message(cause); status.value = '恢复未完成，请核对回收站' }
+  finally { restoring.value = false }
+}
+async function recovered(result: RecycleResult) {
+  recycleRequest.value = undefined
+  let readProblem = ''
+  if (current.value?.deleted && result.ids.includes(current.value.id)) {
+    try { applyNote(await api<Note>(`/notes/${current.value.id}`)); modal.value = null }
+    catch (cause) { readProblem = '恢复已完成，但刷新内容失败：' + message(cause) }
+  }
+  await refresh()
+  if (readProblem) problem.value = readProblem
+  status.value = `已恢复 ${result.filesRestored} 个文件，补齐或恢复 ${result.foldersRestored} 个目录。`
+  saveFeedback.value = { kind: 'success', text: `已恢复 ${result.filesRestored} 个文件，补齐或恢复 ${result.foldersRestored} 个目录。` }
 }
 
 async function beginMove(note: Note, action: 'rename' | 'move', destination?: string) {
@@ -214,7 +265,7 @@ async function leaveNote() {
   if (!dirty.value && !pending) return true
   if (await saveNow()) return true
   persistDraft()
-  return window.confirm(draftStored ? '未提交内容已暂存在本浏览器。仍要切换吗？' : '草稿暂存失败，切换可能丢失内容。仍要切换吗？')
+  return confirmAction(draftStored ? '未提交内容已暂存在本浏览器。仍要切换吗？' : '草稿暂存失败，切换可能丢失内容。仍要切换吗？', '切换笔记', '仍要切换')
 }
 
 async function saveNow(): Promise<boolean> {
@@ -309,10 +360,11 @@ async function create() {
 
 async function switchView(next: typeof view.value) {
   if (!await leaveNote()) return
-  view.value = next
+  view.value = next !== 'notes' && view.value === next ? 'notes' : next
+  folder.value = ''
   query.value = ''
   mobileNav.value = false
-  if (next === 'trash') {
+  if (view.value === 'trash') {
     try { searchResults.value = await listNotes(true) } catch (error) { problem.value = message(error) }
   }
 }
@@ -325,7 +377,13 @@ async function history(note = current.value) {
   modalBusy.value = true
   modal.value = 'history'
   historic.value = undefined
-  try { revisions.value = await api<Revision[]>(`/notes/${note.id}/history`) }
+  try {
+    revisions.value = await api<Revision[]>(`/notes/${note.id}/history`)
+    if (note.type === 'folder' && note.deleted) {
+      const before = revisions.value.find(revision => revision.version === String(Number(current.value?.version ?? note.version) - 1) && !revision.deleted)
+      if (before) await selectRevision(before.version)
+    }
+  }
   catch (error) { problem.value = message(error) }
   finally { modalBusy.value = false }
 }
@@ -337,7 +395,9 @@ async function selectRevision(version: string) {
 }
 
 async function restore() {
-  if (!current.value || !historic.value || !window.confirm('恢复将创建一个新版本，已有历史继续保留。确认恢复？')) return
+  if (!current.value || !historic.value || !await confirmAction(current.value.type === 'folder'
+    ? `将“${current.value.path}”及本次删除的全部子目录、文件恢复到删除前的位置和内容？遇到路径或版本冲突时整批停止。`
+    : '恢复将创建一个新版本，已有历史继续保留。确认恢复？', '恢复历史版本', '确认恢复')) return
   modalBusy.value = true
   try {
     const restored = await write<Note>(`/notes/${current.value.id}/restore?version=${historic.value.version}&baseVersion=${current.value.version}`, 'POST')
@@ -351,13 +411,41 @@ async function restore() {
 }
 
 async function removeCurrent() {
-  if (!current.value || !await saveNow() || !window.confirm(`将“${currentTitle.value}”移入回收站？历史和附件仍将保留。`)) return
+  if (current.value) await removeNote(current.value)
+}
+
+async function removeNote(note: Note) {
+  if ((note.id === current.value?.id || note.type === 'folder' && current.value?.path.startsWith(note.path + '/')) && !await saveNow()) return
   try {
-    await write(`/notes/${current.value.id}?baseVersion=${current.value.version}`, 'DELETE')
-    localStorage.removeItem(draftKey(current.value.id))
-    current.value = undefined
-    text.value = ''; savedText.value = ''; status.value = '已移入回收站'
+    if (note.type === 'note' && note.id !== current.value?.id && localStorage.getItem(draftKey(note.id))) {
+      problem.value = '该笔记有本机草稿，请先打开并保存或处理草稿，再删除。'; return
+    }
+    const target = await api<Note>(`/notes/${note.id}`)
+    if (target.deleted) { problem.value = '内容已删除，请刷新目录。'; return }
+    let plan = await api<DeletePreview>(`/notes/${target.id}/delete-preview?baseVersion=${target.version}`)
+    if (plan.targets.some(item => item.id === current.value?.id) && (dirty.value || pending)) {
+      if (!await saveNow()) return
+      plan = await api<DeletePreview>(`/notes/${target.id}/delete-preview?baseVersion=${target.version}`)
+    }
+    for (const item of plan.targets) {
+      if (item.type === 'note' && item.id !== current.value?.id && localStorage.getItem(draftKey(item.id))) {
+        problem.value = `“${item.path}”有本机草稿，请先打开并处理后再删除目录。`; return
+      }
+    }
+    const detail = target.type === 'folder'
+      ? `确定将目录“${target.path}”及其中 ${plan.targets.filter(item => item.type !== 'folder').length} 个文件、${plan.targets.filter(item => item.type === 'folder').length - 1} 个子目录一起移入回收站？恢复时将还原本次删除的层级和内容。`
+      : `将“${target.path}”移入回收站？不会永久删除，历史和未删除的附件仍将保留。`
+    if (!await confirmAction(detail, '删除文件', '移入回收站')) return
+    await write(`/notes/${target.id}?baseVersion=${target.version}&fingerprint=${plan.fingerprint}`, 'DELETE')
+    for (const item of plan.targets) localStorage.removeItem(draftKey(item.id))
+    if (plan.targets.some(item => item.id === current.value?.id)) {
+      current.value = undefined
+      text.value = ''; savedText.value = ''; status.value = '已移入回收站'
+    }
+    if (folder.value === target.path || folder.value.startsWith(target.path + '/')) folder.value = ''
     await refresh()
+    await nextTick()
+    document.querySelector<HTMLElement>('[aria-label="刷新目录"]')?.focus()
   } catch (error) { problem.value = message(error) }
 }
 
@@ -376,9 +464,9 @@ async function showConflict() {
   catch (error) { problem.value = message(error) }
 }
 
-function resolveConflict(useServer: boolean) {
+async function resolveConflict(useServer: boolean) {
   if (!serverCopy.value || !current.value) return
-  if (!window.confirm(useServer ? '采用服务器版本将放弃本机草稿。确认？' : '将以最新服务器版本为基线提交当前草稿。请先确认已在编辑区完成合并。')) return
+  if (!await confirmAction(useServer ? '采用服务器版本将放弃本机草稿。确认？' : '将以最新服务器版本为基线提交当前草稿。请先确认已在编辑区完成合并。', '处理版本冲突', useServer ? '采用服务器版本' : '使用当前草稿')) return
   const local = text.value
   localStorage.removeItem(draftKey(current.value.id))
   applyNote(serverCopy.value)
@@ -402,14 +490,14 @@ async function upload(file: File) {
     const name = `${crypto.randomUUID()}.${extension}`
     const form = new FormData()
     form.append('file', file)
-    await api(`/files?path=${encodeURIComponent(assetFolder + '/' + name)}`, { method: 'POST', body: form, headers: { 'Idempotency-Key': crypto.randomUUID() } })
+    await uploadRequest(`/files?path=${encodeURIComponent(assetFolder + '/' + name)}`, form, value => { uploadProgress.value = value }, { 'Idempotency-Key': crypto.randomUUID() })
     const image = /^(png|jpg|jpeg|webp)$/.test(extension)
     const label = file.name.replace(/[\[\]\\]/g, '_')
     const newline = text.value.includes('\r\n') ? '\r\n' : '\n'
     edit(text.value + `${newline}${image ? '!' : ''}[${label}](assets/${name})${newline}`)
     await refresh()
   } catch (error) { problem.value = message(error) }
-  finally { modalBusy.value = false }
+  finally { modalBusy.value = false; uploadProgress.value = undefined }
 }
 
 async function imported(event: Event) {
@@ -418,13 +506,20 @@ async function imported(event: Event) {
   if (!file) return
   try {
     if (file.size > 1024 * 1024) throw new Error('Markdown 最大 1 MiB。')
-    if (!await leaveNote() || !window.confirm(`将“${file.name}”导入当前文件夹？同名文件不会被覆盖。`)) return
+    if (!await leaveNote() || !await confirmAction(`将“${file.name}”导入当前文件夹？同名文件不会被覆盖。`, '确认导入', '确认导入')) return
     const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer())
-    const note = await write<Note>('/notes', 'POST', { path: (folder.value ? folder.value + '/' : '') + file.name, type: 'note', content })
+    const note = await uploadRequest<Note>('/notes', JSON.stringify({ path: (folder.value ? folder.value + '/' : '') + file.name, type: 'note', content }), value => { uploadProgress.value = value }, { 'Idempotency-Key': crypto.randomUUID() })
     await refresh(); applyNote(note)
   } catch (error) { problem.value = message(error) }
-  finally { input.value = '' }
+  finally { input.value = ''; uploadProgress.value = undefined }
 }
+
+async function exportNotes() {
+  if (!await saveNow()) { problem.value = '当前笔记未保存，请先处理保存问题后再导出。'; return }
+  await refresh()
+  exportDialog.value = true
+}
+function exported() { exportDialog.value = false; exportFeedback.value = 'ZIP 已生成，已发起下载。' }
 
 function downloadDraft() {
   const url = URL.createObjectURL(new Blob([text.value], { type: 'text/markdown;charset=utf-8' }))
@@ -434,15 +529,18 @@ function downloadDraft() {
 
 async function logout() {
   if (!await leaveNote()) return
-  if (dirty.value && !window.confirm('退出会保留本机普通笔记草稿，此电脑上的同一账户重新登录后可恢复。确认退出？')) return
+  if (dirty.value && !await confirmAction('退出会保留本机普通笔记草稿，此电脑上的同一账户重新登录后可恢复。确认退出？', '退出登录', '确认退出')) return
   emit('logout')
 }
 
-function message(error: unknown) { return error instanceof Error ? error.message : '操作失败，请重试。' }
+function message(error: unknown) {
+  if (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) return '连接中断，请检查网络和后端服务后重试；尚未收到服务器成功确认。'
+  return error instanceof Error ? error.message : '操作失败，请重试。'
+}
 function displayTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '—' }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || pending) { persistDraft(); event.preventDefault(); event.returnValue = '' } }
 function shortcut(event: KeyboardEvent) {
-  if (moveRequest.value || contextMenu.value) return
+  if (moveRequest.value || contextMenu.value || directoryImport.value || exportDialog.value || confirmation.value || recycleRequest.value || restoring.value) return
   if (modal.value && event.key === 'Tab') {
     const controls = [...document.querySelectorAll<HTMLElement>('.modal button:not(:disabled), .modal input, .modal [tabindex="0"]')]
     const first = controls[0]
@@ -458,8 +556,19 @@ function shortcut(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); document.getElementById('note-search')?.focus() }
   if (event.key === 'Escape') { modal.value = null; mobileNav.value = false }
 }
-function jumpHeading(index: number) { previewArea.value?.querySelectorAll('h1,h2,h3,h4,h5,h6')[index]?.scrollIntoView({ behavior: 'auto', block: 'start' }) }
+function clearOutlineHighlight() { previewArea.value?.querySelectorAll('.outline-highlight').forEach(element => element.classList.remove('outline-highlight')) }
+async function jumpHeading(index: number) {
+  if (mode.value === 'edit' || innerWidth < 1024) mode.value = 'preview'
+  await nextTick()
+  clearOutlineHighlight()
+  const line = outline.value[index]?.line
+  const heading = previewArea.value?.querySelector<HTMLElement>(`[data-source-line="${line}"]`)
+  if (!heading) return
+  heading.classList.add('outline-highlight')
+  heading.scrollIntoView({ behavior: 'auto', block: 'start' })
+}
 function previewClick(event: MouseEvent) {
+  clearOutlineHighlight()
   const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-note-path]')
   if (!link) return
   event.preventDefault()
@@ -504,12 +613,12 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
       <div class="tree-scroll">
         <p v-if="loading" class="sidebar-empty" role="status">正在加载目录…</p>
         <template v-else-if="query || view !== 'notes'">
-          <button v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" :aria-haspopup="view !== 'trash' ? 'menu' : undefined" @click="view === 'trash' ? history(note) : openNote(note)"><FileText :size="16" /><span>{{ note.path }}</span></button>
+          <button v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" aria-haspopup="menu" @click="view === 'trash' ? (note.type === 'folder' ? beginRecycle(note) : history(note)) : openNote(note)"><component :is="note.type === 'folder' ? Folder : FileText" :size="16" /><span>{{ note.path }}<small v-if="view === 'trash' && !note.deleted"> · 尚有待恢复子项</small></span></button>
           <p v-if="!(query || view === 'trash' ? searchResults : visibleItems).length" class="sidebar-empty">{{ view === 'trash' ? '回收站为空' : '暂无匹配的笔记' }}</p>
         </template>
         <template v-else><FileTree :items="items.filter(item => !item.deleted)" :selected="current?.id" @open="openNote" @folder="folder = $event" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
       </div>
-      <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><small v-if="folder">当前目录：{{ folder }} <button @click="folder = ''">回到根目录</button></small></div>
+      <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><button @click="directoryImport = true"><Upload :size="15" />批量导入目录</button><button :disabled="exporting" @click="exportNotes"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small><small v-if="folder">当前目录：{{ folder }} <button @click="folder = ''">回到根目录</button></small></div>
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
@@ -517,6 +626,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
       <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><button v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></button><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
       <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" role="status" aria-live="polite" aria-atomic="true" data-testid="save-feedback"><Save :size="16" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存提示" aria-label="关闭保存提示"><X :size="15" /></button></div>
+      <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
       <template v-if="current && current.type === 'note' && !current.deleted">
         <div class="document-tab"><span><FileText :size="15" />{{ currentTitle }}<span v-if="dirty" class="unsaved-dot" title="有未提交修改" /></span></div>
         <div class="editor-toolbar"><div class="mode-switch" aria-label="编辑模式"><button :class="{ active: mode === 'split' }" @click="mode = 'split'"><Columns2 :size="14" />分栏</button><button :class="{ active: mode === 'edit' }" @click="mode = 'edit'"><Code2 :size="14" />编辑</button><button :class="{ active: mode === 'preview' }" @click="mode = 'preview'"><Eye :size="14" />预览</button></div><label v-if="mode === 'split'" class="split-width-control" title="点击滑轨调整编辑区宽度"><span>宽度</span><input v-model.number="splitPercent" type="range" min="20" max="80" aria-label="编辑区宽度" /></label><div class="editor-actions"><button class="icon-button" @click="toggleFavorite" :title="current.favorite ? '取消收藏' : '收藏笔记'" :aria-label="current.favorite ? '取消收藏' : '收藏笔记'" :class="{ starred: current.favorite }"><Star :size="17" /></button><button class="icon-button" @click="attachmentInput?.click()" title="上传附件" aria-label="上传附件" :disabled="modalBusy"><Paperclip :size="17" /></button><button title="查看笔记历史" @click="history()"><Clock3 :size="15" /><span>历史</span></button><button class="icon-button" @click="manualSave" title="保存笔记 (Ctrl+S)" aria-label="保存笔记" :disabled="saving"><Save :size="17" /></button><button class="icon-button" @click="removeCurrent" title="删除笔记" aria-label="删除笔记"><Trash2 :size="16" /></button><button class="icon-button" @click="outlineVisible = !outlineVisible" title="显示或隐藏大纲" aria-label="显示或隐藏大纲"><ListTree :size="17" /></button></div></div>
@@ -533,14 +643,18 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
 
     <aside v-if="outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><button v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</button><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
-    <FileContextMenu v-if="contextMenu" v-bind="contextMenu" @close="contextMenu = undefined" @action="beginMove(contextMenu!.note, $event)" />
+    <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
+    <ExportNotesDialog v-if="exportDialog" :items="items" @close="exportDialog = false" @exported="exported" />
+    <RecycleRestoreDialog v-if="recycleRequest" :note="recycleRequest" :items="items" @close="recycleRequest = undefined" @restored="recovered" />
+    <FileContextMenu v-if="contextMenu" v-bind="contextMenu" :trash="view === 'trash'" @close="contextMenu = undefined" @action="fileAction" />
     <MoveNoteDialog v-if="moveRequest" v-bind="moveRequest" :items="items" @close="moveRequest = undefined" @moved="moved" />
+    <ImportDirectoryDialog v-if="directoryImport" :items="items" :destination="folder" @close="directoryImport = false" @imported="refresh" />
     <input ref="attachmentInput" type="file" hidden @change="($event.target as HTMLInputElement).files?.[0] && upload(($event.target as HTMLInputElement).files![0]!)" />
     <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
       <section class="modal" :class="{ 'wide-modal': modal !== 'create' }" role="dialog" aria-modal="true" :aria-label="modal === 'create' ? '新建内容' : modal === 'history' ? '笔记历史' : '处理冲突'">
         <header><h2>{{ modal === 'create' ? createType === 'note' ? '新建笔记' : '新建文件夹' : modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><button class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></button></header>
         <form v-if="modal === 'create'" @submit.prevent="create"><label for="create-path">{{ createType === 'note' ? '笔记路径' : '文件夹路径' }}</label><input id="create-path" v-model="createPath" required autofocus /><p class="field-help">使用 / 分隔已有文件夹层级。同名内容不会被覆盖。</p><p v-if="problem" class="error-message">{{ problem }}</p><footer><button type="button" @click="modal = null">取消</button><button class="primary" :disabled="modalBusy">{{ modalBusy ? '创建中…' : '创建' }}</button></footer></form>
-        <div v-else-if="modal === 'history'" class="history-layout"><div class="revision-list"><p v-if="modalBusy">正在读取历史…</p><button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" @click="selectRevision(revision.version)"><strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong><small>{{ displayTime(revision.createdAt) }}</small></button></div><div class="history-detail"><template v-if="historic"><p>历史内容 · {{ historic.path }}</p><pre>{{ historic.content }}</pre><button class="primary" @click="restore" :disabled="historic.deleted || modalBusy"><RotateCcw :size="16" />恢复为新版本</button></template><p v-else>选择一个历史版本查看内容</p></div></div>
+        <div v-else-if="modal === 'history'" class="history-layout"><div class="revision-list"><p v-if="modalBusy">正在读取历史…</p><button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" @click="selectRevision(revision.version)"><strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong><small>{{ displayTime(revision.createdAt) }}</small></button></div><div class="history-detail"><template v-if="historic"><p>历史内容 · {{ historic.path }}</p><p v-if="current?.type === 'folder'" class="field-help">目录恢复使用删除前的整树快照，包含本次一起删除的全部文件和子目录。</p><pre v-else>{{ historic.content }}</pre><button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button></template><p v-else>选择一个历史版本查看内容</p></div></div>
         <div v-else class="conflict-detail"><p>删除线为服务器内容，新增内容为本机草稿。可关闭对话框，在编辑区完成手动合并后再提交。</p><pre><template v-for="(part, index) in difference" :key="index"><span :class="{ 'diff-added': part.added, 'diff-removed': part.removed }">{{ part.value }}</span></template></pre><footer><button @click="resolveConflict(true)">采用服务器版本</button><button class="primary" @click="resolveConflict(false)">提交当前草稿（以最新版本为基线）</button></footer></div>
       </section>
     </div>

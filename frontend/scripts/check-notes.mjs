@@ -5,6 +5,8 @@ import { chromium } from 'playwright'
 import { createServer } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { checkNoteMoves } from './check-note-moves.mjs'
+import { checkNoteImports } from './check-note-imports.mjs'
+import { checkRecycleSelection } from './check-recycle-selection.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.NOTES_BACKEND
@@ -28,8 +30,10 @@ try {
   const page = await context.newPage()
   activePage = page
   const errors = []
+  page.on('requestfailed', request => console.error('Browser request failed:', request.method(), new URL(request.url()).pathname, request.failure()?.errorText))
   page.on('pageerror', error => { errors.push(error.message); console.error('Browser error:', error.message) })
-  page.on('dialog', dialog => dialog.accept())
+  const nativeDialogs = []
+  page.on('dialog', dialog => { nativeDialogs.push(dialog.type()); void dialog.dismiss() })
   await page.goto(origin)
   await page.getByLabel('用户名', { exact: true }).fill('notes-it')
   await page.getByLabel('登录口令', { exact: true }).fill(password)
@@ -134,6 +138,7 @@ try {
     assert.equal((await request('/notes/' + note.id)).body.content, body.content)
     await page.getByRole('button', { name: '对比并处理', exact: true }).click()
     await page.getByRole('button', { name: '采用服务器版本', exact: true }).click()
+    await page.getByRole('alertdialog', { name: '处理版本冲突', exact: true }).getByRole('button', { name: '采用服务器版本', exact: true }).click()
     await poll(() => editor.innerText(), value => value.includes('来自另一端'), 'conflict resolve')
 
     await context.setOffline(true)
@@ -148,11 +153,13 @@ try {
     await page.getByRole('button', { name: '历史', exact: true }).click()
     await page.getByRole('button', { name: /^版本 2 / }).click()
     await page.getByRole('button', { name: '恢复为新版本', exact: true }).click()
+    await page.getByRole('alertdialog', { name: '恢复历史版本', exact: true }).getByRole('button', { name: '确认恢复', exact: true }).click()
     await poll(() => editor.innerText(), value => value.includes('第一版'), 'history restore')
     await page.getByRole('button', { name: '收藏笔记', exact: true }).click()
     await poll(list, items => items.some(item => item.id === note.id && item.favorite), 'favorite')
 
     await page.locator('input[type=file][accept=".md"]').setInputFiles({ name: '往返.md', mimeType: 'text/markdown', buffer: Buffer.from(fixture) })
+    await page.getByRole('alertdialog', { name: '确认导入' }).getByRole('button', { name: '确认导入', exact: true }).click()
     const imported = await poll(list, items => items.some(item => item.path === '往返.md'), 'import')
     const importedNote = imported.find(item => item.path === '往返.md')
     assert.equal((await request('/notes/' + importedNote.id)).body.content, fixture)
@@ -160,11 +167,13 @@ try {
     const download = await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent('往返.md'))
     assert.deepEqual(await download.body(), Buffer.from(fixture))
     await page.getByRole('button', { name: '删除笔记', exact: true }).click()
+    await page.getByRole('alertdialog', { name: '删除文件', exact: true }).getByRole('button', { name: '移入回收站', exact: true }).click()
     await page.getByText('已移入回收站', { exact: true }).waitFor()
     await page.getByRole('button', { name: '回收站', exact: true }).click()
     await page.getByRole('button', { name: '往返.md', exact: true }).click()
     await page.getByRole('button', { name: /^版本 1 / }).click()
     await page.getByRole('button', { name: '恢复为新版本', exact: true }).click()
+    await page.getByRole('alertdialog', { name: '恢复历史版本', exact: true }).getByRole('button', { name: '确认恢复', exact: true }).click()
     await page.getByTestId('markdown-editor').waitFor()
     const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
     await page.getByRole('button', { name: '上传附件', exact: true }).click()
@@ -190,7 +199,9 @@ try {
     }
     await page.setViewportSize({ width: 1440, height: 960 })
     const moveState = await checkNoteMoves(page, request, list, context, origin, output)
-    await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, moveState }))
+    await checkRecycleSelection(page, request, output)
+    const importState = await checkNoteImports(page, request, context, origin, output)
+    await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, moveState, importState }))
   } else {
     const state = JSON.parse(await readFile(new URL('state.json', output), 'utf8'))
     const note = await request('/notes/' + state.id)
@@ -201,6 +212,10 @@ try {
     assert.equal((await request('/notes/' + state.moveState.id)).body.path, state.moveState.path)
     assert.equal((await request('/notes/' + state.moveState.child)).body.path, '归档/项目/子/内部.md')
     assert.equal((await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent(state.attachment))).status(), 200)
+    const importDownload = await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent(state.importState.path))
+    assert.equal(importDownload.status(), 200)
+    const { createHash } = await import('node:crypto')
+    assert.equal(createHash('sha256').update(await importDownload.body()).digest('hex'), state.importState.sha256)
     await page.getByRole('button', { name: state.path, exact: true }).click()
     await page.getByTestId('markdown-editor').waitFor()
     await page.getByRole('button', { name: '退出登录', exact: true }).click()
@@ -208,6 +223,7 @@ try {
     assert.equal((await context.request.get(origin + '/api/v1/notes')).status(), 401)
   }
   assert.deepEqual(errors, [])
+  assert.deepEqual(nativeDialogs, [], 'all in-page confirmation flows use application dialogs')
   console.log('PASS: notes-' + phase)
 } catch (error) {
   if (activePage) {
