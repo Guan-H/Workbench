@@ -23,6 +23,9 @@ final class MarkdownLinkRewriter {
     private static final Pattern FRONTMATTER = Pattern.compile("\\A\\uFEFF?---\\r?\\n.*?\\r?\\n(?:---|\\.\\.\\.)[ \\t]*(?:\\r?\\n|$)", Pattern.DOTALL);
     private static final Pattern INLINE = Pattern.compile("\\]\\([ \\t]*(?:<([^<>\\r\\n]*)>|([^\\s<>]*?))(?:[ \\t]+(?:\"[^\"\\r\\n]*\"|'[^'\\r\\n]*'|\\([^()\\r\\n]*\\)))?[ \\t]*\\)$");
     private static final Pattern REFERENCE = Pattern.compile("^ {0,3}\\[[^\\]\\r\\n]+\\]:[ \\t]*(?:<([^<>\\r\\n]*)>|([^\\s<>]+))");
+    private static final Pattern WIKI = Pattern.compile("!?\\[\\[([^\\]\\r\\n]+)]]");
+    private static final Pattern HTML_DESTINATION = Pattern.compile(
+            "(?i)<(?:a|img)\\b[^>]*?\\b(?:href|src)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))");
     private final Parser parser = Parser.builder().includeSourceSpans(IncludeSourceSpans.BLOCKS_AND_INLINES).build();
 
     record Result(String content, List<LinkChange> links, List<String> warnings) { }
@@ -65,8 +68,14 @@ final class MarkdownLinkRewriter {
                 edits.put(start, new Edit(start, end, replacement, new LinkChange(span.getLineIndex() + 1, destination, replacement)));
             }
         });
-        if (source.contains("[[")) warnings.add("含 Obsidian 双链，双链名称不会自动修改。");
-        if (source.matches("(?s).*(?i:<a\\s|<img\\s).*")) warnings.add("含 HTML 链接写法，不会自动修改。");
+        boolean sourceMoved = !oldPath.equals(newPath);
+        if (source.contains("[[") && (sourceMoved || containsMovedWikiLink(source, catalog, paths))) {
+            warnings.add("含指向本次移动内容的 Obsidian 双链，双链名称不会自动修改。");
+        }
+        if (source.matches("(?s).*(?i:<a\\s|<img\\s).*")
+                && (sourceMoved || containsMovedHtmlLink(source, oldPath, catalog, paths))) {
+            warnings.add("含指向本次移动内容的 HTML 链接写法，不会自动修改。");
+        }
         StringBuilder result = new StringBuilder(source);
         edits.values().stream().sorted(Comparator.comparingInt(Edit::start).reversed())
                 .forEach(edit -> result.replace(edit.start(), edit.end(), edit.text()));
@@ -80,10 +89,21 @@ final class MarkdownLinkRewriter {
         for (char separator : new char[] {'?', '#'}) { int index = destination.indexOf(separator); if (index >= 0) suffix = Math.min(suffix, index); }
         String target;
         try { target = URLDecoder.decode(destination.substring(0, suffix).replace("+", "%2B"), StandardCharsets.UTF_8); }
-        catch (IllegalArgumentException exception) { warnings.add("链接含无效编码，请手动检查。"); return destination; }
+        catch (IllegalArgumentException exception) {
+            if (!oldPath.equals(newPath) || mentionsMovedPath(destination, catalog, paths)) {
+                warnings.add("链接含无效编码，请手动检查。");
+            }
+            return destination;
+        }
         String resolved = resolve(oldPath, target);
         var file = resolved == null ? null : catalog.get(resolved.toLowerCase(Locale.ROOT));
-        if (file == null || file.deleted()) { warnings.add("未找到相对链接目标：" + destination); return destination; }
+        boolean sourceMoved = !oldPath.equals(newPath);
+        if (file == null || file.deleted()) {
+            if (sourceMoved) warnings.add("未找到相对链接目标：" + destination);
+            return destination;
+        }
+        boolean targetMoved = paths.containsKey(file.id()) && !paths.get(file.id()).equals(file.path());
+        if (!sourceMoved && !targetMoved) return destination;
         String targetPath = paths.getOrDefault(file.id(), file.path());
         if (targetPath.equals(resolve(newPath, target))) return destination;
         var from = new ArrayList<>(Arrays.asList(newPath.split("/")));
@@ -95,6 +115,70 @@ final class MarkdownLinkRewriter {
         for (int index = common; index < from.size(); index++) relative.add("..");
         for (int index = common; index < to.size(); index++) relative.add(URLEncoder.encode(to.get(index), StandardCharsets.UTF_8).replace("+", "%20").replace("%7E", "~"));
         return String.join("/", relative) + destination.substring(suffix);
+    }
+
+    private boolean containsMovedWikiLink(String source, Map<String, NoteFileEntity> catalog, Map<String, String> paths) {
+        var matcher = WIKI.matcher(source);
+        while (matcher.find()) {
+            String target = matcher.group(1).split("[|#]", 2)[0].trim().replace('\\', '/');
+            for (var file : catalog.values()) {
+                if (moved(file, paths) && wikiTargetMatches(target, file.path())) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsMovedHtmlLink(String source, String sourcePath,
+            Map<String, NoteFileEntity> catalog, Map<String, String> paths) {
+        var matcher = HTML_DESTINATION.matcher(source);
+        while (matcher.find()) {
+            String destination = matcher.group(1) != null ? matcher.group(1)
+                    : matcher.group(2) != null ? matcher.group(2) : matcher.group(3);
+            if (destination.isEmpty() || destination.startsWith("#")
+                    || destination.matches("(?s)^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|/|\\\\).*$")) continue;
+            int suffix = destination.length();
+            for (char separator : new char[] {'?', '#'}) {
+                int index = destination.indexOf(separator);
+                if (index >= 0) suffix = Math.min(suffix, index);
+            }
+            String target;
+            try {
+                target = URLDecoder.decode(destination.substring(0, suffix).replace("+", "%2B"), StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException ignored) {
+                continue;
+            }
+            String resolved = resolve(sourcePath, target);
+            for (var file : catalog.values()) {
+                if (moved(file, paths) && file.path().equalsIgnoreCase(resolved)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean moved(NoteFileEntity file, Map<String, String> paths) {
+        return paths.containsKey(file.id()) && !paths.get(file.id()).equals(file.path());
+    }
+
+    private boolean mentionsMovedPath(String text, Map<String, NoteFileEntity> catalog, Map<String, String> paths) {
+        String normalized = text.toLowerCase(Locale.ROOT).replace('\\', '/');
+        for (var file : catalog.values()) {
+            if (!moved(file, paths)) continue;
+            String path = file.path().toLowerCase(Locale.ROOT);
+            String name = path.substring(path.lastIndexOf('/') + 1);
+            if (normalized.contains(path) || normalized.contains(name)) return true;
+        }
+        return false;
+    }
+
+    private boolean wikiTargetMatches(String target, String path) {
+        String normalizedTarget = withoutMarkdownExtension(target);
+        String normalizedPath = withoutMarkdownExtension(path);
+        String name = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1);
+        return normalizedTarget.equalsIgnoreCase(normalizedPath) || normalizedTarget.equalsIgnoreCase(name);
+    }
+
+    private String withoutMarkdownExtension(String value) {
+        return value.toLowerCase(Locale.ROOT).endsWith(".md") ? value.substring(0, value.length() - 3) : value;
     }
 
     private String resolve(String path, String target) {

@@ -42,10 +42,12 @@ class NotesIT {
                 verificationJdbc.execute("ALTER TABLE note_file DROP CHECK verify_import_failure");
             }
             verifyExportIntegrity(context);
+            verifyUnrelatedRenamePreview(context);
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) sync(context, "write");
             verifyMoveRollback(context);
             verifyDirectoryRecycle(context);
             verifySelectiveRecovery(context);
+            verifyRetention(context);
             var jdbc = context.getBean(JdbcTemplate.class);
             assertThat(jdbc.queryForObject("SELECT password_hash FROM account WHERE id = 1", String.class))
                     .startsWith("$2a$").doesNotContain(password);
@@ -58,6 +60,71 @@ class NotesIT {
             browser(context, "restore");
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) sync(context, "restore");
         }
+    }
+
+    private void verifyRetention(ConfigurableApplicationContext context) throws Exception {
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        var cleanup = context.getBean(com.privatespace.modules.note.service.RetentionService.class);
+        var objects = context.getBean(com.privatespace.modules.file.service.FileObjectService.class);
+        var objectMapper = context.getBean(com.privatespace.modules.file.mapper.FileObjectMapper.class);
+        var jdbc = context.getBean(JdbcTemplate.class);
+        var active = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-活跃.md", "note", "旧版本", null), UUID.randomUUID().toString());
+        active = notes.save(active.id(), new com.privatespace.modules.note.dto.WriteNoteRequest(active.path(), "note", "中间版本", active.version()), UUID.randomUUID().toString());
+        active = notes.save(active.id(), new com.privatespace.modules.note.dto.WriteNoteRequest(active.path(), "note", "当前版本", active.version()), UUID.randomUUID().toString());
+        String expiredHistoryObject = jdbc.queryForObject("SELECT object_id FROM note_revision WHERE file_id = ? AND version = 1", String.class, active.id());
+
+        var protectedRoot = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-受保护", "folder", "", null), UUID.randomUUID().toString());
+        var protectedChild = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-受保护/内容.md", "note", "快照必须可恢复", null), UUID.randomUUID().toString());
+        String protectedObject = jdbc.queryForObject("SELECT object_id FROM note_file WHERE id = ?", String.class, protectedChild.id());
+        var protectedDeleted = notes.delete(protectedRoot.id(), protectedRoot.version(), UUID.randomUUID().toString());
+
+        var expiredFile = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-到期.md", "note", "到期回收站", null), UUID.randomUUID().toString());
+        notes.delete(expiredFile.id(), expiredFile.version(), UUID.randomUUID().toString());
+        var expiredRoot = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-到期目录", "folder", "", null), UUID.randomUUID().toString());
+        var expiredChild = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-到期目录/内容.md", "note", "目录到期", null), UUID.randomUUID().toString());
+        notes.delete(expiredRoot.id(), expiredRoot.version(), UUID.randomUUID().toString());
+
+        var leased = objects.write("导出租约保护".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        objectMapper.lease(UUID.randomUUID().toString(), leased.id(), java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(1));
+        Path physicalOrphan = objectPath(UUID.randomUUID().toString());
+        Files.createDirectories(physicalOrphan.getParent());
+        Files.writeString(physicalOrphan, "事务回滚遗留对象");
+
+        jdbc.update("UPDATE note_revision SET created_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE file_id = ? AND version = 1", active.id());
+        jdbc.update("UPDATE note_revision SET created_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE file_id = ? AND version = 1", protectedChild.id());
+        jdbc.update("UPDATE note_file SET updated_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE id IN (?, ?, ?)", expiredFile.id(), expiredRoot.id(), expiredChild.id());
+        jdbc.update("UPDATE note_revision SET created_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE file_id IN (?, ?, ?)", expiredFile.id(), expiredRoot.id(), expiredChild.id());
+        jdbc.update("UPDATE file_object SET created_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE id IN (?, ?)", expiredHistoryObject, leased.id());
+        Files.setLastModifiedTime(physicalOrphan, java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofDays(40))));
+
+        var result = cleanup.cleanup();
+        assertThat(result.trashFiles()).isGreaterThanOrEqualTo(3);
+        assertThat(result.revisions()).isGreaterThanOrEqualTo(1);
+        assertThat(result.physicalOrphans()).isGreaterThanOrEqualTo(1);
+        assertThat(notes.read(active.id(), false).content()).isEqualTo("当前版本");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_revision WHERE file_id = ? AND version = 1", Long.class, active.id())).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM file_object WHERE id = ?", Long.class, expiredHistoryObject)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_revision WHERE file_id = ? AND version = 1", Long.class, protectedChild.id())).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM file_object WHERE id = ?", Long.class, protectedObject)).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_file WHERE id IN (?, ?, ?)", Long.class, expiredFile.id(), expiredRoot.id(), expiredChild.id())).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_delete_member WHERE root_id = ?", Long.class, expiredRoot.id())).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM file_object WHERE id = ?", Long.class, leased.id())).isOne();
+        assertThat(physicalOrphan).doesNotExist();
+
+        var restored = notes.restore(protectedRoot.id(), protectedRoot.version(), protectedDeleted.version(), UUID.randomUUID().toString());
+        assertThat(restored.deleted()).isFalse();
+        assertThat(notes.read(protectedChild.id(), false).content()).isEqualTo("快照必须可恢复");
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("保留清理-到期.md", "note", "路径已释放", null), UUID.randomUUID().toString());
+
+        jdbc.update("DELETE FROM file_object_lease WHERE object_id = ?", leased.id());
+        var released = cleanup.cleanup();
+        assertThat(released.databaseObjects()).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM file_object WHERE id = ?", Long.class, leased.id())).isZero();
+        assertThat(objectPath(leased.id())).doesNotExist();
+    }
+
+    private Path objectPath(String id) {
+        return directory.resolve("objects").resolve(id.substring(0, 2)).resolve(id);
     }
 
     private void verifySelectiveRecovery(ConfigurableApplicationContext context) {
@@ -179,6 +246,27 @@ class NotesIT {
         } finally {
             Files.deleteIfExists(archive);
         }
+    }
+
+    private void verifyUnrelatedRenamePreview(ConfigurableApplicationContext context) {
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        var moves = context.getBean(com.privatespace.modules.note.service.NoteMoveService.class);
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("CaseScope", "folder", "", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("CaseScope/Asset.md", "note", "# 无关目标\n", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("无关引用.md", "note",
+                "[大小写不同但无关](casescope/asset.md)\n[[完全无关]]\n<img src=\"casescope/asset.md\">\n", null), UUID.randomUUID().toString());
+        var source = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("CCCCCCCCCC.md", "note", "", null), UUID.randomUUID().toString());
+
+        var preview = moves.preview(source.id(), new com.privatespace.modules.note.dto.MoveNoteRequest(
+                "DDDDDDDDDD.md", source.version(), null));
+
+        assertThat(preview.changes()).singleElement().satisfies(change -> {
+            assertThat(change.id()).isEqualTo(source.id());
+            assertThat(change.fromPath()).isEqualTo("CCCCCCCCCC.md");
+            assertThat(change.toPath()).isEqualTo("DDDDDDDDDD.md");
+            assertThat(change.links()).isEmpty();
+        });
+        assertThat(preview.warnings()).isEmpty();
     }
 
     private void verifyMoveRollback(ConfigurableApplicationContext context) {

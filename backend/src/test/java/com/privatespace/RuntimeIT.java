@@ -54,7 +54,7 @@ class RuntimeIT {
 
     @Test
     void startsHttpWithMigratedMysqlAndPrivateVolume() throws Exception {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("4");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
         assertThat(flyway.info().pending()).isEmpty();
         try (var connection = dataSource.getConnection();
              var query = connection.createStatement();

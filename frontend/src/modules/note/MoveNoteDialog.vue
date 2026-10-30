@@ -56,7 +56,7 @@ onMounted(async () => { await nextTick(); (dialog.value?.querySelector<HTMLEleme
 onBeforeUnmount(() => { if (previousFocus?.isConnected) previousFocus.focus(); else document.querySelector<HTMLElement>('[aria-label="刷新目录"]')?.focus() })
 </script>
 <template>
-  <div class="modal-backdrop" @click.self="close">
+  <div class="modal-backdrop">
     <section ref="dialog" class="modal wide-modal move-dialog" role="dialog" aria-modal="true" :aria-label="mode === 'rename' ? '重命名文件' : '移动文件'" @keydown="key">
       <header><h2><component :is="mode === 'rename' ? Pencil : FolderInput" :size="18" />{{ mode === 'rename' ? '重命名' : '移动到目录' }}</h2><button class="icon-button" title="关闭对话框" aria-label="关闭对话框" :disabled="busy" @click="close"><X :size="18" /></button></header>
       <form @submit.prevent="inspect" class="move-form">

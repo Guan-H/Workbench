@@ -1,0 +1,119 @@
+name: workbench
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:0f51e63e537a1f176423fa03ef559aabe6fa4372a53160a44bc7e75da7d15364
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: private_space
+      MYSQL_USER: private_space
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    secrets:
+      - db_password
+      - db_root_password
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$(cat /run/secrets/db_password) mysql --protocol=TCP -h 127.0.0.1 -u private_space -D private_space -e 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - private
+    logging: *default-logging
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    image: workbench-backend:${WORKBENCH_VERSION:?Set WORKBENCH_VERSION in .env}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/private_space?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+      DB_USERNAME: private_space
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+      PRIVATE_SPACE_STORAGE_PATH: /data/objects
+      PRIVATE_SPACE_SECURE_COOKIE: "true"
+      PRIVATE_SPACE_ALLOWED_ORIGINS: https://${WORKBENCH_DOMAIN:?Set WORKBENCH_DOMAIN in .env}
+      TZ: Asia/Shanghai
+    volumes:
+      - file_objects:/data/objects
+    secrets:
+      - source: db_password
+        target: DB_PASSWORD
+      - source: setup_token
+        target: PRIVATE_SPACE_SETUP_TOKEN
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/system/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+    logging: *default-logging
+
+  web:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    image: workbench-web:${WORKBENCH_VERSION:?Set WORKBENCH_VERSION in .env}
+    restart: unless-stopped
+    environment:
+      WORKBENCH_DOMAIN: ${WORKBENCH_DOMAIN:?Set WORKBENCH_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+      - private
+    logging: *default-logging
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  db_root_password:
+    file: ./secrets/db_root_password
+  setup_token:
+    file: ./secrets/setup_token
+
+volumes:
+  mysql_data:
+  file_objects:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+  private:
+    internal: true

@@ -61,8 +61,10 @@ public interface NoteMapper {
     @Insert("INSERT INTO note_change (file_id, version, deleted) SELECT id, version, deleted FROM note_file WHERE id = #{id}")
     void change(String id);
 
-    @Select("SELECT file_id AS fileId, version, object_id AS objectId, path, deleted, created_at AS createdAt FROM note_revision WHERE file_id = #{id} ORDER BY version DESC LIMIT 200")
-    List<NoteRevisionEntity> historyList(String id);
+    @Select("SELECT file_id AS fileId, version, object_id AS objectId, path, deleted, created_at AS createdAt " +
+            "FROM note_revision WHERE file_id = #{id} AND (#{before} = 0 OR version < #{before}) " +
+            "ORDER BY version DESC LIMIT #{limit}")
+    List<NoteRevisionEntity> historyList(String id, long before, int limit);
 
     @Select("SELECT file_id AS fileId, version, object_id AS objectId, path, deleted, created_at AS createdAt FROM note_revision WHERE file_id = #{id} AND version = #{version}")
     NoteRevisionEntity revision(String id, long version);

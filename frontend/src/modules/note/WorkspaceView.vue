@@ -2,9 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NotebookPen, FileText, Folder, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
   ChevronsLeft, PanelLeft, Columns2, Code2, Eye, Clock3, Star, Upload, X, ChevronRight, ListTree, Save,
-  FilePlus2, Paperclip, Menu, RotateCcw, Download } from 'lucide-vue-next'
+  FilePlus2, Paperclip, Menu, RotateCcw, Download, CheckCircle2, CircleAlert, Info, LoaderCircle } from 'lucide-vue-next'
 import { diffLines } from 'diff'
-import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
+import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type RevisionPage, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
 import MarkdownEditor from './MarkdownEditor.vue'
 import FileTree from './FileTree.vue'
 import FileContextMenu from './FileContextMenu.vue'
@@ -28,6 +28,7 @@ const problem = ref('')
 const loading = ref(true)
 const saving = ref(false)
 const saveFeedback = ref<{ kind: 'saving' | 'success' | 'error' | 'info'; text: string }>()
+const feedbackIcon = computed(() => ({ saving: LoaderCircle, success: CheckCircle2, error: CircleAlert, info: Info })[saveFeedback.value?.kind ?? 'info'])
 const conflict = ref(false)
 const view = ref<'notes' | 'favorites' | 'recent' | 'trash'>('notes')
 const mode = ref<'split' | 'edit' | 'preview'>('split')
@@ -74,6 +75,9 @@ const treeScroll = ref<HTMLElement>()
 const modalBusy = ref(false)
 const revisions = ref<Revision[]>([])
 const historic = ref<Note>()
+const historyPage = ref(0)
+const historyCursors = ref([''])
+const historyNextCursor = ref<string | null>(null)
 const serverCopy = ref<Note>()
 const attachmentInput = ref<HTMLInputElement>()
 const importInput = ref<HTMLInputElement>()
@@ -210,11 +214,13 @@ const visibleItems = computed(() => {
 })
 const currentTitle = computed(() => current.value?.path.split('/').at(-1) ?? '我的笔记')
 const difference = computed(() => diffLines(serverCopy.value?.content ?? historic.value?.content ?? '', text.value))
+const historyDifference = computed(() => diffLines(historic.value?.content ?? '', savedText.value))
 type Pending = { id: string; path: string; content: string; baseVersion: string; operation: string }
 let pending: Pending | undefined
 let savePromise: Promise<boolean> | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined
 let querySerial = 0
 let draftStored = true
 let previousFocus: HTMLElement | null = null
@@ -223,6 +229,12 @@ watch(modal, async (value, previous) => {
   await nextTick()
   if (value) document.querySelector<HTMLElement>('.modal input, .modal button')?.focus()
   else previousFocus?.focus()
+})
+watch(saveFeedback, value => {
+  window.clearTimeout(feedbackTimer)
+  if (!value || value.kind === 'saving') return
+  const displayed = value
+  feedbackTimer = setTimeout(() => { if (saveFeedback.value === displayed) saveFeedback.value = undefined }, value.kind === 'error' ? 8000 : 4000)
 })
 
 function draftKey(id: string) { return `private-space:draft:${props.username}:${id}` }
@@ -392,25 +404,47 @@ async function history(note = current.value) {
   if (!note) return
   if (note.id !== current.value?.id && !await leaveNote()) return
   if (note.id === current.value?.id && !await saveNow()) return
-  if (note.id !== current.value?.id) applyNote(await api<Note>(`/notes/${note.id}`))
+  // Refresh the server copy even for the currently open note: another device may have appended versions.
+  applyNote(await api<Note>(`/notes/${note.id}`))
   modalBusy.value = true
   modal.value = 'history'
   historic.value = undefined
+  historyPage.value = 0
+  historyCursors.value = ['']
+  historyNextCursor.value = null
   try {
-    revisions.value = await api<Revision[]>(`/notes/${note.id}/history`)
-    if (note.type === 'folder' && note.deleted) {
-      const before = revisions.value.find(revision => revision.version === String(Number(current.value?.version ?? note.version) - 1) && !revision.deleted)
-      if (before) await selectRevision(before.version)
-    }
+    await loadHistoryPage(0)
   }
   catch (error) { problem.value = message(error) }
   finally { modalBusy.value = false }
 }
 
+async function loadHistoryPage(index: number) {
+  if (!current.value || index < 0 || historyCursors.value[index] === undefined) return
+  modalBusy.value = true
+  historic.value = undefined
+  try {
+    const cursor = historyCursors.value[index]!
+    const page = await api<RevisionPage>(`/notes/${current.value.id}/history?limit=30&cursor=${encodeURIComponent(cursor)}`)
+    revisions.value = page.items
+    historyPage.value = index
+    historyNextCursor.value = page.nextCursor
+    if (page.nextCursor && !historyCursors.value[index + 1]) historyCursors.value[index + 1] = page.nextCursor
+    const restoreVersion = current.value.type === 'folder' && current.value.deleted
+      ? String(Number(current.value.version) - 1) : undefined
+    const initial = page.items.find(revision => revision.version === restoreVersion && !revision.deleted) ?? page.items[0]
+    if (initial) historic.value = await api<Note>(`/notes/${current.value.id}/history/${initial.version}`)
+  } catch (error) {
+    problem.value = message(error)
+  } finally { modalBusy.value = false }
+}
+
 async function selectRevision(version: string) {
   if (!current.value) return
+  modalBusy.value = true
   try { historic.value = await api<Note>(`/notes/${current.value.id}/history/${version}`) }
   catch (error) { problem.value = message(error) }
+  finally { modalBusy.value = false }
 }
 
 async function restore() {
@@ -606,7 +640,7 @@ watch(query, () => {
   }, 250)
 })
 onMounted(() => { void refresh(); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('keydown', shortcut) })
-onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', shortcut) })
+onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTimer); window.clearTimeout(feedbackTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', shortcut) })
 </script>
 
 <template>
@@ -646,7 +680,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <main class="note-main">
       <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><button v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></button><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
-      <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" role="status" aria-live="polite" aria-atomic="true" data-testid="save-feedback"><Save :size="16" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存提示" aria-label="关闭保存提示"><X :size="15" /></button></div>
+      <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div>
       <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
       <template v-if="current && current.type === 'note' && !current.deleted">
         <div class="document-tab"><span><FileText :size="15" />{{ currentTitle }}<span v-if="dirty" class="unsaved-dot" title="有未提交修改" /></span></div>
@@ -672,10 +706,39 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <MoveNoteDialog v-if="moveRequest" v-bind="moveRequest" :items="items" @close="moveRequest = undefined" @moved="moved" />
     <ImportDirectoryDialog v-if="directoryImport" :items="items" :destination="folder" @close="directoryImport = false" @imported="refresh" />
     <input ref="attachmentInput" type="file" hidden @change="($event.target as HTMLInputElement).files?.[0] && upload(($event.target as HTMLInputElement).files![0]!)" />
-    <div v-if="modal" class="modal-backdrop" @click.self="modal = null">
+    <div v-if="modal" class="modal-backdrop">
       <section class="modal wide-modal" role="dialog" aria-modal="true" :aria-label="modal === 'history' ? '笔记历史' : '处理冲突'">
         <header><h2>{{ modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><button class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></button></header>
-        <div v-if="modal === 'history'" class="history-layout"><div class="revision-list"><p v-if="modalBusy">正在读取历史…</p><button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" @click="selectRevision(revision.version)"><strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong><small>{{ displayTime(revision.createdAt) }}</small></button></div><div class="history-detail"><template v-if="historic"><p>历史内容 · {{ historic.path }}</p><p v-if="current?.type === 'folder'" class="field-help">目录恢复使用删除前的整树快照，包含本次一起删除的全部文件和子目录。</p><pre v-else>{{ historic.content }}</pre><button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button></template><p v-else>选择一个历史版本查看内容</p></div></div>
+        <div v-if="modal === 'history'" class="history-layout">
+          <aside class="revision-pane" aria-label="历史版本列表">
+            <div class="revision-list">
+              <p v-if="modalBusy && !revisions.length" role="status">正在读取历史…</p>
+              <button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" :aria-pressed="historic?.version === revision.version" :disabled="modalBusy" @click="selectRevision(revision.version)">
+                <strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong>
+                <small>{{ displayTime(revision.createdAt) }}</small>
+              </button>
+              <p v-if="!modalBusy && !revisions.length" class="field-help">暂无历史版本</p>
+            </div>
+            <nav class="history-pagination" aria-label="历史版本分页">
+              <button :disabled="modalBusy || historyPage === 0" @click="loadHistoryPage(historyPage - 1)">上一页</button>
+              <span>第 {{ historyPage + 1 }} 页</span>
+              <button :disabled="modalBusy || !historyNextCursor" @click="loadHistoryPage(historyPage + 1)">下一页</button>
+            </nav>
+          </aside>
+          <div class="history-detail">
+            <template v-if="historic">
+              <div class="history-heading"><div><strong>版本 {{ historic.version }}</strong><small>{{ historic.path }}</small></div><span v-if="current">对比服务器当前版本 {{ current.version }}</span></div>
+              <p v-if="current?.type === 'folder'" class="field-help">目录恢复使用删除前的整树快照，包含本次一起删除的全部文件和子目录。</p>
+              <template v-else>
+                <div class="diff-legend" aria-label="差异说明"><span class="removed-mark">历史版本内容</span><span class="added-mark">当前版本新增</span></div>
+                <p v-if="historic.version === current?.version" class="field-help">所选版本就是服务器当前版本，无版本差异。</p>
+                <pre class="history-diff" aria-label="所选历史版本与服务器当前版本的文本差异"><template v-for="(part, index) in historyDifference" :key="index"><ins v-if="part.added" class="diff-added">{{ part.value }}</ins><del v-else-if="part.removed" class="diff-removed">{{ part.value }}</del><span v-else>{{ part.value }}</span></template></pre>
+              </template>
+              <button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button>
+            </template>
+            <p v-else>{{ modalBusy ? '正在读取版本内容…' : '选择一个历史版本查看内容' }}</p>
+          </div>
+        </div>
         <div v-else class="conflict-detail"><p>删除线为服务器内容，新增内容为本机草稿。可关闭对话框，在编辑区完成手动合并后再提交。</p><pre><template v-for="(part, index) in difference" :key="index"><span :class="{ 'diff-added': part.added, 'diff-removed': part.removed }">{{ part.value }}</span></template></pre><footer><button @click="resolveConflict(true)">采用服务器版本</button><button class="primary" @click="resolveConflict(false)">提交当前草稿（以最新版本为基线）</button></footer></div>
       </section>
     </div>

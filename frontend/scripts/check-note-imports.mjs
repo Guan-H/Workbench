@@ -203,7 +203,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   assert.deepEqual(await download(paths[0]), note)
   assert.deepEqual(await download(paths[1]), bytes[1])
   const original = (await catalog()).find(item => item.path === paths[0])
-  assert.equal((await request(`/notes/${original.id}/history`)).body.length, 1, 'retry does not publish duplicate history')
+  assert.equal((await request(`/notes/${original.id}/history`)).body.items.length, 1, 'retry does not publish duplicate history')
   await request(`/notes/${original.id}?baseVersion=${original.version}`, 'DELETE')
   assert.equal((await multipart([paths[0]], [note])).body.canImport, false, 'trash paths are protected')
   const stale = await multipart(['过期预检/保留.md'], [note])

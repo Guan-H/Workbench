@@ -76,6 +76,7 @@ export interface Note {
   deleted: boolean; favorite: boolean; lastOpenedAt: string | null; updatedAt: string; size: number; sha256: string | null
 }
 export interface Revision { version: string; deleted: boolean; createdAt: string }
+export interface RevisionPage { items: Revision[]; nextCursor: string | null }
 export type TreeItem = Pick<Note, 'id' | 'path' | 'type'>
 export interface RecycleCandidates { id: string; path: string; baseVersion: string; items: TreeItem[] }
 export interface RecycleRequest { baseVersion: string; mode: 'all' | 'files'; ids: string[]; destination: 'original' | 'directory'; target: string; fingerprint?: string }

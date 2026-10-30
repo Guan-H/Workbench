@@ -182,10 +182,25 @@ public class NoteServiceImpl implements NoteService {
         return remember(operation, "restore:" + id, input, read(id, false));
     }
 
-    public List<Map<String, Object>> history(String id) {
+    public Map<String, Object> history(String id, String cursor, int limit) {
         required(id);
-        return mapper.historyList(id).stream().map(revision -> Map.<String, Object>of(
+        if (limit < 1 || limit > 100) throw new ApiException(400, "INVALID_PAGE_SIZE", "历史记录每页数量应为 1 到 100。");
+        long before = 0;
+        if (cursor != null && !cursor.isBlank()) {
+            try {
+                before = Long.parseLong(cursor);
+                if (before < 1) throw new NumberFormatException();
+            } catch (NumberFormatException exception) {
+                throw new ApiException(400, "INVALID_CURSOR", "历史记录游标无效，请重新打开历史。");
+            }
+        }
+        var rows = mapper.historyList(id, before, limit + 1);
+        var items = rows.stream().limit(limit).map(revision -> Map.<String, Object>of(
                 "version", Long.toString(revision.version()), "deleted", revision.deleted(), "createdAt", time(revision.createdAt()))).toList();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("items", items);
+        result.put("nextCursor", rows.size() > limit ? items.get(items.size() - 1).get("version") : null);
+        return result;
     }
 
     public NoteResponse revision(String id, String version) {

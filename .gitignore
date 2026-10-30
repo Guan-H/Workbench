@@ -24,6 +24,9 @@ sync-client/*.egg-info/
 # Local configuration and runtime data
 .env
 *.local
+deploy/production/.env
+deploy/production/secrets/
+deploy/*.tar.gz
 data/
 logs/
 

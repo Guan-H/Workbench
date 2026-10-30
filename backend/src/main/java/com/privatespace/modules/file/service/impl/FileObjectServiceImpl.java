@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
 
@@ -73,6 +74,36 @@ public class FileObjectServiceImpl implements FileObjectService {
         } catch (IOException exception) {
             throw new ApiException(503, "OBJECT_UNAVAILABLE", "文件读取或校验失败，当前版本已保留，请检查存储卷。");
         }
+    }
+
+    public boolean deleteIfUnreferenced(String id) {
+        String safe = UUID.fromString(id).toString();
+        if (mapper.deleteUnreferenced(safe) == 0) return false;
+        try {
+            Files.deleteIfExists(path(safe));
+        } catch (IOException exception) {
+            LOG.warn("Unreferenced object file could not be removed; a later orphan sweep will retry", exception);
+        }
+        return true;
+    }
+
+    public int deletePhysicalOrphans(Instant cutoff) {
+        int removed = 0;
+        try (var paths = Files.walk(root, 2)) {
+            for (Path candidate : paths.filter(Files::isRegularFile).toList()) {
+                if (Files.isSymbolicLink(candidate) || Files.isSymbolicLink(candidate.getParent())) continue;
+                String name = candidate.getFileName().toString();
+                String id;
+                try { id = UUID.fromString(name).toString(); }
+                catch (IllegalArgumentException ignored) { continue; }
+                if (!candidate.toAbsolutePath().normalize().equals(path(id)) ||
+                        !Files.getLastModifiedTime(candidate).toInstant().isBefore(cutoff) || mapper.find(id) != null) continue;
+                if (Files.deleteIfExists(candidate)) removed++;
+            }
+        } catch (IOException exception) {
+            LOG.warn("Physical orphan scan did not complete; published objects were not touched", exception);
+        }
+        return removed;
     }
 
     private Path path(String id) {

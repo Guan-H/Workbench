@@ -1,6 +1,5 @@
 package com.privatespace.modules.note.controller;
 
-import java.util.List;
 import java.util.Map;
 
 import com.privatespace.modules.note.dto.NoteResponse;
@@ -61,7 +60,10 @@ public class NoteController {
     }
 
     @GetMapping("/{id}/history")
-    public List<Map<String, Object>> history(@PathVariable String id) { return service.history(id); }
+    public Map<String, Object> history(@PathVariable String id,
+            @RequestParam(defaultValue = "") String cursor, @RequestParam(defaultValue = "30") int limit) {
+        return service.history(id, cursor, limit);
+    }
 
     @GetMapping("/{id}/history/{version}")
     public NoteResponse revision(@PathVariable String id, @PathVariable String version) { return service.revision(id, version); }

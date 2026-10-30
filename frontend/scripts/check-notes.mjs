@@ -112,7 +112,10 @@ try {
     await page.getByTestId('save-feedback').filter({ hasText: '当前没有未保存的修改' }).waitFor()
     await editor.fill('# 第一版\n\n中文内容 📝\n')
     await page.keyboard.press('Control+s')
-    await page.getByTestId('save-feedback').filter({ hasText: '已保存到服务器' }).waitFor()
+    const saveMessage = page.getByTestId('save-feedback').filter({ hasText: '已保存到服务器' })
+    await saveMessage.waitFor()
+    const saveMessageBox = await saveMessage.boundingBox()
+    assert.ok(saveMessageBox && saveMessageBox.y < 80, 'Ctrl+S shows a visible top Message')
     let note = await poll(list, items => items.some(item => item.version === '2'), 'initial save')
     note = note.find(item => item.path === '中文 & 测试.md')
     assert.ok(note)
@@ -151,8 +154,26 @@ try {
     await context.setOffline(false)
     await page.getByRole('button', { name: '保存笔记', exact: true }).click()
     await poll(() => request('/notes/' + note.id), response => response.body.content?.startsWith('# 离线草稿'), 'reconnect save')
+    let paged = (await request('/notes/' + note.id)).body
+    for (let index = 1; index <= 31; index += 1) {
+      const response = await request('/notes/' + note.id, 'PUT', {
+        path: paged.path, type: 'note', content: `# 分页版本 ${index}\n`, baseVersion: paged.version
+      }, crypto.randomUUID())
+      assert.equal(response.status, 200)
+      paged = response.body
+    }
+    const firstHistoryPage = await request('/notes/' + note.id + '/history?limit=30')
+    assert.equal(firstHistoryPage.status, 200)
+    assert.equal(firstHistoryPage.body.items.length, 30)
+    assert.ok(firstHistoryPage.body.nextCursor)
     await page.getByRole('button', { name: '历史', exact: true }).click()
+    await page.getByText('第 1 页', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '下一页', exact: true }).click()
+    await page.getByText('第 2 页', { exact: true }).waitFor()
     await page.getByRole('button', { name: /^版本 2 / }).click()
+    await page.getByText('历史版本内容', { exact: true }).waitFor()
+    assert.ok(await page.locator('.history-diff del').count() > 0, 'history comparison marks removed text')
+    assert.ok(await page.locator('.history-diff ins').count() > 0, 'history comparison marks current additions')
     await page.getByRole('button', { name: '恢复为新版本', exact: true }).click()
     await page.getByRole('alertdialog', { name: '恢复历史版本', exact: true }).getByRole('button', { name: '确认恢复', exact: true }).click()
     await poll(() => editor.innerText(), value => value.includes('第一版'), 'history restore')
@@ -212,7 +233,7 @@ try {
     assert.equal(note.body.favorite, true)
     assert.equal((await request('/notes/' + state.createState.folderId)).body.path, '交互测试')
     assert.equal((await request('/notes/' + state.createState.noteId)).body.path, state.createState.notePath)
-    assert.ok((await request('/notes/' + state.id + '/history')).body.length >= 5)
+    assert.ok((await request('/notes/' + state.id + '/history')).body.items.length >= 5)
     assert.equal((await request('/notes/' + state.moveState.id)).body.path, state.moveState.path)
     assert.equal((await request('/notes/' + state.moveState.child)).body.path, '归档/项目/子/内部.md')
     assert.equal((await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent(state.attachment))).status(), 200)

@@ -35,6 +35,35 @@ class MarkdownLinkRewriterTests {
         assertThat(result.content()).isEqualTo("![图](../assets/%E5%9B%BE.png)\n[外部](https://example.invalid)\n[段落](#标题)\n");
     }
 
+    @Test
+    void ignoresUnrelatedLinksAndWarningsDuringAnotherFilesRename() {
+        var unrelated = file("unrelated", "CaseScope/Asset.md");
+        var renamed = file("renamed", "CCCCCCCCCC.md");
+        String source = "[大小写不同但无关](casescope/asset.md)\n[无关无效编码](other%ZZ.md)\n"
+                + "[[完全无关]]\n<img src=\"casescope/asset.md\">\n";
+
+        var result = rewriter.rewrite(source, "其他文档.md", "其他文档.md",
+                Map.of("casescope/asset.md", unrelated, "cccccccccc.md", renamed),
+                Map.of("renamed", "DDDDDDDDDD.md"));
+
+        assertThat(result.content()).isEqualTo(source);
+        assertThat(result.links()).isEmpty();
+        assertThat(result.warnings()).isEmpty();
+    }
+
+    @Test
+    void warnsOnlyWhenUnsupportedSyntaxMayReferenceTheRenamedFile() {
+        var renamed = file("renamed", "目录/CCCCCCCCCC.md");
+        var catalog = Map.of("目录/cccccccccc.md", renamed);
+        var paths = Map.of("renamed", "目录/DDDDDDDDDD.md");
+
+        var result = rewriter.rewrite("[[CCCCCCCCCC]]\n<img src=\"目录/CCCCCCCCCC.md\">\n",
+                "引用.md", "引用.md", catalog, paths);
+
+        assertThat(result.warnings()).hasSize(2);
+        assertThat(result.warnings()).allMatch(warning -> warning.contains("本次移动内容"));
+    }
+
     private NoteFileEntity file(String id, String path) {
         return new NoteFileEntity(id, path, "note", 1, null, null, false, false, null, null, 0, null);
     }

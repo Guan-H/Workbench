@@ -46,6 +46,12 @@ management:
       path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}
 
 private-space:
+  retention:
+    enabled: ${PRIVATE_SPACE_RETENTION_ENABLED:true}
+    history-days: ${PRIVATE_SPACE_HISTORY_RETENTION_DAYS:30}
+    recycle-days: ${PRIVATE_SPACE_RECYCLE_RETENTION_DAYS:30}
+    orphan-days: ${PRIVATE_SPACE_ORPHAN_RETENTION_DAYS:30}
+    export-lease: ${PRIVATE_SPACE_EXPORT_LEASE:PT2H}
   import:
     max-files: ${PRIVATE_SPACE_IMPORT_MAX_FILES:2000}
     max-bytes: ${PRIVATE_SPACE_IMPORT_MAX_BYTES:1073741824}
