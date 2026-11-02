@@ -127,7 +127,9 @@ try:
         window.update()
     with sqlite3.connect(state / 'sync.sqlite') as database:
         assert database.execute('SELECT COUNT(*) FROM baseline').fetchone()[0] > 0
-        assert database.execute('SELECT COUNT(*) FROM queue').fetchone()[0] >= 1
+        # The new scope handshake rejects revoked devices before scanning new local content.
+        assert database.execute('SELECT COUNT(*) FROM queue').fetchone()[0] == 0
+    assert (root_path / 'M2撤销后不得上传.md').read_text(encoding='utf-8') == '# 不得上传\n'
     report = {'checks': checks, 'device': device, 'phase': app.phase,
               'nativeVisualManualReview': False, 'packagedExecutableRoundtrip': False}
     (output / 'desktop.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

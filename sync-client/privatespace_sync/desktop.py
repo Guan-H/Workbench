@@ -29,6 +29,13 @@ ERRORS = {
     'ALREADY_PAIRED': '当前助手已配对。',
     'DIRECTORY_WATCH_UNAVAILABLE': '文件监听不可用，已暂停，请检查目录权限。',
     'INTERNAL_ERROR': '助手发生内部错误，已停止，请保留状态目录并重新启动。',
+    'SYNC_SCOPE_CHANGED': '网页同步范围已变化，请重新执行同步以读取新范围；已有文件保留。',
+    'OUTSIDE_SYNC_SCOPE': '文件已不在设备同步范围内，未发布修改或删除。',
+    'INVALID_PROFILE_NAME': '配置名称须为 1–80 个字符。',
+    'PROFILE_NOT_FOUND': '所选配置不存在，请重新打开配置管理。',
+    'PROFILE_ROOT_OVERLAP': '此目录与已有配置的同步目录或助手状态目录重叠，请选择独立的新空目录。',
+    'DIRECTORY_PATH_CONFLICT': '服务器目录与本地同名文件冲突，已保留本地文件，请检查待处理路径。',
+    'PARENT_DIRECTORY_UNAVAILABLE': '原有文件的父目录缺失，已停止该范围操作，避免误传删除。',
 }
 
 PHASES = {
@@ -36,6 +43,7 @@ PHASES = {
     'RUNNING': '本轮同步中；暂停会等待当前文件安全操作结束',
     'WATCHING': '本轮检查完成，正在监听本地变化', 'READY': '本轮检查完成，自动监听未开启',
     'OFFLINE': '连接中断，等待重试', 'ATTENTION': '有待处理项，自动同步已暂停', 'ERROR': '操作失败，已暂停',
+    'CONFIGURING': '正在停止原配置并切换，原文件与待上传内容保留…',
 }
 
 
@@ -46,6 +54,8 @@ class SyncApp:
         self.worker = SyncWorker(state)
         self.phase = 'UNPAIRED'
         self.closing = False
+        self.reconfiguring = False
+        self.configuration_dialog: tk.Toplevel | None = None
         self.snapshot: dict = {}
         self.items: list[tuple[str, str]] = []
         self.item_page = 0
@@ -54,7 +64,10 @@ class SyncApp:
         self.directory = tk.StringVar()
         self.code = tk.StringVar()
         self.status = tk.StringVar(value='正在读取本地配置…')
-        self.summary = tk.StringVar(value='尚未完成同步检查')
+        self.summary = tk.StringVar(value='尚未完成同步检查；范围以网页设备设置为准')
+        self.scope_label = tk.StringVar(value='同步范围：配对时在网页选择“全部”或一个/多个目录。')
+        self.state_label = tk.StringVar(value='状态目录：' + str(state))
+        self.profile_label = tk.StringVar(value='正在读取配置…')
         self.page_label = tk.StringVar()
         window.title('私有空间 · 同步助手')
         window.geometry('860x650')
@@ -67,7 +80,9 @@ class SyncApp:
         body.pack(fill='both', expand=True)
         body.columnconfigure(1, weight=1)
         body.rowconfigure(9, weight=1)
-        ttk.Label(body, text='同步助手', style='Heading.TLabel').grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 12))
+        ttk.Label(body, text='同步助手', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 12))
+        self.configure_button = ttk.Button(body, text='更换服务器 / 目录', command=self.manage_profiles)
+        self.configure_button.grid(row=0, column=2, sticky='e', pady=(0, 12))
         ttk.Label(body, text='首批仅支持新空目录与最多 5000 对象的全量快照。非空合并、增量和冲突解决尚在开发。',
                   wraplength=780).grid(row=1, column=0, columnspan=3, sticky='ew', pady=(0, 16))
         ttk.Label(body, text='服务器地址').grid(row=2, column=0, sticky='w', padx=(0, 12))
@@ -111,7 +126,9 @@ class SyncApp:
         ttk.Label(pager, textvariable=self.page_label).pack(side='left', padx=10)
         self.next_button = ttk.Button(pager, text='下一页', command=lambda: self.turn_page(1))
         self.next_button.pack(side='left')
-        ttk.Label(body, text='状态目录：' + str(state), wraplength=780).grid(row=11, column=0, columnspan=3, sticky='w', pady=(12, 0))
+        ttk.Label(body, textvariable=self.state_label, wraplength=780).grid(row=11, column=0, columnspan=3, sticky='w', pady=(12, 0))
+        ttk.Label(body, textvariable=self.scope_label, wraplength=780).grid(row=12, column=0, columnspan=3, sticky='w', pady=(8, 0))
+        ttk.Label(body, textvariable=self.profile_label, wraplength=780).grid(row=13, column=0, columnspan=3, sticky='w', pady=(8, 0))
         def reflow(_):
             for child in body.winfo_children():
                 if isinstance(child, ttk.Label) and float(child.cget('wraplength') or 0) > 0:
@@ -120,7 +137,7 @@ class SyncApp:
         self.render_items()
         self.update_controls(False, True)
         self.worker.start()
-        self.window.after(100, self.poll)
+        self.poll_timer = self.window.after(100, self.poll)
 
     def choose(self):
         selected = filedialog.askdirectory(parent=self.window, title='选择新建的空目录', mustexist=True)
@@ -152,6 +169,8 @@ class SyncApp:
             self.status.set('目录当前不可用。')
 
     def update_controls(self, paired: bool, busy: bool):
+        busy = busy or self.reconfiguring
+        self.configure_button.configure(state='disabled' if busy or self.closing or self.worker.stopped.is_set() or not self.snapshot.get('profiles') else 'normal')
         for field in (self.url_entry, self.directory_entry, self.code_entry, self.choose_button, self.pair_button):
             field.configure(state='disabled' if paired or busy or self.closing else 'normal')
         for button in (self.start_button, self.once_button):
@@ -181,26 +200,105 @@ class SyncApp:
                 event = self.worker.events.get_nowait()
                 self.snapshot = event
                 self.phase = event['phase']
+                if event.get('configurationFinished'):
+                    self.reconfiguring = False
+                    if not event['code']:
+                        self.code.set('')
                 paired = event['root'] is not None
                 if paired:
                     self.directory.set(event['root']); self.url.set(event['url'])
+                elif event.get('configurationFinished') and not event['code']:
+                    self.directory.set('')
                 text = PHASES[self.phase]
                 if event['code']:
                     text += '。' + ERRORS.get(event['code'], '请检查待处理项并重试。') + ' [' + event['code'] + ']'
+                self.state_label.set('状态目录：' + event.get('state', str(self.state)))
+                active = next((item for item in event.get('profiles', []) if item['id'] == event.get('activeProfile')), None)
+                self.profile_label.set('当前配置：' + active['name'] if active else '配置管理不可用，请检查状态目录。')
+                if event.get('configurationFinished') and not event['code'] and active:
+                    text = '已切换到“' + active['name'] + '”；' + text + '。需要手动开始同步。'
                 self.status.set(text)
                 result = event['result']
-                self.summary.set(f"最近核对：队列 {result.get('queued', 0)} 项，冲突 {len(result.get('conflicts', []))} 项，问题 {len(result.get('issues', []))} 项。" if result else '尚未完成同步检查')
+                scope = result.get('scope')
+                if scope:
+                    self.scope_label.set('同步范围：' + ('全部同步' if scope['all'] else '、'.join(scope['folders'])) + '；保留同名目录结构，请在对应目录内新建文件。引用附件自动纳入。')
+                else:
+                    self.scope_label.set('同步范围尚未核对；配对时在网页选择。')
+                self.summary.set(f"最近核对：队列 {result.get('queued', 0)} 项，范围外暂存 {result.get('heldQueued', 0)} 项，冲突 {len(result.get('conflicts', []))} 项，问题 {len(result.get('issues', []))} 项。" if result else '尚未完成同步检查')
                 self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
                 self.items += [(item['path'], '待确认删除：' + item['direction']) for item in (result.get('deletionPreview') or {}).get('changes', [])]
                 self.render_items()
-                self.update_controls(paired, self.phase in ('PAIRING', 'RUNNING'))
+                self.update_controls(paired, self.phase in ('PAIRING', 'RUNNING', 'CONFIGURING'))
         except Empty:
             pass
         if self.closing and self.worker.stopped.is_set():
             self.window.destroy()
         else:
-            self.window.after(100, self.poll)
+            self.poll_timer = self.window.after(100, self.poll)
+
+    def manage_profiles(self):
+        if self.configuration_dialog and self.configuration_dialog.winfo_exists():
+            self.configuration_dialog.lift()
+            return
+        dialog = self.configuration_dialog = tk.Toplevel(self.window)
+        dialog.title('更换服务器或本地目录'); dialog.transient(self.window); dialog.grab_set()
+        dialog.geometry('760x560'); dialog.minsize(620, 500)
+        frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text='新建独立配置后，可重新填写服务器和选择新空目录。原配置、文件和待上传队列保留，可在这里切回；切换后默认暂停。', wraplength=700).pack(anchor='w', pady=(0, 12))
+        self.profile_name = tk.StringVar()
+        ttk.Label(frame, text='新配置名称').pack(anchor='w')
+        entry = ttk.Entry(frame, textvariable=self.profile_name); entry.pack(fill='x', pady=(6, 8))
+        actions = ttk.Frame(frame); actions.pack(fill='x', pady=(0, 12))
+        def submit(*, identity=None, name=None):
+            if name is not None and not 1 <= len(name.strip()) <= 80:
+                self.profile_problem.set('请输入 1–80 个字符的配置名称。'); entry.focus_set(); return
+            self.reconfiguring = True
+            self.update_controls(self.snapshot.get('root') is not None, True)
+            self.worker.change_profile(identity=identity, name=name)
+            dialog.destroy()
+        self.create_profile_button = ttk.Button(actions, text='新建配置并切换', command=lambda: submit(name=self.profile_name.get()))
+        self.create_profile_button.pack(side='left')
+        self.profile_problem = tk.StringVar()
+        ttk.Label(frame, textvariable=self.profile_problem, wraplength=700).pack(anchor='w')
+        ttk.Label(frame, text='已有配置（选择后点击切换，不会自动同步）').pack(anchor='w', pady=(8, 6))
+        listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
+        self.profile_table = ttk.Treeview(listing, columns=('name', 'server'), show='headings', height=6, selectmode='browse')
+        self.profile_table.heading('name', text='配置名称'); self.profile_table.heading('server', text='服务器')
+        self.profile_table.column('name', width=190, minwidth=140); self.profile_table.column('server', width=350, minwidth=200)
+        self.profile_table.pack(side='left', fill='both', expand=True)
+        scroll = ttk.Scrollbar(listing, orient='vertical', command=self.profile_table.yview)
+        scroll.pack(side='right', fill='y'); self.profile_table.configure(yscrollcommand=scroll.set)
+        selected_label = tk.StringVar()
+        ttk.Label(frame, textvariable=selected_label, wraplength=700).pack(anchor='w', pady=8)
+        profiles = self.snapshot.get('profiles', [])
+        page = 0
+        controls = ttk.Frame(frame); controls.pack(fill='x')
+        page_label = ttk.Label(controls)
+        def render(offset=0):
+            nonlocal page
+            count = max(1, (len(profiles) + 19) // 20)
+            page = max(0, min(count - 1, page + offset))
+            self.profile_table.delete(*self.profile_table.get_children())
+            for item in profiles[page * 20:(page + 1) * 20]:
+                self.profile_table.insert('', 'end', iid=item['id'], values=(item['name'] + ('（当前）' if item['id'] == self.snapshot.get('activeProfile') else ''), '配置无法读取' if item['error'] else item['url'] or '未配对'))
+            previous.configure(state='normal' if page else 'disabled'); following.configure(state='normal' if page + 1 < count else 'disabled')
+            page_label.configure(text=f'{page + 1} / {count} 页 · 每页 20 项')
+            selected_label.set(''); switch.configure(state='disabled')
+        def selected(_):
+            identity = next(iter(self.profile_table.selection()), None)
+            item = next((item for item in profiles if item['id'] == identity), None)
+            selected_label.set('目录：' + (item['root'] or '尚未配对') if item else '')
+            switch.configure(state='normal' if item and not item['error'] else 'disabled')
+        self.profile_table.bind('<<TreeviewSelect>>', selected)
+        previous = ttk.Button(controls, text='上一页', command=lambda: render(-1)); previous.pack(side='left')
+        page_label.pack(side='left', padx=8)
+        following = ttk.Button(controls, text='下一页', command=lambda: render(1)); following.pack(side='left')
+        switch = self.switch_profile_button = ttk.Button(controls, text='使用选中配置', command=lambda: submit(identity=self.profile_table.selection()[0]), state='disabled')
+        switch.pack(side='right', padx=(8, 0))
+        ttk.Button(controls, text='关闭', command=dialog.destroy).pack(side='right')
+        dialog.bind('<Escape>', lambda _: dialog.destroy())
+        render(); entry.focus_set()
 
     def preview_deletions(self):
         preview = self.snapshot.get('result', {}).get('deletionPreview')

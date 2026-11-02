@@ -80,7 +80,24 @@ class Filesystem:
             raise SyncError("FILE_BUSY")
         return data
 
-    def scan(self) -> tuple[dict[str, str], list[dict]]:
+    def ensure_directory(self, relative: str, *, has_baseline: bool = False):
+        target = self.path(relative)
+        if target.is_dir():
+            return
+        if target.exists():
+            raise SyncError('DIRECTORY_PATH_CONFLICT')
+        # Recreating a lost parent of known files would turn their absence into remote deletes.
+        if has_baseline:
+            raise SyncError('PARENT_DIRECTORY_UNAVAILABLE')
+        parts = relative.split('/')
+        for index in range(1, len(parts) + 1):
+            directory = self.path('/'.join(parts[:index]))
+            if directory.exists() and not directory.is_dir():
+                raise SyncError('DIRECTORY_PATH_CONFLICT')
+            directory.mkdir(exist_ok=True)
+        self.ready()
+
+    def scan(self, *, include=None, descend=None) -> tuple[dict[str, str], list[dict]]:
         self.ready()
         files: dict[str, str] = {}
         names: set[str] = set()
@@ -94,6 +111,8 @@ class Filesystem:
                 relative = (parent / name).relative_to(self.root).as_posix()
                 if excluded(relative):
                     continue
+                if descend is not None and not descend(relative):
+                    continue
                 if (parent / name).is_symlink() or (parent / name).is_junction():
                     issues.append({"path": relative, "code": "UNSAFE_LINK"})
                 elif valid_path(relative):
@@ -104,6 +123,8 @@ class Filesystem:
             for name in filenames:
                 relative = (parent / name).relative_to(self.root).as_posix()
                 if excluded(relative):
+                    continue
+                if include is not None and not include(relative):
                     continue
                 if not valid_path(relative) or relative.casefold() in names:
                     issues.append({"path": relative, "code": "INVALID_PATH"}); continue

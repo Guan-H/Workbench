@@ -241,10 +241,44 @@ public class NoteServiceImpl implements NoteService {
 
     @Transactional
     public Map<String, Object> syncSnapshot() {
+        return syncSnapshot(java.util.List.of());
+    }
+
+    @Transactional
+    public java.util.List<String> validateSyncFolders(java.util.List<String> folders) {
+        if (folders == null || folders.isEmpty() || folders.size() > 100) throw new ApiException(400, "INVALID_SCOPE", "请选择 1–100 个同步文件夹。");
+        mapper.lock();
+        var result = folders.stream().map(this::validatePath).distinct().sorted().toList();
+        for (String path : result) {
+            if (com.privatespace.modules.note.service.NotePaths.syncExcluded(path)) throw new ApiException(400, "INVALID_SCOPE", "不能选择同步助手排除的系统或临时目录。");
+            var file = mapper.byPath(path);
+            if (file == null || file.deleted() || !file.type().equals("folder") || !file.path().equals(path)) {
+                throw new ApiException(409, "SCOPE_FOLDER_CHANGED", "所选目录不存在或已变化，请刷新目录后重选。");
+            }
+        }
+        return result.stream().filter(path -> result.stream().noneMatch(parent -> !parent.equals(path) && path.startsWith(parent + "/"))).toList();
+    }
+
+    @Transactional
+    public Map<String, Object> syncSnapshot(java.util.List<String> folders) {
         mapper.lock();
         var files = mapper.moveCatalog();
         if (files.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "M0 对账原型最多验证 5000 个对象，请勿用于完整生产同步。");
-        return Map.of("cursor", Long.toString(mapper.syncCursor()), "items", files.stream().map(file -> response(file, null)).toList());
+        var references = new java.util.LinkedHashSet<String>();
+        if (!folders.isEmpty()) {
+            for (var file : files) {
+                if (file.deleted() || !file.type().equals("note") || folders.stream().noneMatch(root -> file.path().startsWith(root + "/"))) continue;
+                for (String reference : com.privatespace.modules.note.service.MarkdownAttachments.paths(file.path(), text(objects.read(file.objectId())))) {
+                    var existing = files.stream().filter(candidate -> candidate.path().equalsIgnoreCase(reference)).findFirst();
+                    if (existing.isEmpty()) references.add(reference);
+                    else if (existing.get().type().equals("attachment")) references.add(existing.get().path());
+                }
+            }
+        }
+        var selected = files.stream().filter(file -> folders.isEmpty() || folders.stream().anyMatch(root -> file.path().equals(root) || file.path().startsWith(root + "/"))
+                || file.type().equals("attachment") && references.contains(file.path())).toList();
+        return Map.of("cursor", Long.toString(mapper.syncCursor()), "items", selected.stream().map(file -> response(file, null)).toList(),
+                "attachmentPaths", references.stream().filter(path -> files.stream().noneMatch(file -> file.path().equals(path) && !file.type().equals("attachment"))).toList());
     }
 
     public byte[] syncRead(String id, String version) {

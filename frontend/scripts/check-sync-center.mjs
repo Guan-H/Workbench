@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { checkSyncScope } from './check-sync-scope.mjs'
 
 /** Uses the real Web UI for pairing and a real Tk/HTTP/Windows-file helper for the desktop flow. */
 export async function checkSyncCenter(page, request, output) {
@@ -78,4 +79,5 @@ export async function checkSyncCenter(page, request, output) {
   }
   await page.setViewportSize({ width: 1440, height: 960 })
   await writeFile(new URL('sync-center.json', output), JSON.stringify({ desktop: report, web: 'real one-use pairing, 12 persisted devices with 10/2 page split, last contact and confirmed revocation; responsive screenshots without pairing codes' }, null, 2))
+  await checkSyncScope(page, request, output)
 }

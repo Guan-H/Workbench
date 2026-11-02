@@ -22,6 +22,8 @@ public interface NoteService {
     NoteResponse upload(String path, byte[] bytes, String operation);
     byte[] download(String path);
     Map<String, Object> syncSnapshot();
+    Map<String, Object> syncSnapshot(java.util.List<String> folders);
+    java.util.List<String> validateSyncFolders(java.util.List<String> folders);
     byte[] syncRead(String id, String version);
     NoteResponse syncWrite(SyncWriteRequest request, String operation, String device);
 }

@@ -10,6 +10,17 @@ import com.privatespace.common.exception.ApiException;
 public final class NotePaths {
     private NotePaths() { }
 
+    /** Keep device scopes consistent with the Windows scanner's existing system/temp exclusions. */
+    public static boolean syncExcluded(String path) {
+        for (String part : path.split("/")) {
+            if (List.of(".git", ".obsidian", ".privatespace", ".private-space-root", "__pycache__", "node_modules")
+                    .contains(part.toLowerCase(Locale.ROOT))) return true;
+        }
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        return path.endsWith(".tmp") || path.endsWith(".swp") || path.endsWith(".swx") || path.endsWith("~")
+                || name.startsWith("~$") || name.startsWith(".upload-");
+    }
+
     public static String validate(String path) {
         if (path == null || path.length() > 240 || !Normalizer.isNormalized(path, Normalizer.Form.NFC)
                 || path.startsWith("/") || path.contains("\\")) invalid();

@@ -11,6 +11,7 @@ import time
 from .engine import Engine, configure
 from .transport import SyncError
 from .watcher import DirectoryWatcher
+from .profiles import Profiles
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,12 @@ class PauseCommand:
 
 
 @dataclass(frozen=True)
+class ProfileCommand:
+    identity: str | None = None
+    name: str | None = None
+
+
+@dataclass(frozen=True)
 class ExitCommand:
     pass
 
@@ -39,12 +46,13 @@ class ExitCommand:
 class SyncWorker:
     def __init__(self, state: Path):
         self.state = state
-        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ExitCommand] = Queue()
+        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ProfileCommand | ExitCommand] = Queue()
         self.events: Queue[dict] = Queue()
         self.pause_requested = threading.Event()
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._run, name='private-space-sync-owner')
         self.engine: Engine | None = None
+        self.profiles: Profiles | None = None
         self.watcher: DirectoryWatcher | None = None
         self.automatic = False
         self.last_result: dict = {}
@@ -66,11 +74,52 @@ class SyncWorker:
         self.pause_requested.set()
         self.commands.put(ExitCommand())
 
-    def _publish(self, phase: str, code: str | None = None):
+    def change_profile(self, *, identity=None, name=None):
+        self.pause_requested.set()
+        self.commands.put(ProfileCommand(identity, name))
+
+    def _publish(self, phase: str, code: str | None = None, *, configuration_finished=False):
         self.events.put({'phase': phase, 'code': code, 'automatic': self.automatic,
                          'root': self.engine.config['root'] if self.engine else None,
                          'url': self.engine.config['url'] if self.engine else None,
-                         'result': self.last_result})
+                         'result': self.last_result, 'configurationFinished': configuration_finished,
+                         'profiles': self.profiles.entries() if self.profiles else [],
+                         'activeProfile': self.profiles.active if self.profiles else None,
+                         'state': str(self.state)})
+
+    def _change_profile(self, command: ProfileCommand):
+        self._stop_watcher()
+        self._publish('CONFIGURING')
+        if not self.profiles:
+            raise SyncError('LOCAL_CONFIGURATION_UNAVAILABLE')
+        candidate = None
+        try:
+            if command.identity == self.profiles.active and command.name is None:
+                self._publish('PAUSED' if self.engine else 'UNPAIRED', configuration_finished=True)
+                return
+            if command.name is not None:
+                identity = self.profiles.create(command.name)
+            else:
+                identity = command.identity
+                if identity not in [item['id'] for item in self.profiles.entries()]:
+                    raise SyncError('PROFILE_NOT_FOUND')
+                target = self.profiles.path(identity)
+                if (target / 'config.json').is_file():
+                    candidate = Engine(target)
+                self.profiles.activate(identity)
+            # Only retire the old engine after the new state and registry are ready.
+            if self.engine:
+                self.engine.close()
+            self.engine = candidate
+            candidate = None
+            self.state = self.profiles.path(identity)
+            self.last_result = self.engine.status() if self.engine else {}
+            self.retry = 0
+            self.pause_requested.clear()
+            self._publish('PAUSED' if self.engine else 'UNPAIRED', configuration_finished=True)
+        finally:
+            if candidate:
+                candidate.close()
 
     def _stop_watcher(self):
         self.automatic = False
@@ -85,6 +134,11 @@ class SyncWorker:
             self.watcher.event.clear()
         self._publish('RUNNING')
         result = self.engine.cycle(confirmation=confirmation, should_pause=self.pause_requested.is_set)
+        # Newly saved note references may admit attachments that were deliberately not scanned before.
+        for _ in range(2):
+            if result['status'] != 'OK' or not result.get('rescanRequired') or self.pause_requested.is_set():
+                break
+            result = self.engine.cycle(should_pause=self.pause_requested.is_set)
         self.last_result = result
         code = result.get('code')
         if code == 'NETWORK_UNAVAILABLE' and self.automatic:
@@ -94,7 +148,7 @@ class SyncWorker:
         elif code == 'PAUSE_REQUESTED':
             self._stop_watcher()
             self._publish('PAUSED')
-        elif result['status'] != 'OK' or result.get('issues') or result.get('conflicts') or result.get('queued'):
+        elif result['status'] != 'OK' or result.get('issues') or result.get('conflicts') or result.get('queued') or result.get('rescanRequired'):
             self._stop_watcher()
             self._publish('ATTENTION', code)
         else:
@@ -105,6 +159,8 @@ class SyncWorker:
     def _run(self):
         try:
             try:
+                self.profiles = Profiles(self.state)
+                self.state = self.profiles.path(self.profiles.active)
                 if (self.state / 'config.json').is_file():
                     self.engine = Engine(self.state)
                     self.last_result = self.engine.status()
@@ -128,10 +184,15 @@ class SyncWorker:
                     if isinstance(command, PauseCommand):
                         self._stop_watcher()
                         self._publish('PAUSED' if self.engine else 'UNPAIRED')
+                    elif isinstance(command, ProfileCommand):
+                        self._change_profile(command)
                     elif isinstance(command, PairCommand):
                         if self.engine:
                             raise SyncError('ALREADY_PAIRED')
                         self._publish('PAIRING')
+                        if not self.profiles:
+                            raise SyncError('LOCAL_CONFIGURATION_UNAVAILABLE')
+                        self.profiles.validate_root(command.root)
                         configure(command.url, command.root, self.state, command.code)
                         self.engine = Engine(self.state)
                         self.last_result = self.engine.status()
@@ -146,7 +207,7 @@ class SyncWorker:
                         self._cycle(command.confirmation)
                 except (SyncError, OSError, ValueError, sqlite3.Error) as error:
                     self._stop_watcher()
-                    self._publish('ERROR', error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE')
+                    self._publish('ERROR', error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE', configuration_finished=isinstance(command, ProfileCommand))
                 finally:
                     # Do not retain a consumed pairing code in the idle worker's last command.
                     command = None
@@ -159,4 +220,6 @@ class SyncWorker:
                 if self.engine:
                     self.engine.close()
             finally:
+                if self.profiles:
+                    self.profiles.close()
                 self.stopped.set()

@@ -18,6 +18,7 @@ from .credentials import protect
 from .filesystem import Filesystem, MARKER, digest, excluded, valid_path
 from .transport import Remote, SyncError
 from .state_lock import StateLock
+from .scope import SyncScope
 
 
 def configure(url: str, root: Path, state: Path, code: str) -> dict:
@@ -56,6 +57,7 @@ class Engine:
         self.fs = Filesystem(Path(self.config["root"]), self.config["identity"])
         self.stable_seconds = stable_seconds
         self.delete_grace = delete_grace
+        self.remote_folders: set[str] = set()
         self.state_lock = StateLock(self.state)
         try:
             self.db = sqlite3.connect(self.state / "sync.sqlite")
@@ -69,6 +71,11 @@ class Engine:
             CREATE TABLE IF NOT EXISTS missing (path TEXT PRIMARY KEY, since REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """)
+            cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
+            cached = json.loads(cached_scope[0]) if cached_scope else {}
+            self.scope_known = cached_scope is not None
+            self.selection = SyncScope(cached.get('scope'), cached.get('attachments', []))
+            self.remote.scope_version = cached.get('version')
         except Exception:
             if hasattr(self, 'db'):
                 self.db.close()
@@ -96,18 +103,60 @@ class Engine:
         self.db.commit()
 
     def status(self) -> dict:
-        return {"queued": self.db.execute("SELECT COUNT(*) FROM queue").fetchone()[0],
+        queued = [row['path'] for row in self.db.execute('SELECT path FROM queue')]
+        return {"queued": sum(self.selection.includes(path) for path in queued),
+                "heldQueued": sum(not self.selection.includes(path) for path in queued),
+                "scope": self.selection.data() if self.scope_known else None,
                 "conflicts": [{"path": row["path"], "reason": row["reason"], "copies": json.loads(row["copies"])}
-                              for row in self.db.execute("SELECT * FROM conflict ORDER BY path")]}
+                              for row in self.db.execute("SELECT * FROM conflict ORDER BY path") if self.selection.includes(row['path'])]}
 
     def snapshot(self) -> dict:
         snapshot = self.remote.request("/snapshot")
+        selection = SyncScope(snapshot.get('scope'), snapshot.get('attachmentPaths', []))
+        version = snapshot.get('scopeVersion', '1')
         previous = self.db.execute("SELECT value FROM setting WHERE key = 'cursor'").fetchone()
         if previous and int(snapshot["cursor"]) < int(previous[0]):
             raise SyncError("SERVER_ROLLBACK_RECONCILIATION_REQUIRED")
+        previous_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
+        old = json.loads(previous_scope[0]) if previous_scope else {'version': '1', 'scope': {'all': True, 'folders': []}}
+        if old['version'] != version or old['scope'] != selection.data():
+            # Re-entered paths have no trustworthy deletion baseline. Keep bytes and pending uploads,
+            # but never replay a missing-file delete across a selection revision.
+            self.db.execute('DELETE FROM baseline')
+            self.db.execute('DELETE FROM missing')
+            self.db.execute("DELETE FROM setting WHERE key = 'delete_review'")
+            for row in list(self.db.execute('SELECT path, request FROM queue')):
+                if json.loads(row['request'])['deleted']:
+                    self.db.execute('DELETE FROM queue WHERE path = ?', (row['path'],))
+        self.selection = selection
+        self.scope_known = True
+        self.remote.scope_version = version
+        self.db.execute("INSERT OR REPLACE INTO setting VALUES ('scope_policy', ?)",
+                        (json.dumps({'version': version, 'scope': selection.data(), 'attachments': list(selection.attachments)}),))
         self.db.execute("INSERT OR REPLACE INTO setting VALUES ('cursor', ?)", (snapshot["cursor"],))
         self.db.commit()
-        return {item["id"]: item for item in snapshot["items"] if item["type"] != "folder"}
+        self.remote_folders = {item['path'] for item in snapshot['items'] if item['type'] == 'folder'
+                               and not item['deleted'] and selection.directory(item['path']) and not excluded(item['path'])}
+        return {item["id"]: item for item in snapshot["items"] if item["type"] != "folder" and selection.includes(item['path'])}
+
+    def prepare_directories(self, checkpoint: Callable[[], None] | None = None) -> list[dict]:
+        protected = set()
+        for file in self.baseline().values():
+            if file['deleted'] or not self.selection.includes(file['path']):
+                continue
+            parts = file['path'].split('/')
+            protected.update('/'.join(parts[:index]) for index in range(1, len(parts)))
+        issues = []
+        for path in sorted(self.remote_folders, key=lambda path: (path.count('/'), path)):
+            if checkpoint:
+                checkpoint()
+            if any(path.startswith(issue['path'] + '/') for issue in issues):
+                continue
+            try:
+                self.fs.ensure_directory(path, has_baseline=path in protected)
+            except (SyncError, OSError) as error:
+                issues.append({'path': path, 'code': error.code if isinstance(error, SyncError) else 'DIRECTORY_UNAVAILABLE'})
+        return issues
 
     def download(self, file: dict) -> bytes:
         data = self.remote.request(f'/files/{file["id"]}?version={file["version"]}', binary=True)
@@ -156,16 +205,24 @@ class Engine:
                 raise SyncError('PAUSE_REQUESTED')
         try:
             checkpoint()
-            first, first_issues = self.fs.scan()
+            try:
+                self.snapshot()
+                issues.extend(self.prepare_directories(checkpoint))
+            except SyncError as error:
+                if error.code != 'NETWORK_UNAVAILABLE' or not self.scope_known:
+                    raise
+                # Offline capture uses the last confirmed scope only; nothing is published offline.
+            first, first_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends)
+            scanned_attachments = self.selection.attachments
             time.sleep(self.stable_seconds)
-            local, second_issues = self.fs.scan()
+            local, second_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends)
             issues.extend(first_issues + second_issues)
             unstable = {path for path in first.keys() | local.keys() if first.get(path) != local.get(path)}
             issues.extend({"path": path, "code": "FILE_BUSY"} for path in unstable)
             blocked = {row[0] for row in self.db.execute("SELECT path FROM conflict")}
             unsafe = [issue["path"] for issue in issues]
             def skip(path):
-                return path in blocked or path in unstable or any(path == bad or path.startswith(bad + "/") for bad in unsafe)
+                return not self.selection.includes(path) or path in blocked or path in unstable or any(path == bad or path.startswith(bad + "/") for bad in unsafe)
             baseline = self.baseline()
             # Persist uploads before contacting the network, so an offline run still captures edits.
             for path, sha in local.items():
@@ -188,6 +245,8 @@ class Engine:
                 if skip(path):
                     continue
                 request = json.loads(row["request"])
+                if request['deleted'] and not self.selection.explicit(path):
+                    continue
                 file = remote.get(request["id"]) if request["id"] else by_path.get(path.casefold())
                 if request["deleted"] and self.fs.read(path) is not None:
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit(); continue
@@ -199,6 +258,8 @@ class Engine:
                     self.acknowledge(result)
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit()
                 except SyncError as error:
+                    if error.code == 'SYNC_SCOPE_CHANGED':
+                        raise
                     if error.status != 409:
                         if error.status in (401, 403) or not error.status:
                             raise
@@ -214,6 +275,10 @@ class Engine:
                     blocked.add(path)
             checkpoint()
             remote = self.snapshot()
+            for issue in self.prepare_directories(checkpoint):
+                if issue not in issues:
+                    issues.append(issue)
+                    unsafe.append(issue['path'])
             baseline = self.baseline()
             deletes = []
             for file in remote.values():
@@ -252,6 +317,9 @@ class Engine:
                     else:
                         self.conflict(path, file, None, "INITIAL_COLLISION")
                 elif data is None and file["version"] == base["version"]:
+                    if not self.selection.explicit(path):
+                        self.fs.atomic(path, self.download(file), None); self.acknowledge(file)
+                        continue
                     missing = self.db.execute("SELECT since FROM missing WHERE path = ?", (path,)).fetchone()
                     if missing is None:
                         self.db.execute("INSERT INTO missing VALUES (?, ?)", (path, time.time())); self.db.commit()
@@ -267,7 +335,7 @@ class Engine:
                 self.db.execute("DELETE FROM missing WHERE path = ?", (path,))
             self.db.commit()
             deletes.sort(key=lambda item: (item["path"], item["direction"]))
-            active_count = max(1, sum(not item["deleted"] for item in baseline.values()))
+            active_count = max(1, sum(not item["deleted"] and self.selection.includes(item['path']) for item in baseline.values()))
             pending_review = self.db.execute("SELECT value FROM setting WHERE key = 'delete_review'").fetchone()
             # Once held for review, a shrinking batch must not silently fall back below the threshold.
             needs_confirmation = bool(deletes) and (pending_review is not None or confirmation is not None
@@ -303,7 +371,7 @@ class Engine:
                 self.db.commit()
                 pending_delete = {"fingerprint": fingerprint, "changes": deletes}
             return {"status": "PAUSED" if write_failure else "REQUIRES_CONFIRMATION" if pending_delete else "OK", "code": write_failure, "issues": issues,
-                    "deletionPreview": pending_delete, **self.status()}
+                    "deletionPreview": pending_delete, "rescanRequired": bool(self.selection.attachments - scanned_attachments), **self.status()}
         except (SyncError, OSError, sqlite3.Error) as error:
             return {"status": "PAUSED", "code": error.code if isinstance(error, SyncError) else "LOCAL_IO_UNAVAILABLE",
                     "issues": issues, **self.status()}

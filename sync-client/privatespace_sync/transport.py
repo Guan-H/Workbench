@@ -28,12 +28,15 @@ class Remote:
             raise SyncError("HTTPS_REQUIRED")
         self.url = url.rstrip("/")
         self.token = token
+        self.scope_version: str | None = None
         self.opener = urllib.request.build_opener(NoRedirect())
 
     def request(self, path: str, *, body=None, operation: str | None = None, binary: bool = False):
         headers = {"Accept": "application/json"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
+        if self.scope_version is not None:
+            headers['X-Sync-Scope-Version'] = self.scope_version
         data = None
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")

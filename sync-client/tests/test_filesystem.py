@@ -12,6 +12,29 @@ from privatespace_sync.transport import SyncError
 
 
 class FilesystemTests(unittest.TestCase):
+    def test_materializes_nested_empty_directories_without_overwriting_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = str(uuid.uuid4())
+            (root / MARKER).write_text(identity, encoding='ascii')
+            fs = Filesystem(root, identity)
+            fs.ensure_directory('工作/空目录/子目录')
+            fs.ensure_directory('工作/空目录/子目录')
+            self.assertTrue((root / '工作/空目录/子目录').is_dir())
+            (root / '同名').write_bytes(b'preserve')
+            with self.assertRaisesRegex(SyncError, 'DIRECTORY_PATH_CONFLICT'):
+                fs.ensure_directory('同名/子目录')
+            self.assertEqual((root / '同名').read_bytes(), b'preserve')
+
+    def test_missing_directory_with_known_children_is_not_recreated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = str(uuid.uuid4())
+            (root / MARKER).write_text(identity, encoding='ascii')
+            with self.assertRaisesRegex(SyncError, 'PARENT_DIRECTORY_UNAVAILABLE'):
+                Filesystem(root, identity).ensure_directory('失联/原目录', has_baseline=True)
+            self.assertFalse((root / '失联').exists())
+
     def test_atomic_publication_does_not_overwrite_an_edit_after_download_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,3 +1,4 @@
 package com.privatespace.modules.sync.dto;
 
-public record SyncDeviceResponse(String id, String name, boolean revoked, String createdAt, String lastSeenAt) { }
+public record SyncDeviceResponse(String id, String name, boolean revoked, String createdAt, String lastSeenAt,
+        SyncScope scope, String scopeVersion) { }

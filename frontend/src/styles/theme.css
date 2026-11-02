@@ -131,6 +131,15 @@ svg { flex-shrink: 0; }
 .sync-device-table th, .sync-device-table td { padding: 12px 8px; border-bottom: 1px solid var(--color-border); }
 .sync-device-table td:first-child { max-width: 220px; overflow-wrap: anywhere; }
 .sync-pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; font-size: 12px; }
+.sync-scope-picker { margin: 12px 0 0; min-width: 0; width: 100%; border: 1px solid var(--color-border); padding: 16px; border-radius: 6px; box-sizing: border-box; }
+.sync-scope-picker legend { font-size: 14px; padding-inline: 4px; }
+.sync-scope-modes { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+.sync-scope-picker .sync-scope-modes label, .sync-scope-picker .sync-scope-folders label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.sync-scope-picker input[type="radio"], .sync-scope-picker input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; flex-shrink: 0; padding: 0; accent-color: var(--color-primary); }
+.sync-scope-folders { margin-top: 12px; max-height: 220px; overflow: auto; }
+.sync-scope-folders label { min-height: 36px; padding: 4px; font-size: 13px; overflow-wrap: anywhere; }
+.sync-device-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sync-scope-summary { max-width: 220px; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .sync-content { padding: 20px 16px; } .sync-page-heading { align-items: start; flex-direction: column; } .sync-pairing-code > div { align-items: stretch; flex-direction: column; } .sync-content button { min-height: 44px; } }
 @media (max-width: 1120px) { .home-columns { grid-template-columns: 380px minmax(0, 1fr); gap: 16px; } .home-card { padding: 16px; } }
 @media (max-width: 900px) { .home-columns { grid-template-columns: 1fr; } .home-calendar { grid-row: 1; } .home-month td { height: 44px; } .home-month-controls button { min-width: 44px; min-height: 44px; } }
