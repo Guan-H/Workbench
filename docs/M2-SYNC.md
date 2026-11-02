@@ -77,4 +77,4 @@ python -m privatespace_sync gui --state D:/ai_project/Workbench/data/m2-manual-s
 
 ## 验证边界
 
-独立集成脚本使用真实 Chrome、Tk 控件、Spring HTTP、MySQL、Windows 文件和 DPAPI，不替换接口或文件持久化链路。Tk 控件链路的源码验证与打包 EXE 的启动/界面检查分开记录；未验证 EXE 全套往返时不会把源码结果写成打包产物验收通过。生产环境尚未部署本批功能。
+独立集成脚本使用真实 Chrome、Tk 控件、Spring HTTP、MySQL、Windows 文件和 DPAPI，不替换接口或文件持久化链路。Tk 控件链路的源码验证与打包 EXE 的启动/界面检查分开记录；未验证 EXE 全套往返时不会把源码结果写成打包产物验收通过。2026-11-02 已将提交 e3bf4d4 对应 Web/API 升级至生产，备份、V6 和公网只读检查通过，详情见部署记录。Windows 助手需自行退出旧进程并使用本批新版；生产地址填写 `https://sy.ggh.cool`，既有本地开发配置不会自动改指生产。生产登录后的业务及 EXE 完整人工验收仍需另行确认。

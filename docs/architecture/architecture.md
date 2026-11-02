@@ -639,3 +639,11 @@ Engine.snapshot 继续返回文件对象用于既有文件对账，额外保留�
 证据为被忽略的 `frontend/test-results/notes-69e0d9c8-d76f-4bb8-be5f-f8ee7505f31a/selected-sync/scope.json`（9 组检查）、同目录 `profiles/profiles.json`，以及 `frontend/test-results/sync-69e0d9c8-d76f-4bb8-be5f-f8ee7505f31a/write.json`、`restore.json`。故障注入保持第 28–30 节范围，未重新做磁盘满或满容量性能测试。未改前端构建代码，本批未重跑前端构建/组件测试；原记录仍为第 29 节。
 
 最终窗口版使用既有固定 PyInstaller 环境独立构建至 `sync-client/dist/directory-sync/privatespace-sync/privatespace-sync.exe`，保留原默认构建目录和用户配置；正常退出旧助手后启动新版，沿用原配置手动同步即可补齐目录。产物已构建成功，真实往返仍以源码 Tk 控件验证，本轮未执行打包 EXE 的全套人工交互或原生视觉检查。代码不增加依赖、不修改接口或数据库结构，未部署生产、未提交 Git，完整 M2 仍未关闭。操作文档、PRD 和 README 已同步。
+
+## 32. 当前版本推送与生产升级（2026-11-02）
+
+用户明确要求推送并将当前版本更新到生产。业务提交 `e3bf4d42733cd799582aef7ff94414de4153cd2f` 已推送至原 `codex/m2-sync-entry` 分支及发布标签 `preview-20261102-e3bf4d4`，未合并其他分支或改写历史。生产从该干净 Git 归档构建前后端镜像；本机及生产前端类型检查/构建通过，后端生产镜像打包跳过测试，实际业务测试依据仍为第 31 节的独立真实验证。
+
+北京时间 18:26 完成新镜像切换及 V5→V6。升级前停止 Web/后端写入，同一窗口完成数据库逻辑导出和文件对象归档，原源码/配置/secret 与旧镜像版本同时保留；备份在服务器受限目录，未把数据/secret 提交 Git。恢复 Web 前对比文件元数据整体 SHA-256、对象文件 SHA-256 和文件/账户/设备记录数，前后保持一致。生产匿名只读检查确认 HTTPS 200、HTTP 308、笔记鉴权 401、readiness UP、原账户仍 initialized=true、安全 Cookie 标记及新同步中心静态资源；开发电脑经公网也核对预期主包资源。
+
+生产未创建测试笔记或使用用户口令/设备令牌做开发测试，这些冒烟检查不代替登录后实际业务和 Windows EXE 人工验收；回滚分支未触发，备份恢复/异机灾难恢复未演练。完整 M2 仍未关闭。镜像版本、备份位置、校验边界和配套 Windows ZIP 的 SHA-256 记录于 `docs/DEPLOYMENT.md` 第 10 节，本次部署说明随后单独提交，不改变已发布业务提交与标签。
