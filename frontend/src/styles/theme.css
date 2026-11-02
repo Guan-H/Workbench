@@ -110,6 +110,28 @@ svg { flex-shrink: 0; }
 .home-calendar-legend .makeup { color: var(--color-heading-highlight-border); }
 .home-calendar-notice { margin: 16px 0 8px; color: var(--color-text-muted); font-size: 12px; line-height: 1.8; }
 .home-calendar-source { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary); font-size: 12px; line-height: 2; }
+.sync-content { flex: 1; min-height: 0; padding: 24px; overflow: auto; }
+.sync-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.sync-page-heading h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; }
+.sync-page-heading p, .sync-pairing > p, .sync-contact-note { color: var(--color-text-muted); font-size: 13px; line-height: 1.8; }
+.sync-scope { padding: 12px 16px; background: var(--color-selection); color: var(--color-primary-hover); line-height: 1.8; border-radius: 6px; }
+.sync-feedback { color: var(--color-primary); line-height: 1.8; }
+.sync-pairing, .sync-devices { margin-top: 20px; }
+.sync-pairing h2 { margin: 0; font-size: 16px; }
+.sync-pairing form { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.sync-pairing form > div { width: min(320px, 100%); }
+.sync-pairing label { display: block; margin-bottom: 8px; font-size: 13px; }
+.sync-pairing-code { margin-top: 20px; max-width: 640px; }
+.sync-pairing-code > div { display: flex; align-items: center; gap: 12px; }
+.sync-pairing-code output { padding: 10px 12px; background: var(--color-background); border: 1px solid var(--color-border); border-radius: 6px; overflow-wrap: anywhere; font-family: monospace; user-select: all; }
+.sync-pairing-code p { color: var(--color-text-muted); font-size: 12px; }
+.sync-device-scroll { overflow: auto; max-height: 420px; }
+.sync-device-table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: 13px; }
+.sync-device-table th { text-align: left; font-weight: 500; color: var(--color-text-muted); background: var(--color-surface); position: sticky; top: 0; }
+.sync-device-table th, .sync-device-table td { padding: 12px 8px; border-bottom: 1px solid var(--color-border); }
+.sync-device-table td:first-child { max-width: 220px; overflow-wrap: anywhere; }
+.sync-pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; font-size: 12px; }
+@media (max-width: 600px) { .sync-content { padding: 20px 16px; } .sync-page-heading { align-items: start; flex-direction: column; } .sync-pairing-code > div { align-items: stretch; flex-direction: column; } .sync-content button { min-height: 44px; } }
 @media (max-width: 1120px) { .home-columns { grid-template-columns: 380px minmax(0, 1fr); gap: 16px; } .home-card { padding: 16px; } }
 @media (max-width: 900px) { .home-columns { grid-template-columns: 1fr; } .home-calendar { grid-row: 1; } .home-month td { height: 44px; } .home-month-controls button { min-width: 44px; min-height: 44px; } }
 @media (max-width: 480px) { .home-content { padding: 20px 16px; } .home-heading { align-items: start; flex-direction: column; gap: 8px; margin-bottom: 20px; } .home-heading p { font-size: 12px; } .home-document-heading { align-items: start; flex-wrap: wrap; } .home-document-tabs button, .home-document-all { min-height: 44px; } .home-note-list time { max-width: 64px; text-align: right; line-height: 1.6; } .home-note-list button { gap: 8px; } }

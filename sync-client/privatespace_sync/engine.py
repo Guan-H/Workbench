@@ -12,10 +12,12 @@ from pathlib import Path
 import sqlite3
 import time
 import uuid
+from collections.abc import Callable
 
 from .credentials import protect
 from .filesystem import Filesystem, MARKER, digest, excluded, valid_path
 from .transport import Remote, SyncError
+from .state_lock import StateLock
 
 
 def configure(url: str, root: Path, state: Path, code: str) -> dict:
@@ -28,20 +30,21 @@ def configure(url: str, root: Path, state: Path, code: str) -> dict:
     state = state.resolve()
     if root == state or state.is_relative_to(root) or root.is_relative_to(state):
         raise SyncError("STATE_MUST_BE_SEPARATE")
-    root.mkdir(parents=True, exist_ok=True)
-    if any(not excluded(item.name) for item in root.iterdir()) or (root / MARKER).exists():
-        raise SyncError("M0_REQUIRES_NEW_EMPTY_DIRECTORY")
-    state.mkdir(parents=True, exist_ok=True)
-    if any(state.iterdir()):
-        raise SyncError("STATE_ALREADY_EXISTS")
-    pairing = Remote(url).request("/pair", body={"code": code})
-    encrypted = protect(pairing["token"].encode("ascii"))
-    identity = str(uuid.uuid4())
-    (state / "device.dpapi").write_bytes(encrypted)
-    (root / MARKER).write_text(identity, encoding="ascii")
-    config = {"url": url, "root": str(root), "identity": identity, "device": pairing["id"]}
-    (state / "config.json").write_text(json.dumps(config), encoding="utf-8")
-    return {"device": pairing["id"], "root": str(root)}
+    with StateLock(state):
+        root.mkdir(parents=True, exist_ok=True)
+        if any(not excluded(item.name) for item in root.iterdir()) or (root / MARKER).exists():
+            raise SyncError("M0_REQUIRES_NEW_EMPTY_DIRECTORY")
+        state.mkdir(parents=True, exist_ok=True)
+        if any(state.iterdir()):
+            raise SyncError("STATE_ALREADY_EXISTS")
+        pairing = Remote(url).request("/pair", body={"code": code})
+        encrypted = protect(pairing["token"].encode("ascii"))
+        identity = str(uuid.uuid4())
+        (state / "device.dpapi").write_bytes(encrypted)
+        (root / MARKER).write_text(identity, encoding="ascii")
+        config = {"url": url, "root": str(root), "identity": identity, "device": pairing["id"]}
+        (state / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        return {"device": pairing["id"], "root": str(root)}
 
 
 class Engine:
@@ -53,9 +56,11 @@ class Engine:
         self.fs = Filesystem(Path(self.config["root"]), self.config["identity"])
         self.stable_seconds = stable_seconds
         self.delete_grace = delete_grace
-        self.db = sqlite3.connect(self.state / "sync.sqlite")
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript("""
+        self.state_lock = StateLock(self.state)
+        try:
+            self.db = sqlite3.connect(self.state / "sync.sqlite")
+            self.db.row_factory = sqlite3.Row
+            self.db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS baseline (path TEXT PRIMARY KEY, metadata TEXT NOT NULL);
@@ -63,10 +68,18 @@ class Engine:
             CREATE TABLE IF NOT EXISTS conflict (path TEXT PRIMARY KEY, reason TEXT NOT NULL, copies TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS missing (path TEXT PRIMARY KEY, since REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        """)
+            """)
+        except Exception:
+            if hasattr(self, 'db'):
+                self.db.close()
+            self.state_lock.close()
+            raise
 
     def close(self):
-        self.db.close()
+        try:
+            self.db.close()
+        finally:
+            self.state_lock.close()
 
     def baseline(self) -> dict:
         return {row["path"]: json.loads(row["metadata"]) for row in self.db.execute("SELECT * FROM baseline")}
@@ -135,10 +148,14 @@ class Engine:
             json.dump({"path": path, "version": version, "sha256": digest(data)}, output)
             output.flush(); os.fsync(output.fileno())
 
-    def cycle(self, *, confirmation: str | None = None) -> dict:
+    def cycle(self, *, confirmation: str | None = None, should_pause: Callable[[], bool] | None = None) -> dict:
         issues = []
         write_failure = None
+        def checkpoint():
+            if should_pause and should_pause():
+                raise SyncError('PAUSE_REQUESTED')
         try:
+            checkpoint()
             first, first_issues = self.fs.scan()
             time.sleep(self.stable_seconds)
             local, second_issues = self.fs.scan()
@@ -152,6 +169,7 @@ class Engine:
             baseline = self.baseline()
             # Persist uploads before contacting the network, so an offline run still captures edits.
             for path, sha in local.items():
+                checkpoint()
                 if skip(path):
                     continue
                 base = baseline.get(path)
@@ -161,9 +179,11 @@ class Engine:
                     data = self.fs.read(path)
                     if data is not None and digest(data) == sha:
                         self.enqueue(path, base, data)
+            checkpoint()
             remote = self.snapshot()
             by_path = {file["path"].casefold(): file for file in remote.values()}
             for row in list(self.db.execute("SELECT * FROM queue ORDER BY path")):
+                checkpoint()
                 path = row["path"]
                 if skip(path):
                     continue
@@ -192,10 +212,12 @@ class Engine:
                         issues.append({"path": path, "code": "BASELINE_LOST"}); continue
                     self.conflict(path, file, request, "DELETE_MODIFY" if request["deleted"] or file["deleted"] else "BOTH_MODIFIED")
                     blocked.add(path)
+            checkpoint()
             remote = self.snapshot()
             baseline = self.baseline()
             deletes = []
             for file in remote.values():
+                checkpoint()
                 path = file["path"]
                 if skip(path) or excluded(path):
                     continue
@@ -246,10 +268,14 @@ class Engine:
             self.db.commit()
             deletes.sort(key=lambda item: (item["path"], item["direction"]))
             active_count = max(1, sum(not item["deleted"] for item in baseline.values()))
-            needs_confirmation = len(deletes) > 20 or len(deletes) / active_count > .1
+            pending_review = self.db.execute("SELECT value FROM setting WHERE key = 'delete_review'").fetchone()
+            # Once held for review, a shrinking batch must not silently fall back below the threshold.
+            needs_confirmation = bool(deletes) and (pending_review is not None or confirmation is not None
+                                                   or len(deletes) > 20 or len(deletes) / active_count > .1)
             fingerprint = digest(json.dumps(deletes, sort_keys=True).encode()) if deletes else None
             if not needs_confirmation or fingerprint == confirmation:
                 for deletion in deletes:
+                    checkpoint()
                     path = deletion["path"]
                     file = remote[deletion["id"]]
                     data = self.fs.read(path)
@@ -269,8 +295,12 @@ class Engine:
                             raise SyncError("LOCAL_CHANGED_BEFORE_DELETE")
                         self.fs.path(path).unlink()
                         self.acknowledge(file)
+                self.db.execute("DELETE FROM setting WHERE key = 'delete_review'")
+                self.db.commit()
                 pending_delete = None
             else:
+                self.db.execute("INSERT OR REPLACE INTO setting VALUES ('delete_review', ?)", (fingerprint,))
+                self.db.commit()
                 pending_delete = {"fingerprint": fingerprint, "changes": deletes}
             return {"status": "PAUSED" if write_failure else "REQUIRES_CONFIRMATION" if pending_delete else "OK", "code": write_failure, "issues": issues,
                     "deletionPreview": pending_delete, **self.status()}

@@ -10,6 +10,7 @@ import { checkRecycleSelection } from './check-recycle-selection.mjs'
 import { checkNoteCreation } from './check-note-creation.mjs'
 import { checkPreviewImages } from './check-preview-images.mjs'
 import { checkWorkspaceInteractions } from './check-workspace-interactions.mjs'
+import { checkSyncCenter } from './check-sync-center.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.NOTES_BACKEND
@@ -231,6 +232,7 @@ try {
     const importState = await checkNoteImports(page, request, context, origin, output)
     await checkPreviewImages(page, request, context, origin, output)
     await checkWorkspaceInteractions(page, request, output, origin)
+    await checkSyncCenter(page, request, output)
     await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, createState, moveState, importState }))
   } else {
     const state = JSON.parse(await readFile(new URL('state.json', output), 'utf8'))

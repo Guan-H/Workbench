@@ -324,7 +324,7 @@ class NotesIT {
         builder.environment().put("NOTES_SETUP", setup);
         builder.environment().put("NOTES_PASSWORD", password);
         Process process = builder.start();
-        boolean finished = process.waitFor(Duration.ofMinutes(5).toSeconds(), TimeUnit.SECONDS);
+        boolean finished = process.waitFor(Duration.ofMinutes(7).toSeconds(), TimeUnit.SECONDS);
         if (!finished) process.destroyForcibly();
         assertThat(finished).as("Notebook browser timeout").isTrue();
         assertThat(process.exitValue()).as(Files.readString(log)).isZero();

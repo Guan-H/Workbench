@@ -17,11 +17,12 @@ import ExportNotesDialog from './ExportNotesDialog.vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import HomeView from '../home/HomeView.vue'
+import SyncCenterView from '../sync/SyncCenterView.vue'
 
 const props = defineProps<{ username: string }>()
 const emit = defineEmits<{ logout: [] }>()
 const linkedNotePath = new URLSearchParams(window.location.search).get('note')
-const section = ref<'home' | 'notes'>(linkedNotePath ? 'notes' : 'home')
+const section = ref<'home' | 'notes' | 'sync'>(linkedNotePath ? 'notes' : 'home')
 const items = ref<Note[]>([])
 const current = ref<Note>()
 const text = ref('')
@@ -413,6 +414,12 @@ async function showHome() {
   await refresh()
 }
 
+async function showSync() {
+  if (!await leaveNote()) return
+  section.value = 'sync'
+  mobileNav.value = false
+}
+
 async function openHomeNote(note: Note) {
   if (!await leaveNote()) return
   section.value = 'notes'
@@ -679,7 +686,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
         <button :class="{ active: section === 'home' }" :aria-current="section === 'home' ? 'page' : undefined" @click="showHome"><House :size="18" aria-hidden="true" />工作台</button>
         <button :class="{ active: section === 'notes' && view !== 'trash' }" :aria-current="section === 'notes' && view !== 'trash' ? 'page' : undefined" @click="switchView('notes')"><FileText :size="18" />笔记</button>
         <button disabled title="M3 开放"><Shield :size="18" />密码保险库<span class="soon">待开放</span></button>
-        <button disabled title="M2 开放"><RefreshCw :size="18" />同步中心<span class="soon">待开放</span></button>
+        <button :class="{ active: section === 'sync' }" :aria-current="section === 'sync' ? 'page' : undefined" @click="showSync"><RefreshCw :size="18" />同步中心</button>
         <button :class="{ active: section === 'notes' && view === 'trash' }" :aria-current="section === 'notes' && view === 'trash' ? 'page' : undefined" @click="switchView('trash')"><Trash2 :size="18" />回收站</button>
       </nav>
       <div class="sidebar-bottom"><button disabled><Settings :size="18" />设置<span class="soon">待开放</span></button><div class="account"><span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span><span>{{ username }}<small>个人空间</small></span><button class="icon-button" @click="logout" aria-label="退出登录" title="退出登录"><LogOut :size="16" /></button></div></div>
@@ -688,6 +695,11 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
     <main v-if="section === 'home'" class="home-main">
       <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><span>工作台</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <HomeView :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
+    </main>
+
+    <main v-if="section === 'sync'" class="home-main">
+      <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><span>同步中心</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <SyncCenterView />
     </main>
 
     <aside v-show="section === 'notes' && treeVisible" class="file-sidebar">

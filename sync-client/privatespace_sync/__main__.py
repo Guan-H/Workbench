@@ -1,10 +1,11 @@
-"""M0 Windows prototype commands; no tray UI or automatic startup is installed."""
+"""Windows sync commands and the first M2 desktop entry; no automatic startup is installed."""
 
 from __future__ import annotations
 
 import argparse
 import getpass
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -22,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command")
+    gui = commands.add_parser('gui', help='Open the M2 desktop window; first slice requires a new empty directory')
+    gui.add_argument('--state', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local'))) / 'PrivateSpace' / 'Sync')
     pair = commands.add_parser("pair", help="Pair an empty test directory with a five-minute single-use code")
     pair.add_argument("--url", required=True)
     pair.add_argument("--root", type=Path, required=True)
@@ -45,6 +48,10 @@ def main() -> int:
     engine = None
     watcher = None
     try:
+        if args.command == 'gui':
+            from privatespace_sync.desktop import run
+            run(args.state)
+            return 0
         if args.command == "pair":
             print(json.dumps(configure(args.url, args.root, args.state, getpass.getpass("Pairing code: ")), ensure_ascii=False))
             return 0

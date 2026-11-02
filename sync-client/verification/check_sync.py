@@ -289,7 +289,7 @@ def write(web):
         # More than twenty destructive operations require the exact reviewed fingerprint.
         batch = root_a / "批量保护"
         batch.mkdir()
-        for index in range(21):
+        for index in range(22):
             (batch / f"{index}.md").write_text(f"batch-{index}", encoding="utf-8")
         settle(a); settle(b)
         for file in batch.iterdir():
@@ -297,18 +297,33 @@ def write(web):
         a.cycle()
         preview = a.cycle()
         assert preview["status"] == "REQUIRES_CONFIRMATION", preview
-        assert len(preview["deletionPreview"]["changes"]) == 21
+        assert len(preview["deletionPreview"]["changes"]) == 22
         assert all(not item["deleted"] for item in a.snapshot().values() if item["path"].startswith("批量保护/"))
-        (batch / "0.md").write_text("batch-0", encoding="utf-8")
-        outdated = a.cycle(confirmation=preview["deletionPreview"]["fingerprint"])
+        old_fingerprint = preview["deletionPreview"]["fingerprint"]
+        a.close(); a = engine(state_a)
+        for index in (0, 1):
+            (batch / f"{index}.md").write_text(f"batch-{index}", encoding="utf-8")
+        # A restarted, shrinking review remains held even below both automatic thresholds.
+        held = a.cycle()
+        assert held["status"] == "REQUIRES_CONFIRMATION", held
+        assert len(held["deletionPreview"]["changes"]) == 20
+        assert all(not item["deleted"] for item in a.snapshot().values() if item["path"].startswith("批量保护/"))
+        outdated = a.cycle(confirmation=old_fingerprint)
         assert outdated["status"] == "REQUIRES_CONFIRMATION"
+        assert all(not item["deleted"] for item in a.snapshot().values() if item["path"].startswith("批量保护/"))
         assert a.cycle(confirmation=outdated["deletionPreview"]["fingerprint"])["status"] == "OK"
+        assert a.db.execute("SELECT value FROM setting WHERE key = 'delete_review'").fetchone() is None
+        # Two subsequent small deletions are independent; B still receives 22 removals together.
+        for index in (0, 1):
+            (batch / f"{index}.md").unlink()
+        a.cycle()
+        assert a.cycle()["status"] == "OK"
         other = b.cycle()
         assert other["status"] == "REQUIRES_CONFIRMATION", other
-        assert len(list((root_b / "批量保护").glob("*.md"))) == 21
+        assert len(list((root_b / "批量保护").glob("*.md"))) == 22
         assert b.cycle(confirmation=other["deletionPreview"]["fingerprint"])["status"] == "OK"
-        assert len(list((state_b / "recycle").glob("*.bin"))) >= 20
-        results.append("concrete-bulk-delete-preview-and-local-recycle")
+        assert len(list((state_b / "recycle").glob("*.bin"))) >= 22
+        results.append("persistent-shrinking-delete-review-stale-confirmation-rejected-and-local-recycle")
 
         # Whole-root disappearance and a replacement empty directory never propagate deletions.
         moved_root = root_a.with_name(root_a.name + "-disconnected")
