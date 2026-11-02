@@ -13,6 +13,8 @@
   --color-primary: #39765b;
   --color-primary-hover: #2e624a;
   --color-selection: #e7efe9;
+  --color-editor-selection: #bfdcca;
+  --color-editor-active-line: #39765b0a;
   --color-text: #252a28;
   --color-text-muted: #66706a;
   --color-border: #e1e6e1;
@@ -58,6 +60,59 @@ svg { flex-shrink: 0; }
 .auth-submit { width: 100%; margin-top: 26px; justify-content: space-between; padding: 12px 16px; }
 .login-note { margin-top: 24px; }
 .workspace { height: 100dvh; display: flex; overflow: hidden; font-size: 14px; }
+.home-main { min-width: 0; flex: 1; display: flex; flex-direction: column; background: var(--color-background); }
+.home-content { padding: 24px; overflow: auto; flex: 1; }
+.home-dashboard { width: 100%; }
+.home-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.home-heading h1 { margin: 0; font-size: 24px; font-weight: 600; }
+.home-heading p { margin: 0; color: var(--color-text-muted); font-size: 13px; line-height: 1.8; }
+.home-heading p span { margin-left: 12px; font-size: 12px; }
+.home-columns { display: grid; grid-template-columns: minmax(380px, 400px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.home-card { min-width: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px; }
+.home-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.home-card-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 600; }
+.home-card-heading h2 svg { color: var(--color-primary); }
+.home-card-heading > span { font-size: 12px; color: var(--color-text-muted); }
+.home-card-heading > button { border: 0; color: var(--color-primary); font-size: 12px; }
+.home-document-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.home-document-tabs { display: flex; gap: 4px; min-width: 0; }
+.home-document-tabs button { border-color: transparent; min-height: 36px; padding: 6px 8px; font-size: 13px; }
+.home-document-tabs button[aria-selected="true"] { background: var(--color-selection); color: var(--color-primary-hover); font-weight: 600; }
+.home-document-all { flex-shrink: 0; border: 0; color: var(--color-primary); font-size: 12px; padding-inline: 4px; }
+.home-note-list { list-style: none; margin: 0; padding: 0; }
+.home-note-list li + li { border-top: 1px solid var(--color-border); }
+.home-note-list button { width: 100%; min-height: 44px; padding: 8px 0; gap: 10px; border: 0; text-align: left; }
+.home-note-list button:hover { background: var(--color-background); }
+.home-note-list button > svg { color: var(--color-text-muted); }
+.home-note-info { min-width: 0; flex: 1; display: grid; gap: 6px; text-align: left; }
+.home-note-info strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-note-list time { flex-shrink: 0; color: var(--color-text-muted); font-size: 12px; }
+.home-list-message { color: var(--color-text-muted); line-height: 1.8; padding-block: 16px; margin: 0; overflow-wrap: anywhere; }
+.home-holiday-summary { background: var(--color-selection); padding: 12px; border-radius: 6px; }
+.home-holiday-summary > span { color: var(--color-primary-hover); font-size: 12px; }
+.home-holiday-summary strong { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; font-size: 14px; font-weight: 600; margin-top: 0; }
+.home-holiday-summary strong small { font-size: 14px; font-weight: 400; color: var(--color-primary-hover); }
+.home-holiday-summary p { font-size: 12px; color: var(--color-text-muted); line-height: 1.8; margin: 8px 0 0; }
+.home-month-controls { display: flex; align-items: center; gap: 4px; margin-top: 20px; }
+.home-month-controls h3 { flex: 1; text-align: center; font-size: 14px; margin: 0; font-weight: 600; }
+.home-month-controls button { min-height: 40px; min-width: 36px; padding-inline: 6px; }
+.home-month { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; }
+.home-month th { font-size: 12px; font-weight: 400; color: var(--color-text-muted); height: 36px; }
+.home-month td { height: 40px; text-align: center; padding: 2px; }
+.home-calendar-day { height: 36px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 1px; border-radius: 4px; font-size: 13px; }
+.home-calendar-day small { font-size: 10px; align-self: start; margin-top: 3px; }
+.home-calendar-day.weekend { background: var(--color-sidebar); color: var(--color-text-muted); }
+.home-calendar-day.holiday { background: var(--color-selection); color: var(--color-primary-hover); }
+.home-calendar-day.makeup { background: var(--color-heading-highlight); color: var(--color-heading-highlight-border); }
+.home-calendar-day.today { outline: 2px solid var(--color-primary); outline-offset: -2px; font-weight: 700; }
+.home-calendar-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 12px; margin-top: 16px; color: var(--color-text-muted); }
+.home-calendar-legend .holiday { color: var(--color-primary-hover); }
+.home-calendar-legend .makeup { color: var(--color-heading-highlight-border); }
+.home-calendar-notice { margin: 16px 0 8px; color: var(--color-text-muted); font-size: 12px; line-height: 1.8; }
+.home-calendar-source { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary); font-size: 12px; line-height: 2; }
+@media (max-width: 1120px) { .home-columns { grid-template-columns: 380px minmax(0, 1fr); gap: 16px; } .home-card { padding: 16px; } }
+@media (max-width: 900px) { .home-columns { grid-template-columns: 1fr; } .home-calendar { grid-row: 1; } .home-month td { height: 44px; } .home-month-controls button { min-width: 44px; min-height: 44px; } }
+@media (max-width: 480px) { .home-content { padding: 20px 16px; } .home-heading { align-items: start; flex-direction: column; gap: 8px; margin-bottom: 20px; } .home-heading p { font-size: 12px; } .home-document-heading { align-items: start; flex-wrap: wrap; } .home-document-tabs button, .home-document-all { min-height: 44px; } .home-note-list time { max-width: 64px; text-align: right; line-height: 1.6; } .home-note-list button { gap: 8px; } }
 .global-sidebar { background: var(--color-sidebar); width: 176px; flex-shrink: 0; border-right: 1px solid var(--color-border); padding: 24px 12px 12px; display: flex; flex-direction: column; }
 .global-sidebar .brand { padding: 0 4px; font-size: 17px; }
 .global-sidebar .brand-mark { width: 30px; height: 30px; }
@@ -172,7 +227,9 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .markdown-editor .cm-content { padding: 12px 16px 80px; }
 .markdown-editor .cm-gutters { background: white; border: 0; color: #767e78; font-size: 11px; }
 .markdown-editor .cm-focused { outline: none; }
-.markdown-editor .cm-activeLine { background: #f5f7f4; }
+.markdown-editor .cm-activeLine { background: var(--color-editor-active-line); }
+.markdown-editor .cm-selectionBackground,
+.markdown-editor .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { background-color: var(--color-editor-selection); }
 .markdown-editor .cm-activeLineGutter { background: var(--color-selection); }
 .markdown-preview { padding: 8px 32px 80px; overflow: auto; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; flex: 1; }
 .markdown-preview > :first-child { margin-top: 0; }

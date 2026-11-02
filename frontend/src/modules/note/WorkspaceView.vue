@@ -2,10 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NotebookPen, FileText, Folder, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
   ChevronsLeft, PanelLeft, Columns2, Code2, Eye, Clock3, Star, Upload, X, ChevronRight, ListTree, Save,
-  FilePlus2, Paperclip, Menu, RotateCcw, Download, CheckCircle2, CircleAlert, Info, LoaderCircle } from 'lucide-vue-next'
+  FilePlus2, Paperclip, Menu, RotateCcw, Download, CheckCircle2, CircleAlert, Info, LoaderCircle, House } from 'lucide-vue-next'
 import { diffLines } from 'diff'
 import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type RevisionPage, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
 import MarkdownEditor from './MarkdownEditor.vue'
+import MarkdownPreview from './MarkdownPreview'
 import FileTree from './FileTree.vue'
 import FileContextMenu from './FileContextMenu.vue'
 import CreateItemDialog from './CreateItemDialog.vue'
@@ -15,10 +16,12 @@ import RecycleRestoreDialog from './RecycleRestoreDialog.vue'
 import ExportNotesDialog from './ExportNotesDialog.vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
-import { renderMarkdown } from './markdown'
+import HomeView from '../home/HomeView.vue'
 
 const props = defineProps<{ username: string }>()
 const emit = defineEmits<{ logout: [] }>()
+const linkedNotePath = new URLSearchParams(window.location.search).get('note')
+const section = ref<'home' | 'notes'>(linkedNotePath ? 'notes' : 'home')
 const items = ref<Note[]>([])
 const current = ref<Note>()
 const text = ref('')
@@ -196,7 +199,6 @@ async function moved(note: Note) {
   saveFeedback.value = { kind: 'success', text: '路径和可修复的相对链接已保存到服务器。' }
 }
 const dirty = computed(() => !!current.value && text.value !== savedText.value)
-const preview = computed(() => current.value ? renderMarkdown(text.value, current.value.path) : '')
 const outline = computed(() => {
   let fenced = false
   return text.value.split(/\r?\n/).flatMap((line, index) => {
@@ -205,8 +207,9 @@ const outline = computed(() => {
     return match ? [{ title: match[2]!, depth: match[1]!.length, line: index }] : []
   })
 })
+const activeItems = computed(() => items.value.filter(item => !item.deleted))
 const visibleItems = computed(() => {
-  const active = items.value.filter((item) => !item.deleted)
+  const active = activeItems.value
   if (view.value === 'favorites') return active.filter((item) => item.favorite)
   if (view.value === 'recent') return active.filter((item) => item.type === 'note' && item.lastOpenedAt)
     .sort((a, b) => (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? '')).slice(0, 20)
@@ -316,7 +319,7 @@ async function saveNow(): Promise<boolean> {
         pending = attempt
         persistDraft()
         status.value = '正在保存…'
-        const saved = await write<Note>(`/notes/${attempt.id}`, 'PUT', { path: attempt.path, type: 'note', content: attempt.content, baseVersion: attempt.baseVersion }, attempt.operation)
+        const saved = await write<Note>(`/notes/${attempt.id}`, 'PUT', { path: attempt.path, type: 'note', content: attempt.content, baseVersion: attempt.baseVersion }, attempt.operation, AbortSignal.timeout(30_000))
         current.value = saved
         savedText.value = attempt.content
         pending = undefined
@@ -391,13 +394,33 @@ async function created(note: Note) {
 
 async function switchView(next: typeof view.value) {
   if (!await leaveNote()) return
-  view.value = next !== 'notes' && view.value === next ? 'notes' : next
+  const toggle = section.value === 'notes' && view.value === next
+  section.value = 'notes'
+  view.value = next !== 'notes' && toggle ? 'notes' : next
   selectFolder('')
   query.value = ''
   mobileNav.value = false
   if (view.value === 'trash') {
     try { searchResults.value = await listNotes(true) } catch (error) { problem.value = message(error) }
   }
+}
+
+async function showHome() {
+  if (!await leaveNote()) return
+  section.value = 'home'
+  mobileNav.value = false
+  loading.value = true
+  await refresh()
+}
+
+async function openHomeNote(note: Note) {
+  if (!await leaveNote()) return
+  section.value = 'notes'
+  view.value = 'notes'
+  query.value = ''
+  folder.value = note.path.split('/').slice(0, -1).join('/')
+  revealPath.value = note.path
+  await openNote(note)
 }
 
 async function history(note = current.value) {
@@ -588,6 +611,7 @@ async function logout() {
 }
 
 function message(error: unknown) {
+  if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) return '保存等待超过 30 秒，服务器结果尚未确认。草稿和本次操作已保留，请重试确认。'
   if (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) return '连接中断，请检查网络和后端服务后重试；尚未收到服务器成功确认。'
   return error instanceof Error ? error.message : '操作失败，请重试。'
 }
@@ -621,14 +645,8 @@ async function jumpHeading(index: number) {
   heading.classList.add('outline-highlight')
   heading.scrollIntoView({ behavior: 'auto', block: 'start' })
 }
-function previewClick(event: MouseEvent) {
+function previewClick() {
   clearOutlineHighlight()
-  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-note-path]')
-  if (!link) return
-  event.preventDefault()
-  const target = items.value.find((note) => note.path === link.dataset.notePath)
-  if (target) void openNote(target)
-  else problem.value = '链接指向的笔记不存在。'
 }
 
 watch(query, () => {
@@ -639,7 +657,16 @@ watch(query, () => {
     catch (error) { if (serial === querySerial) problem.value = message(error) }
   }, 250)
 })
-onMounted(() => { void refresh(); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('keydown', shortcut) })
+async function loadWorkspace() {
+  await refresh()
+  if (!linkedNotePath) return
+  const linked = items.value.find(note => note.type === 'note' && !note.deleted && note.path === linkedNotePath)
+  if (!linked) { if (!problem.value) problem.value = '链接指向的笔记不存在或已删除。'; return }
+  folder.value = linked.path.split('/').slice(0, -1).join('/')
+  revealPath.value = linked.path
+  await openNote(linked)
+}
+onMounted(() => { void loadWorkspace(); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('keydown', shortcut) })
 onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTimer); window.clearTimeout(feedbackTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', shortcut) })
 </script>
 
@@ -649,15 +676,21 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
       <div class="brand"><span class="brand-mark"><NotebookPen :size="20" /></span><strong>私有空间</strong></div>
       <p class="nav-section-label">工作空间</p>
       <nav aria-label="主要导航">
-        <button :class="{ active: view !== 'trash' }" @click="switchView('notes')"><FileText :size="18" />笔记</button>
+        <button :class="{ active: section === 'home' }" :aria-current="section === 'home' ? 'page' : undefined" @click="showHome"><House :size="18" aria-hidden="true" />工作台</button>
+        <button :class="{ active: section === 'notes' && view !== 'trash' }" :aria-current="section === 'notes' && view !== 'trash' ? 'page' : undefined" @click="switchView('notes')"><FileText :size="18" />笔记</button>
         <button disabled title="M3 开放"><Shield :size="18" />密码保险库<span class="soon">待开放</span></button>
         <button disabled title="M2 开放"><RefreshCw :size="18" />同步中心<span class="soon">待开放</span></button>
-        <button :class="{ active: view === 'trash' }" @click="switchView('trash')"><Trash2 :size="18" />回收站</button>
+        <button :class="{ active: section === 'notes' && view === 'trash' }" :aria-current="section === 'notes' && view === 'trash' ? 'page' : undefined" @click="switchView('trash')"><Trash2 :size="18" />回收站</button>
       </nav>
       <div class="sidebar-bottom"><button disabled><Settings :size="18" />设置<span class="soon">待开放</span></button><div class="account"><span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span><span>{{ username }}<small>个人空间</small></span><button class="icon-button" @click="logout" aria-label="退出登录" title="退出登录"><LogOut :size="16" /></button></div></div>
     </aside>
 
-    <aside v-show="treeVisible" class="file-sidebar">
+    <main v-if="section === 'home'" class="home-main">
+      <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><span>工作台</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <HomeView :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
+    </main>
+
+    <aside v-show="section === 'notes' && treeVisible" class="file-sidebar">
       <div class="file-sidebar-title"><strong>{{ view === 'trash' ? '回收站' : '我的笔记' }}</strong><button class="icon-button" title="收起文件树" aria-label="收起文件树" @click="treeVisible = false"><ChevronsLeft :size="17" /></button></div>
       <div class="search-field"><Search :size="16" /><input id="note-search" v-model="query" placeholder="搜索笔记…" aria-label="搜索笔记" /><kbd>⌘ K</kbd></div>
       <div v-if="view !== 'trash'" class="file-actions"><button @click="openCreate('note')"><Plus :size="16" />新建笔记</button><button class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></button></div>
@@ -671,13 +704,13 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
           <button v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" aria-haspopup="menu" @click="view === 'trash' ? (note.type === 'folder' ? beginRecycle(note) : history(note)) : openNote(note)"><component :is="note.type === 'folder' ? Folder : FileText" :size="16" /><span>{{ note.path }}<small v-if="view === 'trash' && !note.deleted"> · 尚有待恢复子项</small></span></button>
           <p v-if="!(query || view === 'trash' ? searchResults : visibleItems).length" class="sidebar-empty">{{ view === 'trash' ? '回收站为空' : '暂无匹配的笔记' }}</p>
         </template>
-        <template v-else><FileTree :items="items.filter(item => !item.deleted)" :selected="treeSelection" :reveal-path="revealPath" @open="openNote" @folder="selectFolder" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
+        <template v-else><FileTree :items="activeItems" :selected="treeSelection" :reveal-path="revealPath" @open="openNote" @folder="selectFolder" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
       </div>
       <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><button @click="directoryImport = true"><Upload :size="15" />批量导入目录</button><button :disabled="exporting" @click="exportNotes"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small><small v-if="folder">当前目录：{{ folder }} <button @click="selectFolder('')">回到根目录</button></small></div>
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
-    <main class="note-main">
+    <main v-show="section === 'notes'" class="note-main">
       <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><button v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></button><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
       <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div>
@@ -689,14 +722,14 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
         <div class="editor-panels" :class="['mode-' + mode, { resizing }]" :style="{ '--split-ratio': splitPercent / 100 }" @dragover.prevent @drop.prevent="($event.dataTransfer?.files[0]) && upload($event.dataTransfer.files[0])" @paste.capture="($event.clipboardData?.files[0]) && ($event.preventDefault(), upload($event.clipboardData.files[0]))">
           <section v-show="mode !== 'preview'" class="source-panel" aria-label="Markdown 编辑区"><div class="panel-label">MARKDOWN</div><MarkdownEditor :key="current.id" :model-value="text" @update:model-value="edit" @save="manualSave" /></section>
           <div v-if="mode === 'split'" class="split-divider" role="separator" tabindex="0" aria-label="调整编辑区和预览区宽度" title="拖动调整宽度，双击恢复各半；方向键微调" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" :aria-valuenow="splitPercent" :aria-valuetext="`编辑区 ${splitPercent}%，预览区 ${100 - splitPercent}%`" @pointerdown="startResize" @pointermove="resizeSplit" @pointerup="endResize" @pointercancel="endResize" @lostpointercapture="endResize" @keydown="resizeKey" @dblclick="splitPercent = 50" />
-          <section v-show="mode !== 'edit'" class="preview-panel" aria-label="笔记预览"><div class="panel-label">预览</div><article ref="previewArea" class="markdown-preview" @click="previewClick" v-html="preview" /></section>
+          <section v-show="mode !== 'edit'" class="preview-panel" aria-label="笔记预览"><div class="panel-label">预览</div><article ref="previewArea" class="markdown-preview" @click="previewClick"><MarkdownPreview :key="current.id" :source="text" :path="current.path" :enabled="section === 'notes' && mode !== 'edit'" /></article></section>
         </div>
       </template>
       <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><button v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</button><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>
       <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ status }}</span><span v-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span></footer>
     </main>
 
-    <aside v-if="outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><button v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</button><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
+    <aside v-if="section === 'notes' && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><button v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</button><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
     <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
     <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" />

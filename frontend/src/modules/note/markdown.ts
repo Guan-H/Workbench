@@ -29,19 +29,20 @@ export function renderMarkdown(source: string, path: string) {
     const token = tokens[index]!
     const target = relativePath(path, String(token.attrGet('src') ?? ''))
     if (!target || !/\.(png|jpe?g|webp)$/i.test(target)) return '<span class="blocked-image">[图片未加载：仅显示库内 PNG/JPEG/WebP 图片]</span>'
-    return `<img src="/api/v1/files/content?path=${encodeURIComponent(target)}" alt="${md.utils.escapeHtml(token.content)}" loading="lazy" />`
+    return `<img src="/api/v1/files/content?path=${encodeURIComponent(target)}" alt="${md.utils.escapeHtml(token.content)}" loading="lazy" decoding="async" />`
   }
   const defaultLink = md.renderer.rules.link_open
   md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
     const token = tokens[index]!
     const href = String(token.attrGet('href') ?? '')
     const target = relativePath(path, href)
-    if (target && /\.md$/i.test(target)) { token.attrSet('href', '#'); token.attrSet('data-note-path', target) }
+    if (target && /\.md$/i.test(target)) { token.attrSet('href', `?note=${encodeURIComponent(target)}`); token.attrSet('data-note-path', target) }
     else {
       if (target) token.attrSet('href', `/api/v1/files/content?path=${encodeURIComponent(target)}`)
-      token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer')
     }
+    token.attrSet('target', '_blank')
+    token.attrSet('rel', 'noopener noreferrer')
     return defaultLink ? defaultLink(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)
   }
-  return DOMPurify.sanitize(md.render(source), { FORBID_TAGS: ['style', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'], ADD_ATTR: ['data-note-path', 'data-source-line'] })
+  return DOMPurify.sanitize(md.render(source), { FORBID_TAGS: ['style', 'iframe', 'object', 'embed'], FORBID_ATTR: ['style'], ADD_ATTR: ['data-note-path', 'data-source-line', 'target'] })
 }

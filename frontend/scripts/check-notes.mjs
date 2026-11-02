@@ -8,6 +8,8 @@ import { checkNoteMoves } from './check-note-moves.mjs'
 import { checkNoteImports } from './check-note-imports.mjs'
 import { checkRecycleSelection } from './check-recycle-selection.mjs'
 import { checkNoteCreation } from './check-note-creation.mjs'
+import { checkPreviewImages } from './check-preview-images.mjs'
+import { checkWorkspaceInteractions } from './check-workspace-interactions.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.NOTES_BACKEND
@@ -44,6 +46,8 @@ try {
     await page.getByRole('button', { name: '创建并进入' }).click()
   } else await page.getByRole('button', { name: '进入私有空间' }).click()
   await page.getByRole('navigation', { name: '主要导航' }).waitFor()
+  await page.getByRole('heading', { name: '工作台', exact: true }).waitFor()
+  await page.getByRole('button', { name: '进入笔记', exact: true }).click()
 
   async function request(path, method = 'GET', body, operation = crypto.randomUUID(), extra = {}) {
     return page.evaluate(async ({ path, method, body, operation, extra }) => {
@@ -202,6 +206,7 @@ try {
     await page.locator('input[type=file]:not([accept])').setInputFiles({ name: '图片.png', mimeType: 'image/png', buffer: bytes })
     await poll(list, items => items.some(item => item.type === 'attachment'), 'attachment upload')
     await page.getByRole('button', { name: '保存笔记', exact: true }).click()
+    await page.getByTestId('save-feedback').filter({ hasText: '已保存到服务器' }).waitFor()
     const attachment = (await list()).find(item => item.type === 'attachment')
     const imageResponse = await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent(attachment.path))
     assert.deepEqual(await imageResponse.body(), bytes)
@@ -224,6 +229,8 @@ try {
     const moveState = await checkNoteMoves(page, request, list, context, origin, output)
     await checkRecycleSelection(page, request, output)
     const importState = await checkNoteImports(page, request, context, origin, output)
+    await checkPreviewImages(page, request, context, origin, output)
+    await checkWorkspaceInteractions(page, request, output, origin)
     await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, createState, moveState, importState }))
   } else {
     const state = JSON.parse(await readFile(new URL('state.json', output), 'utf8'))

@@ -4,8 +4,8 @@ export class ApiError extends Error {
 
 let csrfToken = ''
 
-export async function refreshCsrf() {
-  const response = await fetch('/api/v1/auth/csrf', { credentials: 'same-origin', cache: 'no-store' })
+export async function refreshCsrf(signal?: AbortSignal | null) {
+  const response = await fetch('/api/v1/auth/csrf', { credentials: 'same-origin', cache: 'no-store', signal })
   if (!response.ok) throw new ApiError(response.status, 'CSRF_UNAVAILABLE', '无法连接账户服务，请检查后端后重试。')
   csrfToken = (await response.json() as { token: string }).token
 }
@@ -15,7 +15,7 @@ export async function api<T>(path: string, options: RequestInit = {}, retryCsrf 
   const writing = options.method && options.method !== 'GET'
   // Another tab or a rejected request can invalidate the cookie-backed token.
   // Resolve it immediately before each mutation rather than keeping an old login token.
-  if (writing) await refreshCsrf()
+  if (writing) await refreshCsrf(options.signal)
   if (writing) headers.set('X-CSRF-TOKEN', csrfToken)
   if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const response = await fetch(`/api/v1${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' })
@@ -29,8 +29,8 @@ export async function api<T>(path: string, options: RequestInit = {}, retryCsrf 
   return await response.json() as T
 }
 
-export function write<T>(path: string, method: string, body?: unknown, operation: string = crypto.randomUUID()): Promise<T> {
-  return api<T>(path, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'Idempotency-Key': operation } })
+export function write<T>(path: string, method: string, body?: unknown, operation: string = crypto.randomUUID(), signal?: AbortSignal): Promise<T> {
+  return api<T>(path, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'Idempotency-Key': operation }, signal })
 }
 
 export interface UploadProgress { loaded: number; total: number | null; transferred: boolean }
