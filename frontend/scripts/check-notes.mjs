@@ -11,6 +11,7 @@ import { checkNoteCreation } from './check-note-creation.mjs'
 import { checkPreviewImages } from './check-preview-images.mjs'
 import { checkWorkspaceInteractions } from './check-workspace-interactions.mjs'
 import { checkSyncCenter } from './check-sync-center.mjs'
+import { realResponseGate } from './real-response-gate.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.NOTES_BACKEND
@@ -21,7 +22,8 @@ assert.match(run ?? '', /^[\da-f-]{36}$/)
 assert.ok(['write', 'restore'].includes(phase) && password && process.env.NOTES_SETUP)
 const output = new URL(`../test-results/notes-${run}/`, import.meta.url)
 await mkdir(output, { recursive: true })
-const server = await createServer({ configFile: false, plugins: [vue()],
+const imageGate = realResponseGate(backend)
+const server = await createServer({ configFile: false, plugins: [vue(), imageGate.plugin],
   root: fileURLToPath(new URL('../', import.meta.url)), logLevel: 'error',
   server: { host: '127.0.0.1', port: Number(process.env.NOTES_FRONTEND_PORT), strictPort: true, proxy: { '/api': backend } } })
 let browser
@@ -230,7 +232,7 @@ try {
     const moveState = await checkNoteMoves(page, request, list, context, origin, output)
     await checkRecycleSelection(page, request, output)
     const importState = await checkNoteImports(page, request, context, origin, output)
-    await checkPreviewImages(page, request, context, origin, output)
+    await checkPreviewImages(page, request, context, origin, output, imageGate)
     await checkWorkspaceInteractions(page, request, output, origin)
     await checkSyncCenter(page, request, output)
     await writeFile(new URL('state.json', output), JSON.stringify({ id: note.id, path: note.path, imported: importedNote.id, attachment: attachment.path, createState, moveState, importState }))
@@ -265,4 +267,4 @@ try {
     console.error('Visible failure state:', await activePage.locator('body').innerText())
   }
   throw error
-} finally { await browser?.close(); await server.close() }
+} finally { imageGate.release(); await browser?.close(); await server.close() }

@@ -32,6 +32,11 @@ class NotesIT {
     void verifiesAuthenticatedNotebookAndRestartPersistence() throws Exception {
         try (var socket = new ServerSocket(0)) { frontendPort = socket.getLocalPort(); }
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_FILE_RENAMES"))) {
+                fileRenames(context, true);
+                verifyFileRenameRollback(context);
+                return;
+            }
             var verificationJdbc = context.getBean(JdbcTemplate.class);
             // This constraint exists only in the isolated database and rejects the second file's real INSERT.
             verificationJdbc.execute("ALTER TABLE note_file ADD CONSTRAINT verify_import_failure CHECK (path <> '导入事务/失败.md')");
@@ -43,7 +48,11 @@ class NotesIT {
             }
             verifyExportIntegrity(context);
             verifyUnrelatedRenamePreview(context);
-            if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) sync(context, "write");
+            if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) {
+                fileRenames(context, false);
+                verifyFileRenameRollback(context);
+                sync(context, "write");
+            }
             verifyMoveRollback(context);
             verifyDirectoryRecycle(context);
             verifySelectiveRecovery(context);
@@ -354,5 +363,45 @@ class NotesIT {
         assertThat(finished).as("Sync prototype timed out").isTrue();
         assertThat(process.exitValue()).as(Files.readString(log)).isZero();
         assertThat(Files.readString(log)).contains("PASS: sync-" + phase);
+    }
+
+    private void verifyFileRenameRollback(ConfigurableApplicationContext context) {
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        var jdbc = context.getBean(JdbcTemplate.class);
+        var source = notes.upload("改名事务原文件.txt", "# rollback\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8), UUID.randomUUID().toString());
+        var request = new com.privatespace.modules.note.dto.SyncRenameRequest(source.id(), source.path(), "改名事务新目录/新文件.md",
+                source.version(), source.sha256(), null);
+        jdbc.update("INSERT INTO note_revision (file_id, version, object_id, path, deleted) SELECT id, version + 1, object_id, path, deleted FROM note_file WHERE id = ?", source.id());
+        try {
+            assertThatThrownBy(() -> notes.syncRename(request, UUID.randomUUID().toString(), UUID.randomUUID().toString()))
+                    .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+            assertThat(notes.read(source.id(), false).path()).isEqualTo(source.path());
+            assertThat(notes.read(source.id(), false).type()).isEqualTo("attachment");
+            assertThat(notes.read(source.id(), false).version()).isEqualTo(source.version());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_file WHERE path = '改名事务新目录'", Long.class)).isZero();
+        } finally {
+            jdbc.update("DELETE FROM note_revision WHERE file_id = ? AND version = 2", source.id());
+        }
+        assertThat(notes.syncRename(request, UUID.randomUUID().toString(), UUID.randomUUID().toString()).id()).isEqualTo(source.id());
+    }
+
+    private void fileRenames(ConfigurableApplicationContext context, boolean initialize) throws Exception {
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/renames-" + run).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        Path log = output.resolve("verification.log");
+        var builder = new ProcessBuilder("python", "verification/check_file_renames.py", initialize ? "initialize" : "existing")
+                .directory(Path.of("../sync-client").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("NOTES_SETUP", setup);
+        builder.environment().put("RENAME_OUTPUT", output.toString());
+        Process process = builder.start();
+        boolean finished = process.waitFor(3, TimeUnit.MINUTES);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("File rename verification timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: file-renames");
     }
 }

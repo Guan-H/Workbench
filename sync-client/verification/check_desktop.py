@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import time
 import tkinter as tk
+from urllib.parse import quote
 import urllib.request
 import uuid
 
@@ -106,6 +107,50 @@ try:
     wait(lambda: app.phase == 'READY', 'manual sync while paused')
     assert any(item['path'] == paused.name for item in catalog())
     checks.append('pause prevents background publication; manual sync uses real backend')
+    # Twenty-two real suffix renames guarantee the configured bulk-delete guard is reached.
+    renamed = root_path / '后缀改名验收'
+    renamed.mkdir()
+    for index in range(22):
+        (renamed / f'{index}.txt').write_text(f'# suffix rename {index}\n', encoding='utf-8')
+    app.once_button.invoke()
+    wait(lambda: app.phase == 'READY' and not app.once_button.instate(['disabled']), 'upload TXT fixtures')
+    old_files = {item['path'].removesuffix('.txt'): item for item in catalog() if item['path'].startswith('后缀改名验收/')}
+    for file in renamed.glob('*.txt'):
+        file.rename(file.with_suffix('.md'))
+    app.once_button.invoke()
+    wait(lambda: app.phase == 'ATTENTION' and not app.once_button.instate(['disabled']), 'hold bulk file-ID renames')
+    until = time.monotonic() + 2.2
+    while time.monotonic() < until:
+        window.update(); time.sleep(.05)
+    app.once_button.invoke()
+    wait(lambda: app.phase == 'ATTENTION' and not app.once_button.instate(['disabled']), 'rename deletion review')
+    preview = app.snapshot['result']['deletionPreview']
+    assert len(preview['changes']) == 22 and all(item['direction'] == 'rename-remote' for item in preview['changes'])
+    assert '改名待确认' in app.status.get()
+    assert all(reason.startswith('待确认服务器改名') for _, reason in app.items)
+    app.pause_button.invoke()
+    wait(lambda: app.phase == 'PAUSED', 'pause a held rename batch')
+    assert '已暂停' in app.status.get()
+    app.once_button.invoke()
+    wait(lambda: app.phase == 'ATTENTION' and not app.once_button.instate(['disabled']), 'held rename batch remains protected')
+    active = [item for item in catalog() if item['path'].startswith('后缀改名验收/')]
+    assert len(active) == 22 and all(not item['deleted'] and item['path'].endswith('.txt') for item in active)
+    app.preview_button.invoke()
+    def descendants(widget):
+        return [child for item in widget.winfo_children() for child in [item, *descendants(item)]]
+    confirmation = next(widget for widget in descendants(app.deletion_dialog)
+                        if widget.winfo_class() == 'TButton' and widget.cget('text') == '确认本批变更')
+    confirmation.invoke()
+    wait(lambda: app.phase == 'READY' and not app.once_button.instate(['disabled']), 'confirm exact rename delete batch')
+    active = [item for item in catalog() if item['path'].startswith('后缀改名验收/')]
+    assert len(active) == 22 and all(item['type'] == 'note' and item['path'].endswith('.md') for item in active)
+    for item in active:
+        assert item['id'] == old_files[item['path'].removesuffix('.md')]['id']
+        assert request('/notes/' + item['id'])['content'].encode('utf-8') == (root_path / item['path']).read_bytes()
+        assert len(request('/notes/' + item['id'] + '/history')['items']) == 2
+    recycled = request('/notes?deleted=true&query=' + quote('后缀改名验收/'))['items']
+    assert not recycled
+    checks.append('real Windows TXT-to-MD file-ID rename retains original server IDs, two history versions, no duplicate or tombstone, CRLF bytes intact; bulk rename review and pause remain protected')
     app.close()
     while not app.worker.stopped.wait(.05):
         window.update()

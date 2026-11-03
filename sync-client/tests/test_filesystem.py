@@ -12,6 +12,25 @@ from privatespace_sync.transport import SyncError
 
 
 class FilesystemTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows file identity test')
+    def test_rename_keeps_identity_but_copy_and_atomic_replace_do_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = str(uuid.uuid4())
+            (root / MARKER).write_text(identity, encoding='ascii')
+            fs = Filesystem(root, identity)
+            (root / 'old.txt').write_bytes(b'identical')
+            original = fs.read_state('old.txt')[1]
+            self.assertIsNotNone(original)
+            (root / 'old.txt').rename(root / 'new.md')
+            self.assertEqual(fs.read_state('new.md')[1], original)
+            (root / 'copy.md').write_bytes(b'identical')
+            self.assertNotEqual(fs.read_state('copy.md')[1], original)
+            fs.rename('new.md', 'NEW.md', original, digest(b'identical'))
+            self.assertIn('NEW.md', [path.name for path in root.iterdir()])
+            fs.atomic('NEW.md', b'replaced', digest(b'identical'))
+            self.assertNotEqual(fs.read_state('NEW.md')[1], original)
+
     def test_materializes_nested_empty_directories_without_overwriting_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

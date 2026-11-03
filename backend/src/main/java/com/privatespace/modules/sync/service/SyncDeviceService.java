@@ -18,4 +18,5 @@ public interface SyncDeviceService {
     Map<String, Object> snapshot(String deviceId);
     byte[] readFile(String deviceId, String scopeVersion, String id, String version);
     NoteResponse writeFile(String deviceId, String scopeVersion, SyncWriteRequest request, String operation);
+    NoteResponse renameFile(String deviceId, String scopeVersion, com.privatespace.modules.note.dto.SyncRenameRequest request, String operation);
 }

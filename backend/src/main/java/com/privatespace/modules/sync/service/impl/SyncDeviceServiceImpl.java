@@ -91,6 +91,7 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
         var result = new java.util.LinkedHashMap<>(notes.syncSnapshot(device.scope().all() ? List.of() : device.scope().folders()));
         result.put("scope", device.scope());
         result.put("scopeVersion", device.scopeVersion());
+        result.put("fileRenameSupported", true);
         return result;
     }
 
@@ -108,6 +109,17 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
         checkVersion(device, scopeVersion);
         checkPath(device, request.path(), request.deleted());
         return notes.syncWrite(request, operation, deviceId);
+    }
+
+    @Transactional
+    public NoteResponse renameFile(String deviceId, String scopeVersion,
+            com.privatespace.modules.note.dto.SyncRenameRequest request, String operation) {
+        var device = current(deviceId);
+        checkVersion(device, scopeVersion);
+        // Relocation cannot rename shared attachments outside explicitly selected folders.
+        checkPath(device, request.sourcePath(), true);
+        checkPath(device, request.targetPath(), true);
+        return notes.syncRename(request, operation, deviceId);
     }
 
     private void checkVersion(SyncDeviceResponse device, String version) {

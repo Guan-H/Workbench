@@ -53,4 +53,30 @@ describe('MarkdownPreview DOM updates', () => {
     expect(links[2]?.attributes('href')).toBe('/api/v1/files/content?path=' + encodeURIComponent('目录/图片 1.png'))
     wrapper.unmount()
   })
+
+  it('clears unfinished image sources on pause and unmount, while retaining decoded images on pause', async () => {
+    const wrapper = mount(PreviewHost, { props: { source: '![图](a.png)', path: '笔记.md' } })
+    const image = wrapper.get('img').element
+    await wrapper.setProps({ enabled: false })
+    expect(image.hasAttribute('src')).toBe(false)
+    await wrapper.setProps({ enabled: true })
+    expect(image.getAttribute('src')).toContain('a.png')
+    wrapper.unmount()
+    expect(image.hasAttribute('src')).toBe(false)
+
+    const loaded = mount(PreviewHost, { props: { source: '![图](b.png)', path: '笔记.md' } })
+    await loaded.get('img').trigger('load')
+    await loaded.setProps({ enabled: false })
+    expect(loaded.get('img').attributes('src')).toContain('b.png')
+    loaded.unmount()
+  })
+
+  it('does not follow a surrounding link when retrying a failed image', async () => {
+    const wrapper = mount(PreviewHost, { props: { source: '[![图](a.png)](https://example.invalid/)', path: '笔记.md' } })
+    await wrapper.get('img').trigger('error')
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+    wrapper.get('button').element.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(true)
+    wrapper.unmount()
+  })
 })

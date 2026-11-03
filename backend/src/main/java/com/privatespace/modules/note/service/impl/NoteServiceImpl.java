@@ -314,6 +314,16 @@ public class NoteServiceImpl implements NoteService {
         String body = "note".equals(type) ? text(bytes) : null;
         if (current != null && current.sha256().equals(request.sha256())) return remember(operation, scope, request, read(current.id(), false));
         // Parent creation and the file publication share the same notebook transaction.
+        syncParents(path);
+        var object = objects.write(bytes);
+        String id = current == null ? UUID.randomUUID().toString() : current.id();
+        if (current == null) mapper.create(new NoteFileEntity(id, path, type, 1, object.id(), body, false, false, null, null, object.size(), object.sha256()));
+        else mapper.update(id, current.version() + 1, object.id(), body, object.size(), object.sha256(), false);
+        publish(id);
+        return remember(operation, scope, request, read(id, false));
+    }
+
+    private void syncParents(String path) {
         int separator = path.indexOf('/');
         while (separator >= 0) {
             String parent = path.substring(0, separator);
@@ -327,18 +337,47 @@ public class NoteServiceImpl implements NoteService {
             }
             separator = path.indexOf('/', separator + 1);
         }
-        var object = objects.write(bytes);
-        String id = current == null ? UUID.randomUUID().toString() : current.id();
-        if (current == null) mapper.create(new NoteFileEntity(id, path, type, 1, object.id(), body, false, false, null, null, object.size(), object.sha256()));
-        else mapper.update(id, current.version() + 1, object.id(), body, object.size(), object.sha256(), false);
-        publish(id);
-        return remember(operation, scope, request, read(id, false));
     }
 
     private void parent(String path) {
         if (!path.contains("/")) return;
         var parent = mapper.byPath(path.substring(0, path.lastIndexOf('/')));
         if (parent == null || parent.deleted() || !"folder".equals(parent.type())) throw new ApiException(400, "INVALID_PATH", "父文件夹不存在，请先创建文件夹。");
+    }
+
+    @Transactional
+    public NoteResponse syncRename(com.privatespace.modules.note.dto.SyncRenameRequest request, String operation, String device) {
+        mapper.lock();
+        String scope = "sync-rename:" + UUID.fromString(device);
+        var previous = previous(operation, scope, request);
+        if (previous != null) return previous;
+        String source = validatePath(request.sourcePath());
+        String target = validatePath(request.targetPath());
+        var current = required(request.id());
+        expected(current, request.baseVersion());
+        if (current.deleted() || "folder".equals(current.type()) || !current.path().equals(source)) {
+            throw new ApiException(409, "VERSION_CONFLICT", "文件路径或状态已变化，未执行改名。");
+        }
+        if (source.equals(target)) throw new ApiException(400, "NO_CHANGE", "文件路径没有变化。");
+        var occupied = mapper.byPath(target);
+        if (occupied != null && !occupied.id().equals(current.id())) throw new ApiException(409, "PATH_CONFLICT", "目标已存在或位于回收站，未覆盖任何文件。");
+        byte[] bytes;
+        if (request.contentBase64() == null) bytes = objects.read(current.objectId());
+        else {
+            if (request.contentBase64().length() > 70 * 1024 * 1024) throw new ApiException(413, "FILE_TOO_LARGE", "同步文件超出限额。");
+            bytes = java.util.Base64.getDecoder().decode(request.contentBase64());
+        }
+        if (!digest(bytes).equals(request.sha256())) throw new ApiException(400, "CHECKSUM_MISMATCH", "同步内容摘要校验失败，未改名。");
+        String type = target.toLowerCase(Locale.ROOT).endsWith(".md") ? "note" : "attachment";
+        if (bytes.length > ("note".equals(type) ? 1024 * 1024 : 50 * 1024 * 1024)) throw new ApiException(413, "FILE_TOO_LARGE", "目标文件类型超出大小限制。");
+        String body = "note".equals(type) ? text(bytes) : null;
+        syncParents(target);
+        String objectId = current.objectId();
+        if (!current.sha256().equals(request.sha256())) objectId = objects.write(bytes).id();
+        mapper.relocate(current.id(), target, type);
+        mapper.update(current.id(), current.version() + 1, objectId, body, bytes.length, request.sha256(), false);
+        publish(current.id());
+        return remember(operation, scope, request, read(current.id(), false));
     }
 
     private void publish(String id) { mapper.history(id); mapper.change(id); }

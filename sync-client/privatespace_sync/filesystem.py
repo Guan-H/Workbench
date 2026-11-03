@@ -67,18 +67,24 @@ class Filesystem:
         return target
 
     def read(self, relative: str) -> bytes | None:
+        return self.read_state(relative)[0]
+
+    def read_state(self, relative: str) -> tuple[bytes | None, str | None]:
         target = self.path(relative)
         try:
             before = target.stat()
-            if before.st_size > (1024 * 1024 if relative.endswith(".md") else 50 * 1024 * 1024):
+            if before.st_size > (1024 * 1024 if relative.lower().endswith(".md") else 50 * 1024 * 1024):
                 raise SyncError("FILE_TOO_LARGE")
             data = target.read_bytes()
             after = target.stat()
         except FileNotFoundError:
-            return None
+            return None, None
         if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
             raise SyncError("FILE_BUSY")
-        return data
+        birth = getattr(after, 'st_birthtime_ns', None)
+        # Creation identity plus volume/file ID distinguishes a rename from a copied equal file.
+        identity = f'{after.st_dev}:{after.st_ino}:{birth}' if after.st_ino and birth is not None and after.st_nlink == 1 else None
+        return data, identity
 
     def ensure_directory(self, relative: str, *, has_baseline: bool = False):
         target = self.path(relative)
@@ -97,7 +103,7 @@ class Filesystem:
             directory.mkdir(exist_ok=True)
         self.ready()
 
-    def scan(self, *, include=None, descend=None) -> tuple[dict[str, str], list[dict]]:
+    def scan(self, *, include=None, descend=None, identities=None) -> tuple[dict[str, str], list[dict]]:
         self.ready()
         files: dict[str, str] = {}
         names: set[str] = set()
@@ -130,13 +136,26 @@ class Filesystem:
                     issues.append({"path": relative, "code": "INVALID_PATH"}); continue
                 names.add(relative.casefold())
                 try:
-                    data = self.read(relative)
+                    data, identity = self.read_state(relative)
                     if data is not None:
                         files[relative] = digest(data)
+                        if identities is not None and identity is not None:
+                            identities[relative] = identity
                 except (SyncError, OSError) as error:
                     issues.append({"path": relative, "code": error.code if isinstance(error, SyncError) else "FILE_UNAVAILABLE"})
         self.ready()
         return files, issues
+
+    def rename(self, source: str, target: str, identity: str, expected: str):
+        data, current = self.read_state(source)
+        if data is None or current != identity or digest(data) != expected:
+            raise SyncError('LOCAL_CHANGED_BEFORE_RENAME')
+        destination = self.path(target, parents=True)
+        existing, target_identity = self.read_state(target)
+        if existing is not None and not (source.casefold() == target.casefold() and target_identity == identity):
+            raise SyncError('RENAME_PATH_CONFLICT')
+        # os.rename on Windows refuses a different existing destination; never replace a file.
+        os.rename(self.path(source), destination)
 
     def atomic(self, relative: str, data: bytes, expected: str | None):
         target = self.path(relative, parents=True)

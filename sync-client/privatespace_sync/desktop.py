@@ -36,6 +36,9 @@ ERRORS = {
     'PROFILE_ROOT_OVERLAP': '此目录与已有配置的同步目录或助手状态目录重叠，请选择独立的新空目录。',
     'DIRECTORY_PATH_CONFLICT': '服务器目录与本地同名文件冲突，已保留本地文件，请检查待处理路径。',
     'PARENT_DIRECTORY_UNAVAILABLE': '原有文件的父目录缺失，已停止该范围操作，避免误传删除。',
+    'RENAME_SERVER_UPGRADE_REQUIRED': '此服务器尚未支持保留文件身份的改名；已暂停，未新增或删除文件。请先升级服务端。',
+    'RENAME_REQUIRES_RECONCILIATION': '改名遇到路径、版本或本地内容冲突，双方文件保留，请核对待处理项。',
+    'LOCAL_CHANGED_BEFORE_RENAME': '改名预检后本地文件又发生变化，未执行旧预览，请核对文件后重试。',
 }
 
 PHASES = {
@@ -104,7 +107,7 @@ class SyncApp:
         self.pause_button = ttk.Button(controls, text='暂停', command=self.pause)
         self.once_button = ttk.Button(controls, text='手动同步', command=self.run)
         self.open_button = ttk.Button(controls, text='打开目录', command=self.open_directory)
-        self.preview_button = ttk.Button(controls, text='查看删除预览', command=self.preview_deletions)
+        self.preview_button = ttk.Button(controls, text='查看变更预览', command=self.preview_deletions)
         for button in (self.start_button, self.pause_button, self.once_button, self.open_button, self.preview_button):
             button.pack(side='left', padx=(0, 8))
         ttk.Label(body, textvariable=self.status, style='Status.TLabel', wraplength=780).grid(row=6, column=0, columnspan=3, sticky='ew', pady=(0, 8))
@@ -219,6 +222,10 @@ class SyncApp:
                     text = '已切换到“' + active['name'] + '”；' + text + '。需要手动开始同步。'
                 self.status.set(text)
                 result = event['result']
+                if self.phase == 'ATTENTION' and not event['code'] and result.get('status') == 'REQUIRES_CONFIRMATION':
+                    rename_review = any(item['direction'].startswith('rename-') for item in result['deletionPreview']['changes'])
+                    self.status.set('文件改名待确认：请点击“查看变更预览”核对，确认后原文件 ID 和历史保持不变。' if rename_review
+                                    else '删除操作待确认：请点击“查看变更预览”核对。确认前原文件保留。')
                 scope = result.get('scope')
                 if scope:
                     self.scope_label.set('同步范围：' + ('全部同步' if scope['all'] else '、'.join(scope['folders'])) + '；保留同名目录结构，请在对应目录内新建文件。引用附件自动纳入。')
@@ -227,7 +234,7 @@ class SyncApp:
                 self.summary.set(f"最近核对：队列 {result.get('queued', 0)} 项，范围外暂存 {result.get('heldQueued', 0)} 项，冲突 {len(result.get('conflicts', []))} 项，问题 {len(result.get('issues', []))} 项。" if result else '尚未完成同步检查')
                 self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
-                self.items += [(item['path'], '待确认删除：' + item['direction']) for item in (result.get('deletionPreview') or {}).get('changes', [])]
+                self.items += [(item['path'], self.change_description(item)) for item in (result.get('deletionPreview') or {}).get('changes', [])]
                 self.render_items()
                 self.update_controls(paired, self.phase in ('PAIRING', 'RUNNING', 'CONFIGURING'))
         except Empty:
@@ -305,10 +312,10 @@ class SyncApp:
         if not preview or self.deletion_dialog and self.deletion_dialog.winfo_exists():
             return
         dialog = self.deletion_dialog = tk.Toplevel(self.window)
-        dialog.title('确认本批删除'); dialog.transient(self.window); dialog.grab_set()
+        dialog.title('确认本批文件变更'); dialog.transient(self.window); dialog.grab_set()
         dialog.geometry('660x420'); dialog.minsize(520, 340)
         frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text=f"本轮拟删除 {len(preview['changes'])} 项。确认前核对方向和路径；只确认当前预览。", wraplength=620).pack(anchor='w', pady=(0, 12))
+        ttk.Label(frame, text=f"本轮拟变更 {len(preview['changes'])} 项。改名保留原文件 ID 和历史；删除保留回收副本。确认前核对方向和路径。", wraplength=620).pack(anchor='w', pady=(0, 12))
         page = 0
         listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
         content = tk.Text(listing, height=13, wrap='word', state='disabled')
@@ -323,7 +330,7 @@ class SyncApp:
             page = max(0, min(count - 1, page + offset))
             content.configure(state='normal'); content.delete('1.0', 'end')
             for item in preview['changes'][page * 20:(page + 1) * 20]:
-                content.insert('end', ('删除服务器文件：' if item['direction'] == 'remote' else '删除本地文件并保留回收副本：') + item['path'] + '\n')
+                content.insert('end', self.change_description(item) + '：' + item['path'] + '\n')
             content.configure(state='disabled'); label.configure(text=f'{page + 1} / {count} 页')
             previous.configure(state='normal' if page else 'disabled'); following.configure(state='normal' if page + 1 < count else 'disabled')
         previous = ttk.Button(controls, text='上一页', command=lambda: render(-1)); previous.pack(side='left')
@@ -333,9 +340,17 @@ class SyncApp:
             dialog.destroy(); self.update_controls(True, True)
             self.worker.run_cycle(confirmation=preview['fingerprint'])
         ttk.Button(controls, text='取消', command=dialog.destroy).pack(side='right')
-        ttk.Button(controls, text='确认本批删除', command=confirm).pack(side='right', padx=8)
+        ttk.Button(controls, text='确认本批变更', command=confirm).pack(side='right', padx=8)
         dialog.bind('<Escape>', lambda _: dialog.destroy())
         render()
+
+    @staticmethod
+    def change_description(item):
+        if item['direction'] == 'rename-remote':
+            return '待确认服务器改名：' + item['source'] + ' → ' + item['path']
+        if item['direction'] == 'rename-local':
+            return '待确认本地改名：' + item['source'] + ' → ' + item['path']
+        return '待确认删除服务器文件' if item['direction'] == 'remote' else '待确认移入本地回收副本'
 
     def close(self):
         if not self.closing:
@@ -346,6 +361,14 @@ class SyncApp:
 
 
 def run(state: Path):
-    window = tk.Tk()
-    SyncApp(window, state)
-    window.mainloop()
+    from .single_instance import SingleInstance, bind_activation
+    instance = SingleInstance(state)
+    try:
+        if not instance.primary:
+            return
+        window = tk.Tk()
+        SyncApp(window, state)
+        bind_activation(window, instance)
+        window.mainloop()
+    finally:
+        instance.close()

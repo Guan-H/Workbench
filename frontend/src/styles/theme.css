@@ -269,6 +269,9 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .markdown-preview h3 { font-size: 18px; }
 .markdown-preview a { color: var(--color-primary); text-underline-offset: 3px; }
 .markdown-preview img { max-width: 100%; height: auto; border-radius: 4px; }
+.preview-image-error { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; color: #8a4d10; background: #fff4df; border-radius: 4px; }
+.preview-image-error button { text-decoration: underline; }
+.note-loading { margin: 0; padding: 8px 20px; color: var(--color-text-muted); background: var(--color-surface); }
 .markdown-preview pre { background: var(--color-sidebar); padding: 16px; overflow: auto; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; }
 .markdown-preview code { font-family: Consolas, monospace; }
 .markdown-preview :not(pre) > code { padding: 2px 5px; background: var(--color-sidebar); border-radius: 4px; font-size: 13px; }

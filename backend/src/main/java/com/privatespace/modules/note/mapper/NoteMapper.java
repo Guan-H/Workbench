@@ -31,6 +31,9 @@ public interface NoteMapper {
     @Update("UPDATE note_file SET path = #{path} WHERE id = #{id}")
     void repath(String id, String path);
 
+    @Update("UPDATE note_file SET path = #{path}, type = #{type} WHERE id = #{id}")
+    void relocate(String id, String path, String type);
+
     @Select("SELECT COALESCE(MAX(sequence_id), 0) FROM note_change")
     long syncCursor();
 

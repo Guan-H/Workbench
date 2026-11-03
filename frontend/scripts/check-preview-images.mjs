@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 
 /** Real authenticated uploads, image downloads and saves; only the timeout case delays a real response. */
-export async function checkPreviewImages(page, request, context, origin, output) {
+export async function checkPreviewImages(page, request, context, origin, output, gate) {
   const bytes = await readFile(new URL('../../sync-client/verification/fixtures/visual-check.png', import.meta.url))
   const paths = Array.from({ length: 6 }, (_, index) => `预览图片 ${index + 1}.png`)
   for (const path of paths) {
@@ -88,9 +88,78 @@ export async function checkPreviewImages(page, request, context, origin, output)
       assert.equal(saved.content, finalContent)
       assert.equal(saved.version, firstVersion, 'same-operation retry does not create another version')
     } finally { release(); await page.unroute(endpoint, delayResponse) }
+    const target = (await request('/notes', 'POST', { path: '图片切换目标.md', type: 'note', content: '# 可立即切换\n' })).body
+    await page.getByRole('button', { name: '刷新目录', exact: true }).click()
+    const open = async id => { await page.locator(`[data-file-id="${id}"]`).click() }
+    await open(target.id)
+    await page.waitForFunction(() => document.querySelector('.markdown-preview h1')?.textContent === '可立即切换')
+    try {
+      let held = gate.arm(url => url.startsWith('/api/v1/files/content?'))
+      await open(note.id)
+      assert.equal((await held).status, 200)
+      await images.evaluateAll(images => { window.pendingPreviewImages = images })
+      let releaseSwitchSave, savedSwitch
+      const switchSave = new Promise(resolve => { releaseSwitchSave = resolve })
+      const switchCommitted = new Promise(resolve => { savedSwitch = resolve })
+      const holdSwitchSave = async route => {
+        if (route.request().method() !== 'PUT') { await route.continue(); return }
+        const response = await route.fetch()
+        assert.equal(response.status(), 200)
+        savedSwitch()
+        await switchSave
+        await route.fulfill({ response }).catch(() => {})
+      }
+      await page.route(endpoint, holdSwitchSave)
+      try {
+        await editor.fill(finalContent + '\n切换前的真实草稿\n')
+        await open(target.id)
+        await switchCommitted
+        assert.equal(await page.evaluate(() => window.pendingPreviewImages.every(image => !image.hasAttribute('src'))), true)
+        const deadline = Date.now() + 3000
+        while (!gate.cancelled && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+        assert.ok(gate.cancelled > 0, 'switching cancels unfinished image HTTP even while waiting for the real save acknowledgement')
+        releaseSwitchSave()
+        await page.waitForFunction(() => document.querySelector('.markdown-preview h1')?.textContent === '可立即切换')
+      } finally { releaseSwitchSave(); await page.unroute(endpoint, holdSwitchSave) }
+      gate.release()
+
+      held = gate.arm(url => url.startsWith('/api/v1/files/content?'))
+      await open(note.id)
+      assert.equal((await held).status, 200)
+      await page.getByRole('status').filter({ hasText: '图片加载失败或超时' }).first().waitFor({ timeout: 25000 })
+      gate.release()
+      await page.getByRole('button', { name: '重新加载', exact: true }).first().click()
+      await page.waitForFunction(() => [...document.querySelectorAll('.markdown-preview img')].some(image => image.complete && image.naturalWidth > 0))
+
+      await open(target.id)
+      await page.waitForFunction(() => document.querySelector('.markdown-preview h1')?.textContent === '可立即切换')
+      held = gate.arm(url => url === `/api/v1/notes/${note.id}`)
+      await open(note.id)
+      assert.equal((await held).status, 200)
+      await open(target.id)
+      gate.release()
+      assert.equal((await editor.innerText()).trim(), '# 可立即切换', 'cancelled note read cannot overwrite the current note')
+
+      held = gate.arm(url => url === `/api/v1/notes/${note.id}`)
+      await open(note.id)
+      assert.equal((await held).status, 200)
+      await page.getByRole('alert').filter({ hasText: '笔记读取超时' }).waitFor({ timeout: 25000 })
+      assert.equal((await editor.innerText()).trim(), '# 可立即切换')
+      gate.release()
+
+      held = gate.arm(url => url.startsWith('/api/v1/files/content?'))
+      await open(note.id)
+      assert.equal((await held).status, 200)
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 })
+      await page.getByRole('heading', { name: '工作台', exact: true }).waitFor({ timeout: 10000 })
+      gate.release()
+      await page.getByRole('button', { name: '进入笔记', exact: true }).click()
+    } finally { gate.release() }
     await writeFile(new URL('preview-images.json', output), JSON.stringify({
       imageCount: 6, initialRequests, extraRequestsDuringTextEdits: 0, saveMs,
       responseDelayFaultInjection: 'real PUT committed; response withheld; timeout and idempotent retry verified',
+      imageDelayFaultInjection: 'real image bytes delayed over HTTP; switch cancels connection, timeout and retry work, reload remains available',
+      noteReadCancellation: 'real GET delayed; current-note selection cancels pending read; timeout retains content and retry works',
     }, null, 2))
   } finally { page.off('request', countImage) }
 }

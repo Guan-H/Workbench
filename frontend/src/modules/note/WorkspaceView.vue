@@ -31,6 +31,9 @@ const status = ref('请选择或新建一篇笔记')
 const problem = ref('')
 const loading = ref(true)
 const saving = ref(false)
+const opening = ref(false)
+let openSerial = 0
+let openController: AbortController | undefined
 const saveFeedback = ref<{ kind: 'saving' | 'success' | 'error' | 'info'; text: string }>()
 const feedbackIcon = computed(() => ({ saving: LoaderCircle, success: CheckCircle2, error: CircleAlert, info: Info })[saveFeedback.value?.kind ?? 'info'])
 const conflict = ref(false)
@@ -289,19 +292,33 @@ function applyNote(note: Note) {
 }
 
 async function openNote(note: Note) {
+  const serial = ++openSerial
+  openController?.abort()
+  opening.value = false
   if (note.type === 'attachment') { treeSelection.value = note.id; window.open(`/api/v1/files/content?path=${encodeURIComponent(note.path)}`, '_blank', 'noopener,noreferrer'); return }
   if (note.type === 'folder') { selectFolder(note.path); return }
   if (note.id === current.value?.id) { treeSelection.value = note.id; return }
-  if (!await leaveNote()) return
-  problem.value = ''
-  try { applyNote(await api<Note>(`/notes/${note.id}`)); mobileNav.value = false }
-  catch (error) { problem.value = message(error) }
+  const controller = openController = new AbortController()
+  opening.value = true
+  // Release old image connections before a pending save or the new note request needs them.
+  await nextTick()
+  try {
+    if (!await leaveNote(() => serial === openSerial) || serial !== openSerial) return
+    problem.value = ''
+    const loaded = await api<Note>(`/notes/${note.id}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) })
+    if (serial !== openSerial || !await leaveNote(() => serial === openSerial) || serial !== openSerial) return
+    applyNote(loaded); mobileNav.value = false
+  } catch (error) {
+    if (serial === openSerial) problem.value = error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')
+      ? '笔记读取超时，请重试或选择其他笔记。当前内容和草稿已保留。' : message(error)
+  } finally { if (serial === openSerial) { opening.value = false; openController = undefined } }
 }
 
-async function leaveNote() {
+async function leaveNote(stillSelected = () => true) {
   if (!dirty.value && !pending) return true
   if (await saveNow()) return true
   persistDraft()
+  if (!stillSelected()) return false
   return confirmAction(draftStored ? '未提交内容已暂存在本浏览器。仍要切换吗？' : '草稿暂存失败，切换可能丢失内容。仍要切换吗？', '切换笔记', '仍要切换')
 }
 
@@ -674,7 +691,7 @@ async function loadWorkspace() {
   await openNote(linked)
 }
 onMounted(() => { void loadWorkspace(); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('keydown', shortcut) })
-onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTimer); window.clearTimeout(feedbackTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', shortcut) })
+onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeout(timer); window.clearTimeout(searchTimer); window.clearTimeout(feedbackTimer); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', shortcut) })
 </script>
 
 <template>
@@ -727,6 +744,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
       <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
       <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div>
       <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
+      <p v-if="opening" class="note-loading" role="status">正在切换笔记，可继续选择其他笔记…</p>
       <template v-if="current && current.type === 'note' && !current.deleted">
         <div class="document-tab"><span><FileText :size="15" />{{ currentTitle }}<span v-if="dirty" class="unsaved-dot" title="有未提交修改" /></span></div>
         <div class="editor-toolbar"><div class="mode-switch" aria-label="编辑模式"><button :class="{ active: mode === 'split' }" @click="mode = 'split'"><Columns2 :size="14" />分栏</button><button :class="{ active: mode === 'edit' }" @click="mode = 'edit'"><Code2 :size="14" />编辑</button><button :class="{ active: mode === 'preview' }" @click="mode = 'preview'"><Eye :size="14" />预览</button></div><label v-if="mode === 'split'" class="split-width-control" title="点击滑轨调整编辑区宽度"><span>宽度</span><input v-model.number="splitPercent" type="range" min="20" max="80" aria-label="编辑区宽度" /></label><div class="editor-actions"><button class="icon-button" @click="toggleFavorite" :title="current.favorite ? '取消收藏' : '收藏笔记'" :aria-label="current.favorite ? '取消收藏' : '收藏笔记'" :class="{ starred: current.favorite }"><Star :size="17" /></button><button class="icon-button" @click="attachmentInput?.click()" title="上传附件" aria-label="上传附件" :disabled="modalBusy"><Paperclip :size="17" /></button><button title="查看笔记历史" @click="history()"><Clock3 :size="15" /><span>历史</span></button><button class="icon-button" @click="manualSave" title="保存笔记 (Ctrl+S)" aria-label="保存笔记" :disabled="saving"><Save :size="17" /></button><button class="icon-button" @click="removeCurrent" title="删除笔记" aria-label="删除笔记"><Trash2 :size="16" /></button><button class="icon-button" @click="outlineVisible = !outlineVisible" title="显示或隐藏大纲" aria-label="显示或隐藏大纲"><ListTree :size="17" /></button></div></div>
@@ -734,7 +752,7 @@ onBeforeUnmount(() => { window.clearTimeout(timer); window.clearTimeout(searchTi
         <div class="editor-panels" :class="['mode-' + mode, { resizing }]" :style="{ '--split-ratio': splitPercent / 100 }" @dragover.prevent @drop.prevent="($event.dataTransfer?.files[0]) && upload($event.dataTransfer.files[0])" @paste.capture="($event.clipboardData?.files[0]) && ($event.preventDefault(), upload($event.clipboardData.files[0]))">
           <section v-show="mode !== 'preview'" class="source-panel" aria-label="Markdown 编辑区"><div class="panel-label">MARKDOWN</div><MarkdownEditor :key="current.id" :model-value="text" @update:model-value="edit" @save="manualSave" /></section>
           <div v-if="mode === 'split'" class="split-divider" role="separator" tabindex="0" aria-label="调整编辑区和预览区宽度" title="拖动调整宽度，双击恢复各半；方向键微调" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" :aria-valuenow="splitPercent" :aria-valuetext="`编辑区 ${splitPercent}%，预览区 ${100 - splitPercent}%`" @pointerdown="startResize" @pointermove="resizeSplit" @pointerup="endResize" @pointercancel="endResize" @lostpointercapture="endResize" @keydown="resizeKey" @dblclick="splitPercent = 50" />
-          <section v-show="mode !== 'edit'" class="preview-panel" aria-label="笔记预览"><div class="panel-label">预览</div><article ref="previewArea" class="markdown-preview" @click="previewClick"><MarkdownPreview :key="current.id" :source="text" :path="current.path" :enabled="section === 'notes' && mode !== 'edit'" /></article></section>
+          <section v-show="mode !== 'edit'" class="preview-panel" aria-label="笔记预览"><div class="panel-label">预览</div><article ref="previewArea" class="markdown-preview" @click="previewClick"><MarkdownPreview :key="current.id" :source="text" :path="current.path" :enabled="section === 'notes' && mode !== 'edit' && !opening" /></article></section>
         </div>
       </template>
       <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><button v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</button><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>

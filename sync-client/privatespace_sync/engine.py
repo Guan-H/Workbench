@@ -19,6 +19,7 @@ from .filesystem import Filesystem, MARKER, digest, excluded, valid_path
 from .transport import Remote, SyncError
 from .state_lock import StateLock
 from .scope import SyncScope
+from .renames import Renames
 
 
 def configure(url: str, root: Path, state: Path, code: str) -> dict:
@@ -70,12 +71,17 @@ class Engine:
             CREATE TABLE IF NOT EXISTS conflict (path TEXT PRIMARY KEY, reason TEXT NOT NULL, copies TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS missing (path TEXT PRIMARY KEY, since REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS local_identity (path TEXT PRIMARY KEY, identity TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS rename_queue (source TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT NOT NULL,
+                request TEXT NOT NULL, identity TEXT NOT NULL, attempted INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS local_rename (id TEXT PRIMARY KEY, intent TEXT NOT NULL);
             """)
             cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
             cached = json.loads(cached_scope[0]) if cached_scope else {}
             self.scope_known = cached_scope is not None
             self.selection = SyncScope(cached.get('scope'), cached.get('attachments', []))
             self.remote.scope_version = cached.get('version')
+            self.rename_supported = cached.get('fileRenameSupported', False)
         except Exception:
             if hasattr(self, 'db'):
                 self.db.close()
@@ -93,19 +99,29 @@ class Engine:
 
     def acknowledge(self, file: dict):
         self.db.execute("INSERT OR REPLACE INTO baseline VALUES (?, ?)", (file["path"], json.dumps(file)))
+        data, identity = self.fs.read_state(file['path'])
+        if file['deleted']:
+            self.db.execute('DELETE FROM local_identity WHERE path = ?', (file['path'],))
+        elif identity and data is not None and digest(data) == file['sha256']:
+            self.db.execute('INSERT OR REPLACE INTO local_identity VALUES (?, ?)', (file['path'], identity))
         self.db.commit()
 
-    def enqueue(self, path: str, file: dict | None, data: bytes | None, *, deleted: bool = False):
+    def enqueue(self, path: str, file: dict | None, data: bytes | None, *, deleted: bool = False, identity: str | None = None):
         request = {"id": file["id"] if file else None, "path": path, "baseVersion": file["version"] if file else "0",
                    "deleted": deleted, "sha256": digest(data) if data is not None else None,
                    "contentBase64": base64.b64encode(data).decode("ascii") if data is not None else None}
-        self.db.execute("INSERT OR IGNORE INTO queue VALUES (?, ?, ?)", (path, str(uuid.uuid4()), json.dumps(request)))
+        inserted = self.db.execute("INSERT OR IGNORE INTO queue VALUES (?, ?, ?)", (path, str(uuid.uuid4()), json.dumps(request)))
+        if inserted.rowcount and identity:
+            self.db.execute('INSERT OR REPLACE INTO local_identity VALUES (?, ?)', (path, identity))
         self.db.commit()
 
     def status(self) -> dict:
         queued = [row['path'] for row in self.db.execute('SELECT path FROM queue')]
-        return {"queued": sum(self.selection.includes(path) for path in queued),
-                "heldQueued": sum(not self.selection.includes(path) for path in queued),
+        rename_queued = list(self.db.execute('SELECT source, target FROM rename_queue'))
+        eligible_renames = sum(self.selection.explicit(row['source']) and self.selection.explicit(row['target']) for row in rename_queued)
+        return {"queued": sum(self.selection.includes(path) for path in queued) + eligible_renames,
+                "heldQueued": sum(not self.selection.includes(path) for path in queued) + len(rename_queued) - eligible_renames,
+                "pendingRenames": len(rename_queued),
                 "scope": self.selection.data() if self.scope_known else None,
                 "conflicts": [{"path": row["path"], "reason": row["reason"], "copies": json.loads(row["copies"])}
                               for row in self.db.execute("SELECT * FROM conflict ORDER BY path") if self.selection.includes(row['path'])]}
@@ -123,6 +139,8 @@ class Engine:
             # Re-entered paths have no trustworthy deletion baseline. Keep bytes and pending uploads,
             # but never replay a missing-file delete across a selection revision.
             self.db.execute('DELETE FROM baseline')
+            self.db.execute('DELETE FROM local_identity WHERE path NOT IN (SELECT path FROM queue)')
+            self.db.execute('DELETE FROM local_rename')
             self.db.execute('DELETE FROM missing')
             self.db.execute("DELETE FROM setting WHERE key = 'delete_review'")
             for row in list(self.db.execute('SELECT path, request FROM queue')):
@@ -131,8 +149,10 @@ class Engine:
         self.selection = selection
         self.scope_known = True
         self.remote.scope_version = version
+        self.rename_supported = snapshot.get('fileRenameSupported', False)
         self.db.execute("INSERT OR REPLACE INTO setting VALUES ('scope_policy', ?)",
-                        (json.dumps({'version': version, 'scope': selection.data(), 'attachments': list(selection.attachments)}),))
+                        (json.dumps({'version': version, 'scope': selection.data(), 'attachments': list(selection.attachments),
+                                     'fileRenameSupported': self.rename_supported}),))
         self.db.execute("INSERT OR REPLACE INTO setting VALUES ('cursor', ?)", (snapshot["cursor"],))
         self.db.commit()
         self.remote_folders = {item['path'] for item in snapshot['items'] if item['type'] == 'folder'
@@ -206,36 +226,63 @@ class Engine:
         try:
             checkpoint()
             try:
-                self.snapshot()
+                initial_remote = self.snapshot()
                 issues.extend(self.prepare_directories(checkpoint))
             except SyncError as error:
                 if error.code != 'NETWORK_UNAVAILABLE' or not self.scope_known:
                     raise
+                initial_remote = None
                 # Offline capture uses the last confirmed scope only; nothing is published offline.
-            first, first_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends)
+            first_identities = {}
+            first, first_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends, identities=first_identities)
             scanned_attachments = self.selection.attachments
             time.sleep(self.stable_seconds)
-            local, second_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends)
+            identities = {}
+            local, second_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends, identities=identities)
             issues.extend(first_issues + second_issues)
             unstable = {path for path in first.keys() | local.keys() if first.get(path) != local.get(path)}
+            unstable.update(path for path in first_identities.keys() | identities.keys() if first_identities.get(path) != identities.get(path))
             issues.extend({"path": path, "code": "FILE_BUSY"} for path in unstable)
             blocked = {row[0] for row in self.db.execute("SELECT path FROM conflict")}
             unsafe = [issue["path"] for issue in issues]
             def skip(path):
                 return not self.selection.includes(path) or path in blocked or path in unstable or any(path == bad or path.startswith(bad + "/") for bad in unsafe)
+            renames = Renames(self)
+            relocated, rename_issues, rename_blocked, outcome = (renames.receive(initial_remote, local, identities, skip, confirmation, checkpoint)
+                                                               if initial_remote is not None else (False, [], set(), None))
+            issues.extend(rename_issues)
+            if outcome:
+                return {**outcome, 'issues': issues, **self.status()}
+            if rename_issues:
+                return {'status': 'PAUSED', 'code': 'RENAME_REQUIRES_RECONCILIATION', 'issues': issues, **self.status()}
+            blocked.update(rename_blocked)
+            if relocated:
+                identities = {}
+                local, rescan_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends, identities=identities)
+                issues.extend(rescan_issues)
+                unsafe.extend(item['path'] for item in rescan_issues)
+            outcome, rename_blocked = renames.send(local, identities, skip, confirmation, checkpoint)
+            if outcome:
+                return {**outcome, 'issues': issues + outcome.get('issues', []), **self.status()}
+            blocked.update(rename_blocked)
             baseline = self.baseline()
+            queued_paths = {row['path'] for row in self.db.execute('SELECT path FROM queue')}
+            queued_identities = {row['path']: row['identity'] for row in self.db.execute('SELECT path, identity FROM local_identity') if row['path'] in queued_paths}
+            moved_uploads = {(source, path) for path, key in identities.items() for source, known in queued_identities.items() if source != path and known == key}
+            deferred_renames = {path for _, path in moved_uploads}
+            deferred_sources = {source for source, _ in moved_uploads}
             # Persist uploads before contacting the network, so an offline run still captures edits.
             for path, sha in local.items():
                 checkpoint()
-                if skip(path):
+                if skip(path) or path in deferred_renames:
                     continue
                 base = baseline.get(path)
                 if base and base["deleted"]:
                     issues.append({"path": path, "code": "DELETED_BASELINE_REQUIRES_RECONCILIATION"}); continue
                 if not base or sha != base["sha256"]:
-                    data = self.fs.read(path)
-                    if data is not None and digest(data) == sha:
-                        self.enqueue(path, base, data)
+                    data, identity = self.fs.read_state(path)
+                    if data is not None and digest(data) == sha and identity == identities.get(path):
+                        self.enqueue(path, base, data, identity=identity)
             checkpoint()
             remote = self.snapshot()
             by_path = {file["path"].casefold(): file for file in remote.values()}
@@ -267,12 +314,18 @@ class Engine:
                         unsafe.append(path)
                         write_failure = error.code
                         continue
+                    if path in deferred_sources:
+                        issues.append({'path': path, 'code': 'RENAME_MODIFY_CONFLICT'})
+                        unsafe.extend(candidate for pair in moved_uploads for candidate in pair)
+                        write_failure = 'RENAME_REQUIRES_RECONCILIATION'
+                        continue
                     latest = self.snapshot()
                     file = latest.get(request["id"]) if request["id"] else next((item for item in latest.values() if item["path"].casefold() == path.casefold()), None)
                     if file is None:
                         issues.append({"path": path, "code": "BASELINE_LOST"}); continue
                     self.conflict(path, file, request, "DELETE_MODIFY" if request["deleted"] or file["deleted"] else "BOTH_MODIFIED")
                     blocked.add(path)
+            blocked.update(deferred_sources)
             checkpoint()
             remote = self.snapshot()
             for issue in self.prepare_directories(checkpoint):
@@ -371,7 +424,7 @@ class Engine:
                 self.db.commit()
                 pending_delete = {"fingerprint": fingerprint, "changes": deletes}
             return {"status": "PAUSED" if write_failure else "REQUIRES_CONFIRMATION" if pending_delete else "OK", "code": write_failure, "issues": issues,
-                    "deletionPreview": pending_delete, "rescanRequired": bool(self.selection.attachments - scanned_attachments), **self.status()}
+                    "deletionPreview": pending_delete, "rescanRequired": bool(deferred_renames or self.selection.attachments - scanned_attachments), **self.status()}
         except (SyncError, OSError, sqlite3.Error) as error:
             return {"status": "PAUSED", "code": error.code if isinstance(error, SyncError) else "LOCAL_IO_UNAVAILABLE",
                     "issues": issues, **self.status()}

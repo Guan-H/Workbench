@@ -1,5 +1,6 @@
-import { createTextVNode, defineComponent, h, onBeforeUnmount, shallowRef, watch, type VNode } from 'vue'
+import { createTextVNode, defineComponent, h, onBeforeUnmount, provide, shallowRef, toRef, watch, type VNode } from 'vue'
 import { renderMarkdown } from './markdown'
+import PreviewImage, { previewImagesEnabled } from './PreviewImage'
 
 /** Patch sanitized preview nodes so unchanged private images keep their loaded DOM elements. */
 function previewNodes(html: string): VNode[] {
@@ -22,6 +23,7 @@ function previewNodes(html: string): VNode[] {
         images.set(signature, occurrence + 1)
         attributes.key = `${signature}:${occurrence}`
       }
+      if (node.localName === 'img') return [h(PreviewImage, { key: attributes.key, src: String(attributes.src ?? ''), alt: String(attributes.alt ?? '') })]
       return [h(node.localName, attributes, children(node))]
     })
   }
@@ -36,6 +38,7 @@ export default defineComponent({
     enabled: { type: Boolean, default: true },
   },
   setup(props) {
+    provide(previewImagesEnabled, toRef(props, 'enabled'))
     const nodes = shallowRef<VNode[]>([])
     let timer: ReturnType<typeof setTimeout> | undefined
     const render = () => { nodes.value = previewNodes(renderMarkdown(props.source, props.path)) }
