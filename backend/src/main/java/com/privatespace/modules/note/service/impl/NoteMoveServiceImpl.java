@@ -32,13 +32,16 @@ public class NoteMoveServiceImpl implements NoteMoveService {
     private final FileObjectService objects;
     private final NoteService notes;
     private final ObjectMapper json;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
     private final MarkdownLinkRewriter links = new MarkdownLinkRewriter();
 
-    public NoteMoveServiceImpl(NoteMapper mapper, FileObjectService objects, NoteService notes, ObjectMapper json) {
+    public NoteMoveServiceImpl(NoteMapper mapper, FileObjectService objects, NoteService notes, ObjectMapper json,
+            com.privatespace.modules.note.service.NoteChangeService changeLog) {
         this.mapper = mapper;
         this.objects = objects;
         this.notes = notes;
         this.json = json;
+        this.changeLog = changeLog;
     }
 
     private record FileChange(NoteFileEntity before, String path, String content) { }
@@ -79,7 +82,7 @@ public class NoteMoveServiceImpl implements NoteMoveService {
             mapper.repath(file.id(), change.path());
             mapper.update(file.id(), file.version() + 1, objectId, change.content(), size, sha, false);
             mapper.history(file.id());
-            mapper.change(file.id());
+            changeLog.publish(file.id());
         }
         NoteResponse response = notes.read(id, false);
         mapper.operation(operation, scope, requestHash, json.writeValueAsString(response));

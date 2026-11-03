@@ -39,6 +39,10 @@ ERRORS = {
     'RENAME_SERVER_UPGRADE_REQUIRED': '此服务器尚未支持保留文件身份的改名；已暂停，未新增或删除文件。请先升级服务端。',
     'RENAME_REQUIRES_RECONCILIATION': '改名遇到路径、版本或本地内容冲突，双方文件保留，请核对待处理项。',
     'LOCAL_CHANGED_BEFORE_RENAME': '改名预检后本地文件又发生变化，未执行旧预览，请核对文件后重试。',
+    'SYNC_CURSOR_EXPIRED': '同步记录已过期，已暂停；本地文件和队列保留，需要重新对账，不会自动删除或复活旧文件。',
+    'SERVER_ROLLBACK_RECONCILIATION_REQUIRED': '服务器版本游标回退，已暂停；请保留本地文件和队列并核对服务器恢复情况。',
+    'INVALID_SYNC_RESPONSE': '增量目录响应不完整或游标无效，未提交本轮目录缓存；请重试。',
+    'DELETED_REMOTE_REQUIRES_RECONCILIATION': '此路径有服务器删除记录，本地文件已保留；请先重新对账，不会自动重新上传。',
 }
 
 PHASES = {

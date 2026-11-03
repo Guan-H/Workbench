@@ -20,6 +20,7 @@ from .transport import Remote, SyncError
 from .state_lock import StateLock
 from .scope import SyncScope
 from .renames import Renames
+from .remote_catalog import RemoteCatalog
 
 
 def configure(url: str, root: Path, state: Path, code: str) -> dict:
@@ -75,6 +76,7 @@ class Engine:
             CREATE TABLE IF NOT EXISTS rename_queue (source TEXT PRIMARY KEY, target TEXT NOT NULL, operation TEXT NOT NULL,
                 request TEXT NOT NULL, identity TEXT NOT NULL, attempted INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS local_rename (id TEXT PRIMARY KEY, intent TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS remote_catalog (id TEXT PRIMARY KEY, metadata TEXT NOT NULL);
             """)
             cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
             cached = json.loads(cached_scope[0]) if cached_scope else {}
@@ -119,15 +121,18 @@ class Engine:
         queued = [row['path'] for row in self.db.execute('SELECT path FROM queue')]
         rename_queued = list(self.db.execute('SELECT source, target FROM rename_queue'))
         eligible_renames = sum(self.selection.explicit(row['source']) and self.selection.explicit(row['target']) for row in rename_queued)
+        transfer = self.db.execute("SELECT value FROM setting WHERE key = 'remote_transfer'").fetchone()
         return {"queued": sum(self.selection.includes(path) for path in queued) + eligible_renames,
                 "heldQueued": sum(not self.selection.includes(path) for path in queued) + len(rename_queued) - eligible_renames,
                 "pendingRenames": len(rename_queued),
+                "catalog": json.loads(transfer[0]) if transfer else None,
                 "scope": self.selection.data() if self.scope_known else None,
                 "conflicts": [{"path": row["path"], "reason": row["reason"], "copies": json.loads(row["copies"])}
                               for row in self.db.execute("SELECT * FROM conflict ORDER BY path") if self.selection.includes(row['path'])]}
 
-    def snapshot(self) -> dict:
-        snapshot = self.remote.request("/snapshot")
+    def snapshot(self, checkpoint=None) -> dict:
+        catalog = RemoteCatalog(self.db, self.remote)
+        snapshot, fresh, updates, removed, transfer = catalog.fetch(checkpoint)
         selection = SyncScope(snapshot.get('scope'), snapshot.get('attachmentPaths', []))
         version = snapshot.get('scopeVersion', '1')
         previous = self.db.execute("SELECT value FROM setting WHERE key = 'cursor'").fetchone()
@@ -135,26 +140,26 @@ class Engine:
             raise SyncError("SERVER_ROLLBACK_RECONCILIATION_REQUIRED")
         previous_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
         old = json.loads(previous_scope[0]) if previous_scope else {'version': '1', 'scope': {'all': True, 'folders': []}}
-        if old['version'] != version or old['scope'] != selection.data():
-            # Re-entered paths have no trustworthy deletion baseline. Keep bytes and pending uploads,
-            # but never replay a missing-file delete across a selection revision.
-            self.db.execute('DELETE FROM baseline')
-            self.db.execute('DELETE FROM local_identity WHERE path NOT IN (SELECT path FROM queue)')
-            self.db.execute('DELETE FROM local_rename')
-            self.db.execute('DELETE FROM missing')
-            self.db.execute("DELETE FROM setting WHERE key = 'delete_review'")
-            for row in list(self.db.execute('SELECT path, request FROM queue')):
-                if json.loads(row['request'])['deleted']:
-                    self.db.execute('DELETE FROM queue WHERE path = ?', (row['path'],))
+        with self.db:
+            if old['version'] != version or old['scope'] != selection.data():
+                # A selection revision never replays old deletion assumptions.
+                self.db.execute('DELETE FROM baseline')
+                self.db.execute('DELETE FROM local_identity WHERE path NOT IN (SELECT path FROM queue)')
+                self.db.execute('DELETE FROM local_rename')
+                self.db.execute('DELETE FROM missing')
+                self.db.execute("DELETE FROM setting WHERE key = 'delete_review'")
+                for row in list(self.db.execute('SELECT path, request FROM queue')):
+                    if json.loads(row['request'])['deleted']:
+                        self.db.execute('DELETE FROM queue WHERE path = ?', (row['path'],))
+            catalog.store(snapshot, fresh, updates, removed, transfer)
+            self.db.execute("INSERT OR REPLACE INTO setting VALUES ('scope_policy', ?)",
+                            (json.dumps({'version': version, 'scope': selection.data(), 'attachments': list(selection.attachments),
+                                         'fileRenameSupported': snapshot.get('fileRenameSupported', False)}),))
+            self.db.execute("INSERT OR REPLACE INTO setting VALUES ('cursor', ?)", (snapshot["cursor"],))
         self.selection = selection
         self.scope_known = True
         self.remote.scope_version = version
         self.rename_supported = snapshot.get('fileRenameSupported', False)
-        self.db.execute("INSERT OR REPLACE INTO setting VALUES ('scope_policy', ?)",
-                        (json.dumps({'version': version, 'scope': selection.data(), 'attachments': list(selection.attachments),
-                                     'fileRenameSupported': self.rename_supported}),))
-        self.db.execute("INSERT OR REPLACE INTO setting VALUES ('cursor', ?)", (snapshot["cursor"],))
-        self.db.commit()
         self.remote_folders = {item['path'] for item in snapshot['items'] if item['type'] == 'folder'
                                and not item['deleted'] and selection.directory(item['path']) and not excluded(item['path'])}
         return {item["id"]: item for item in snapshot["items"] if item["type"] != "folder" and selection.includes(item['path'])}
@@ -226,7 +231,7 @@ class Engine:
         try:
             checkpoint()
             try:
-                initial_remote = self.snapshot()
+                initial_remote = self.snapshot(checkpoint)
                 issues.extend(self.prepare_directories(checkpoint))
             except SyncError as error:
                 if error.code != 'NETWORK_UNAVAILABLE' or not self.scope_known:
@@ -266,6 +271,7 @@ class Engine:
                 return {**outcome, 'issues': issues + outcome.get('issues', []), **self.status()}
             blocked.update(rename_blocked)
             baseline = self.baseline()
+            tombstones = {file['path'].casefold() for file in (initial_remote or {}).values() if file['deleted']}
             queued_paths = {row['path'] for row in self.db.execute('SELECT path FROM queue')}
             queued_identities = {row['path']: row['identity'] for row in self.db.execute('SELECT path, identity FROM local_identity') if row['path'] in queued_paths}
             moved_uploads = {(source, path) for path, key in identities.items() for source, known in queued_identities.items() if source != path and known == key}
@@ -277,6 +283,10 @@ class Engine:
                 if skip(path) or path in deferred_renames:
                     continue
                 base = baseline.get(path)
+                if base is None and path.casefold() in tombstones:
+                    issues.append({'path': path, 'code': 'DELETED_REMOTE_REQUIRES_RECONCILIATION'})
+                    blocked.add(path)
+                    continue
                 if base and base["deleted"]:
                     issues.append({"path": path, "code": "DELETED_BASELINE_REQUIRES_RECONCILIATION"}); continue
                 if not base or sha != base["sha256"]:
@@ -284,7 +294,7 @@ class Engine:
                     if data is not None and digest(data) == sha and identity == identities.get(path):
                         self.enqueue(path, base, data, identity=identity)
             checkpoint()
-            remote = self.snapshot()
+            remote = self.snapshot(checkpoint)
             by_path = {file["path"].casefold(): file for file in remote.values()}
             for row in list(self.db.execute("SELECT * FROM queue ORDER BY path")):
                 checkpoint()
@@ -297,6 +307,14 @@ class Engine:
                 file = remote.get(request["id"]) if request["id"] else by_path.get(path.casefold())
                 if request["deleted"] and self.fs.read(path) is not None:
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit(); continue
+                if file and file['deleted']:
+                    if request['deleted']:
+                        self.acknowledge(file)
+                        self.db.execute('DELETE FROM queue WHERE path = ?', (path,)); self.db.commit()
+                    else:
+                        self.conflict(path, file, request, 'DELETE_MODIFY' if request['id'] else 'INITIAL_TOMBSTONE')
+                        blocked.add(path)
+                    continue
                 if file and not file["deleted"] and not request["deleted"] and file["path"] == path and file["sha256"] == request["sha256"]:
                     self.acknowledge(file)
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit(); continue
@@ -319,7 +337,7 @@ class Engine:
                         unsafe.extend(candidate for pair in moved_uploads for candidate in pair)
                         write_failure = 'RENAME_REQUIRES_RECONCILIATION'
                         continue
-                    latest = self.snapshot()
+                    latest = self.snapshot(checkpoint)
                     file = latest.get(request["id"]) if request["id"] else next((item for item in latest.values() if item["path"].casefold() == path.casefold()), None)
                     if file is None:
                         issues.append({"path": path, "code": "BASELINE_LOST"}); continue
@@ -327,7 +345,7 @@ class Engine:
                     blocked.add(path)
             blocked.update(deferred_sources)
             checkpoint()
-            remote = self.snapshot()
+            remote = self.snapshot(checkpoint)
             for issue in self.prepare_directories(checkpoint):
                 if issue not in issues:
                     issues.append(issue)
@@ -342,6 +360,8 @@ class Engine:
                 if not valid_path(path):
                     issues.append({"path": path, "code": "INVALID_PATH"}); continue
                 base = baseline.get(path)
+                if base and base['id'] != file['id']:
+                    base = None
                 if base and not self.fs.path(path).parent.is_dir():
                     issues.append({"path": path, "code": "PARENT_DIRECTORY_UNAVAILABLE"}); continue
                 same_id = next((old for old in baseline.values() if old["id"] == file["id"]), None)
@@ -354,6 +374,8 @@ class Engine:
                         # No common baseline: an old tombstone is never permission to delete a local file.
                         if data is not None:
                             self.conflict(path, file, None, "INITIAL_TOMBSTONE")
+                        else:
+                            self.acknowledge(file)
                         continue
                     if data is None:
                         self.acknowledge(file)
@@ -379,7 +401,10 @@ class Engine:
                     elif time.time() - missing[0] >= self.delete_grace:
                         deletes.append({"direction": "remote", "path": path, "id": file["id"], "version": file["version"], "sha": base["sha256"]})
                 elif data is None:
-                    self.conflict(path, file, None, "DELETE_MODIFY")
+                    if base['deleted']:
+                        self.fs.atomic(path, self.download(file), None); self.acknowledge(file)
+                    else:
+                        self.conflict(path, file, None, "DELETE_MODIFY")
                 elif sha == base["sha256"]:
                     self.fs.atomic(path, self.download(file), sha); self.acknowledge(file)
                 else:

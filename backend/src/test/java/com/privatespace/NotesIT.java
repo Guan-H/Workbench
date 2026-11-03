@@ -31,7 +31,17 @@ class NotesIT {
     @Test
     void verifiesAuthenticatedNotebookAndRestartPersistence() throws Exception {
         try (var socket = new ServerSocket(0)) { frontendPort = socket.getLocalPort(); }
+        if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog();
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) {
+                assertThat(context.getBean(com.privatespace.modules.note.mapper.NoteMapper.class).syncFloor()).isEqualTo(1L);
+                incremental(context, "initialize");
+                purgeSyncFixture(context);
+                incremental(context, "purged");
+                expireSyncLog(context);
+                incremental(context, "expired");
+                return;
+            }
             if ("1".equals(System.getenv("IT_ONLY_FILE_RENAMES"))) {
                 fileRenames(context, true);
                 verifyFileRenameRollback(context);
@@ -51,6 +61,11 @@ class NotesIT {
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) {
                 fileRenames(context, false);
                 verifyFileRenameRollback(context);
+                incremental(context, "existing");
+                purgeSyncFixture(context);
+                incremental(context, "purged");
+                expireSyncLog(context);
+                incremental(context, "expired");
                 sync(context, "write");
             }
             verifyMoveRollback(context);
@@ -383,6 +398,68 @@ class NotesIT {
             jdbc.update("DELETE FROM note_revision WHERE file_id = ? AND version = 2", source.id());
         }
         assertThat(notes.syncRename(request, UUID.randomUUID().toString(), UUID.randomUUID().toString()).id()).isEqualTo(source.id());
+    }
+
+    private void expireSyncLog(ConfigurableApplicationContext context) {
+        var jdbc = context.getBean(JdbcTemplate.class);
+        var mapper = context.getBean(com.privatespace.modules.note.mapper.NoteMapper.class);
+        context.getBean(com.privatespace.modules.note.service.NoteService.class).create(
+                new com.privatespace.modules.note.dto.WriteNoteRequest("增量过期边界.md", "note", "# expiry boundary", null), UUID.randomUUID().toString());
+        long head = mapper.syncCursor();
+        // Move only the isolated log's timestamps; prune through the actual production cleanup service.
+        jdbc.update("UPDATE note_change SET created_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 100 DAY)");
+        var retention = context.getBean(com.privatespace.modules.note.service.RetentionService.class);
+        while (jdbc.queryForObject("SELECT COUNT(*) FROM note_change", Long.class) > 0) retention.cleanup();
+        assertThat(mapper.syncFloor()).isEqualTo(head);
+        assertThat(mapper.syncCursor()).isEqualTo(head);
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("增量清理后.md", "note", "# after prune", null), UUID.randomUUID().toString());
+        assertThat(mapper.syncCursor()).isGreaterThan(head);
+    }
+
+    private void purgeSyncFixture(ConfigurableApplicationContext context) {
+        var jdbc = context.getBean(JdbcTemplate.class);
+        assertThat(jdbc.update("UPDATE note_file SET updated_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 40 DAY) WHERE path = '增量选择/待过期删除.md' AND deleted = TRUE")).isEqualTo(1);
+        context.getBean(com.privatespace.modules.note.service.RetentionService.class).cleanup();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_file WHERE path = '增量选择/待过期删除.md'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_change WHERE purged = TRUE", Long.class)).isGreaterThan(0L);
+    }
+
+    private void seedLegacySyncLog() {
+        String url = System.getenv("IT_DB_URL");
+        if (url == null || !url.matches("jdbc:mysql://127\\.0\\.0\\.1:[0-9]+/private_space_it(?:\\?.*)?")) {
+            throw new IllegalStateException("Migration fixture requires the local isolated integration database");
+        }
+        var legacy = org.flywaydb.core.Flyway.configure().dataSource(url, System.getenv("IT_DB_USERNAME"), System.getenv("IT_DB_PASSWORD"))
+                .locations("filesystem:../database/migrations").target("6").load();
+        assertThat(legacy.info().current()).as("Migration fixture requires an empty isolated database").isNull();
+        legacy.migrate();
+        var jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                System.getenv("IT_DB_URL"), System.getenv("IT_DB_USERNAME"), System.getenv("IT_DB_PASSWORD")));
+        String id = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO note_file (id, path, type, version) VALUES (?, 'V6迁移旧目录', 'folder', 1)", id);
+        jdbc.update("INSERT INTO note_change (file_id, version, deleted) VALUES (?, 1, FALSE)", id);
+    }
+
+    private void incremental(ConfigurableApplicationContext context, String phase) throws Exception {
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/incremental-" + run).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        Path log = output.resolve(phase + ".log");
+        var builder = new ProcessBuilder("python", "verification/check_incremental.py", phase)
+                .directory(Path.of("../sync-client").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("NOTES_SETUP", setup);
+        builder.environment().put("INCREMENTAL_OUTPUT", output.toString());
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        Process process = builder.start();
+        boolean finished = process.waitFor(3, TimeUnit.MINUTES);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("Incremental verification timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: incremental-" + phase);
     }
 
     private void fileRenames(ConfigurableApplicationContext context, boolean initialize) throws Exception {

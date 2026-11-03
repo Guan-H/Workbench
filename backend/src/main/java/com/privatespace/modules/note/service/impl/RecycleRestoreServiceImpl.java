@@ -22,12 +22,15 @@ public class RecycleRestoreServiceImpl implements RecycleRestoreService {
     private final NoteMapper mapper;
     private final FileObjectService objects;
     private final ObjectMapper json;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
     private final MarkdownLinkRewriter links = new MarkdownLinkRewriter();
 
-    public RecycleRestoreServiceImpl(NoteMapper mapper, FileObjectService objects, ObjectMapper json) {
+    public RecycleRestoreServiceImpl(NoteMapper mapper, FileObjectService objects, ObjectMapper json,
+            com.privatespace.modules.note.service.NoteChangeService changeLog) {
         this.mapper = mapper;
         this.objects = objects;
         this.json = json;
+        this.changeLog = changeLog;
     }
 
     @Override
@@ -224,7 +227,7 @@ public class RecycleRestoreServiceImpl implements RecycleRestoreService {
         return file;
     }
 
-    private void publish(String id) { mapper.history(id); mapper.change(id); }
+    private void publish(String id) { mapper.history(id); changeLog.publish(id); }
     private String text(byte[] bytes) {
         try { return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString(); }
         catch (java.nio.charset.CharacterCodingException exception) { throw conflict("原始 Markdown 编码无效，未恢复内容。"); }

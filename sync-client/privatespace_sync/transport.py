@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from http.client import HTTPException
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -47,12 +48,18 @@ class Remote:
         try:
             with self.opener.open(request, timeout=15) as response:
                 payload = response.read(71 * 1024 * 1024)
-                return payload if binary else json.loads(payload)
+                length = response.headers.get('Content-Length')
+                if length is not None and len(payload) != int(length):
+                    raise SyncError('NETWORK_UNAVAILABLE')
+                try:
+                    return payload if binary else json.loads(payload)
+                except (ValueError, UnicodeError):
+                    raise SyncError('INVALID_SYNC_RESPONSE') from None
         except urllib.error.HTTPError as error:
             try:
                 code = json.loads(error.read(16 * 1024)).get("code", "HTTP_ERROR")
             except (ValueError, UnicodeError):
                 code = "HTTP_ERROR"
             raise SyncError(code, error.code) from None
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, HTTPException):
             raise SyncError("NETWORK_UNAVAILABLE") from None

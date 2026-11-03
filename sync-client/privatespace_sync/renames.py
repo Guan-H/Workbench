@@ -104,6 +104,8 @@ class Renames:
         unique_base = Counter(known.values())
         pending = {row['source']: dict(row) for row in self.db.execute('SELECT * FROM rename_queue')}
         for source, row in list(pending.items()):
+            if not self.engine.selection.explicit(source) or not self.engine.selection.explicit(row['target']):
+                continue
             if row['attempted']:
                 continue
             paths = [path for path, key in identities.items() if key == row['identity']]
@@ -148,7 +150,9 @@ class Renames:
         active = [row for row in scoped if not skip(row['source']) and not skip(row['target'])]
         blocked = {path for row in scoped for path in (row['source'], row['target'])}
         if not active:
-            self.db.execute("DELETE FROM setting WHERE key = 'rename_review'"); self.db.commit()
+            if not pending:
+                self.db.execute("DELETE FROM setting WHERE key = 'rename_review'")
+            self.db.commit()
             return None, blocked
         if not self.engine.rename_supported:
             raise SyncError('RENAME_SERVER_UPGRADE_REQUIRED')

@@ -25,9 +25,13 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
     private final SyncDeviceMapper mapper;
     private final NoteService notes;
     private final ObjectMapper json;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
     private final SecureRandom random = new SecureRandom();
 
-    public SyncDeviceServiceImpl(SyncDeviceMapper mapper, NoteService notes, ObjectMapper json) { this.mapper = mapper; this.notes = notes; this.json = json; }
+    public SyncDeviceServiceImpl(SyncDeviceMapper mapper, NoteService notes, ObjectMapper json,
+            com.privatespace.modules.note.service.NoteChangeService changeLog) {
+        this.mapper = mapper; this.notes = notes; this.json = json; this.changeLog = changeLog;
+    }
 
     public Map<String, String> pairing(String name) {
         return pairing(name, SyncScope.entireLibrary());
@@ -92,7 +96,19 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
         result.put("scope", device.scope());
         result.put("scopeVersion", device.scopeVersion());
         result.put("fileRenameSupported", true);
+        result.put("incrementalSupported", true);
+        mapper.saveSnapshotPaths(deviceId, json.writeValueAsString(result.get("attachmentPaths")));
         return result;
+    }
+
+    @Transactional
+    public com.privatespace.modules.note.dto.SyncChangePage changes(String deviceId, String scopeVersion, String after, String until, int limit) {
+        var device = current(deviceId);
+        checkVersion(device, scopeVersion);
+        String paths = mapper.readSnapshotPaths(deviceId);
+        if (paths == null) throw new ApiException(428, "SYNC_SNAPSHOT_REQUIRED", "请先获取完整目录再进行增量同步。");
+        var attachments = java.util.Arrays.asList(json.readValue(paths, String[].class));
+        return changeLog.changes(after, until, limit, device.scope().all() ? List.of() : device.scope().folders(), attachments);
     }
 
     @Transactional

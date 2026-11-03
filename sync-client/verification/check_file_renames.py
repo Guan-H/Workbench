@@ -239,6 +239,14 @@ try:
         (root_a / folder / f'批量{index}.md').rename(root_a / folder / f'改名{index}.md')
     review = a.cycle()
     assert review['status'] == 'REQUIRES_CONFIRMATION' and len(review['deletionPreview']['changes']) == 22
+    request('/notes', {'path': '文件身份暂存范围', 'type': 'folder', 'content': ''})
+    switched = request('/sync-devices/' + a.config['device'] + '/scope',
+        {'scope': {'all': False, 'folders': ['文件身份暂存范围']}, 'baseVersion': a.remote.scope_version}, method='PUT')
+    held = settle(a)
+    assert held['heldQueued'] == 22 and held['queued'] == 0
+    request('/sync-devices/' + a.config['device'] + '/scope',
+        {'scope': {'all': False, 'folders': [folder]}, 'baseVersion': switched['scopeVersion']}, method='PUT')
+    assert a.cycle()['status'] == 'REQUIRES_CONFIRMATION'
     (root_a / folder / '改名0.md').rename(root_a / folder / '再次改名0.md')
     stale = a.cycle(confirmation=review['deletionPreview']['fingerprint'])
     assert stale['status'] == 'REQUIRES_CONFIRMATION'
@@ -248,7 +256,7 @@ try:
     assert remote_review['status'] == 'REQUIRES_CONFIRMATION' and all(item['direction'] == 'rename-local' for item in remote_review['deletionPreview']['changes'])
     settle(b, remote_review['deletionPreview']['fingerprint'])
     assert (root_b / folder / '再次改名0.md').read_bytes() == b'# bulk\r\n'
-    checks.append('bulk rename requires review on both sides; changed local target invalidates prior confirmation')
+    checks.append('bulk rename requires review on both sides; scope exclusion holds all queued renames and reselecting still requires confirmation; changed local target invalidates prior confirmation')
 
     # A concurrent server edit cannot be overwritten by an old-version local rename.
     conflict_source = f'{folder}/保留2.md'; conflict_target = f'{folder}/并发改名.md'

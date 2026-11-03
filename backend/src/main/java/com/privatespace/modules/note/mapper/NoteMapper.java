@@ -34,8 +34,26 @@ public interface NoteMapper {
     @Update("UPDATE note_file SET path = #{path}, type = #{type} WHERE id = #{id}")
     void relocate(String id, String path, String type);
 
-    @Select("SELECT COALESCE(MAX(sequence_id), 0) FROM note_change")
+    @Select("SELECT GREATEST(COALESCE(MAX(sequence_id), 0), (SELECT floor_cursor FROM sync_log_state WHERE id = 1)) FROM note_change")
     long syncCursor();
+
+    @Select("SELECT floor_cursor FROM sync_log_state WHERE id = 1")
+    long syncFloor();
+
+    @Select("SELECT sequence_id AS sequenceId, file_id AS fileId, metadata_json AS metadataJson, before_path AS beforePath, references_changed AS referencesChanged, purged FROM note_change WHERE purged = TRUE ORDER BY sequence_id DESC LIMIT 5001")
+    List<com.privatespace.modules.note.entity.NoteChangeEntity> retainedPurges();
+
+    @Select("SELECT sequence_id AS sequenceId, file_id AS fileId, metadata_json AS metadataJson, before_path AS beforePath, references_changed AS referencesChanged, purged FROM note_change WHERE sequence_id > #{after} AND sequence_id <= #{until} ORDER BY sequence_id LIMIT #{limit}")
+    List<com.privatespace.modules.note.entity.NoteChangeEntity> syncChanges(long after, long until, int limit);
+
+    @Select("SELECT sequence_id FROM note_change WHERE created_at < #{cutoff} AND sequence_id < (SELECT COALESCE(MIN(sequence_id), 9223372036854775807) FROM note_change WHERE created_at >= #{cutoff}) ORDER BY sequence_id LIMIT #{limit}")
+    List<Long> expiredChangePrefix(java.time.LocalDateTime cutoff, int limit);
+
+    @Update("UPDATE sync_log_state SET floor_cursor = GREATEST(floor_cursor, #{cursor}) WHERE id = 1")
+    void advanceSyncFloor(long cursor);
+
+    @org.apache.ibatis.annotations.Delete("DELETE FROM note_change WHERE sequence_id <= #{cursor}")
+    void pruneSyncChanges(long cursor);
 
     @Select("SELECT " + FIELDS + " " + """
             FROM note_file
@@ -61,8 +79,11 @@ public interface NoteMapper {
     @Insert("INSERT INTO note_revision (file_id, version, object_id, path, deleted) SELECT id, version, object_id, path, deleted FROM note_file WHERE id = #{id}")
     void history(String id);
 
-    @Insert("INSERT INTO note_change (file_id, version, deleted) SELECT id, version, deleted FROM note_file WHERE id = #{id}")
-    void change(String id);
+    @Insert("INSERT INTO note_change (file_id, version, deleted, metadata_json, before_path, references_changed) SELECT id, version, deleted, #{metadata}, #{beforePath}, #{referencesChanged} FROM note_file WHERE id = #{id}")
+    void change(String id, String metadata, String beforePath, boolean referencesChanged);
+
+    @Insert("INSERT INTO note_change (file_id, version, deleted, metadata_json, before_path, references_changed, purged) VALUES (#{file.id}, #{file.version}, TRUE, #{metadata}, #{file.path}, FALSE, TRUE)")
+    void purgeChange(NoteFileEntity file, String metadata);
 
     @Select("SELECT file_id AS fileId, version, object_id AS objectId, path, deleted, created_at AS createdAt " +
             "FROM note_revision WHERE file_id = #{id} AND (#{before} = 0 OR version < #{before}) " +

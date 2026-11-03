@@ -24,6 +24,14 @@ public class SyncController {
         return devices.snapshot(device.getName());
     }
 
+    @GetMapping("/changes")
+    public com.privatespace.modules.note.dto.SyncChangePage changes(Principal device,
+            @RequestHeader(value = "X-Sync-Scope-Version", required = false) String scopeVersion,
+            @RequestParam String after, @RequestParam(required = false) String until,
+            @RequestParam(defaultValue = "200") int limit) {
+        return devices.changes(device.getName(), scopeVersion, after, until, limit);
+    }
+
     @GetMapping("/files/{id}")
     public ResponseEntity<byte[]> content(@PathVariable String id, @RequestParam String version, Principal device,
             @RequestHeader(value = "X-Sync-Scope-Version", required = false) String scopeVersion) {

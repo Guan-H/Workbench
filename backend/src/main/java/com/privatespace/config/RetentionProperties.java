@@ -15,6 +15,7 @@ public class RetentionProperties {
     @Min(1) private int historyDays = 30;
     @Min(1) private int recycleDays = 30;
     @Min(1) private int orphanDays = 30;
+    @Min(1) private int changeDays = 90;
     @NotNull private Duration exportLease = Duration.ofHours(2);
 
     public boolean isEnabled() { return enabled; }
@@ -24,6 +25,8 @@ public class RetentionProperties {
     public int getRecycleDays() { return recycleDays; }
     public void setRecycleDays(int recycleDays) { this.recycleDays = recycleDays; }
     public int getOrphanDays() { return orphanDays; }
+    public int getChangeDays() { return changeDays; }
+    public void setChangeDays(int changeDays) { this.changeDays = changeDays; }
     public void setOrphanDays(int orphanDays) { this.orphanDays = orphanDays; }
     public Duration getExportLease() { return exportLease; }
     public void setExportLease(Duration exportLease) { this.exportLease = exportLease; }

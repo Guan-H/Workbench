@@ -35,15 +35,18 @@ public class NoteImportServiceImpl implements NoteImportService {
     private final NoteMapper mapper;
     private final FileObjectService objects;
     private final ObjectMapper json;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
     private final int maxFiles;
     private final long maxBytes;
 
     public NoteImportServiceImpl(NoteMapper mapper, FileObjectService objects, ObjectMapper json,
+            com.privatespace.modules.note.service.NoteChangeService changeLog,
             @Value("${private-space.import.max-files:2000}") int maxFiles,
             @Value("${private-space.import.max-bytes:1073741824}") long maxBytes) {
         this.mapper = mapper;
         this.objects = objects;
         this.json = json;
+        this.changeLog = changeLog;
         this.maxFiles = maxFiles;
         this.maxBytes = maxBytes;
     }
@@ -185,7 +188,7 @@ public class NoteImportServiceImpl implements NoteImportService {
         mapper.create(new NoteFileEntity(id, path, type, 1, object == null ? null : object.id(), content,
                 false, false, null, null, object == null ? 0 : object.size(), object == null ? null : object.sha256()));
         mapper.history(id);
-        mapper.change(id);
+        changeLog.publish(id);
     }
 
     private List<List<Object>> identities(List<Upload> uploads) {

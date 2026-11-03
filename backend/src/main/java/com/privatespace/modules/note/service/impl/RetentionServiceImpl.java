@@ -24,15 +24,18 @@ public class RetentionServiceImpl implements RetentionService {
     private final FileObjectMapper objectMapper;
     private final FileObjectService objects;
     private final TransactionTemplate transactions;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
 
     public RetentionServiceImpl(RetentionProperties properties, NoteMapper notes, RetentionMapper retention,
-            FileObjectMapper objectMapper, FileObjectService objects, PlatformTransactionManager manager) {
+            FileObjectMapper objectMapper, FileObjectService objects, PlatformTransactionManager manager,
+            com.privatespace.modules.note.service.NoteChangeService changeLog) {
         this.properties = properties;
         this.notes = notes;
         this.retention = retention;
         this.objectMapper = objectMapper;
         this.objects = objects;
         this.transactions = new TransactionTemplate(manager);
+        this.changeLog = changeLog;
     }
 
     @Override
@@ -43,13 +46,17 @@ public class RetentionServiceImpl implements RetentionService {
         LocalDateTime historyCutoff = now.minusDays(properties.getHistoryDays());
         int[] metadata = transactions.execute(status -> {
             notes.lock();
+            changeLog.prune(now.minusDays(properties.getChangeDays()), METADATA_BATCH);
             objectMapper.releaseExpired();
             removeCompletedBatches(recycleCutoff);
             int trashFiles = 0;
             for (String id : retention.expiredTrash(recycleCutoff, METADATA_BATCH)) {
+                var file = notes.find(id);
                 retention.deleteMemberReferences(id);
                 retention.deleteFileRevisions(id);
-                trashFiles += retention.deleteTrashFile(id, recycleCutoff);
+                int removed = retention.deleteTrashFile(id, recycleCutoff);
+                if (removed > 0) changeLog.purge(file);
+                trashFiles += removed;
             }
             removeCompletedBatches(recycleCutoff);
             int revisions = 0;

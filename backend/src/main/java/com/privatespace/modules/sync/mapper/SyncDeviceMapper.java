@@ -38,4 +38,10 @@ public interface SyncDeviceMapper {
 
     @Update("UPDATE sync_device SET scope_json = #{scope}, scope_version = scope_version + 1 WHERE id = #{id} AND scope_version = #{version} AND revoked = FALSE")
     int scope(String id, String scope, long version);
+
+    @Update("UPDATE sync_device SET attachment_paths_json = #{paths}, snapshot_scope_version = scope_version WHERE id = #{id}")
+    void saveSnapshotPaths(String id, String paths);
+
+    @Select("SELECT attachment_paths_json FROM sync_device WHERE id = #{id} AND snapshot_scope_version = scope_version")
+    String readSnapshotPaths(String id);
 }

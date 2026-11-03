@@ -31,11 +31,14 @@ public class NoteServiceImpl implements NoteService {
     private final NoteMapper mapper;
     private final FileObjectService objects;
     private final ObjectMapper json;
+    private final com.privatespace.modules.note.service.NoteChangeService changeLog;
 
-    public NoteServiceImpl(NoteMapper mapper, FileObjectService objects, ObjectMapper json) {
+    public NoteServiceImpl(NoteMapper mapper, FileObjectService objects, ObjectMapper json,
+            com.privatespace.modules.note.service.NoteChangeService changeLog) {
         this.mapper = mapper;
         this.objects = objects;
         this.json = json;
+        this.changeLog = changeLog;
     }
 
     public Map<String, Object> list(boolean deleted, String cursor, String query) {
@@ -277,7 +280,14 @@ public class NoteServiceImpl implements NoteService {
         }
         var selected = files.stream().filter(file -> folders.isEmpty() || folders.stream().anyMatch(root -> file.path().equals(root) || file.path().startsWith(root + "/"))
                 || file.type().equals("attachment") && references.contains(file.path())).toList();
-        return Map.of("cursor", Long.toString(mapper.syncCursor()), "items", selected.stream().map(file -> response(file, null)).toList(),
+        var purged = changeLog.retainedTombstones().stream()
+                .filter(file -> files.stream().noneMatch(current -> current.id().equals(file.id()) || current.path().equalsIgnoreCase(file.path())))
+                .filter(file -> folders.isEmpty() || folders.stream().anyMatch(root -> file.path().equals(root) || file.path().startsWith(root + "/"))
+                    || file.type().equals("attachment") && references.contains(file.path())).toList();
+        if (selected.size() + purged.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "当前对账最多支持 5000 个对象（含保留的删除记录）。");
+        var items = new java.util.ArrayList<>(selected.stream().map(file -> response(file, null)).toList());
+        items.addAll(purged);
+        return Map.of("cursor", Long.toString(mapper.syncCursor()), "items", items, "purgedIds", purged.stream().map(NoteResponse::id).toList(),
                 "attachmentPaths", references.stream().filter(path -> files.stream().noneMatch(file -> file.path().equals(path) && !file.type().equals("attachment"))).toList());
     }
 
@@ -380,7 +390,7 @@ public class NoteServiceImpl implements NoteService {
         return remember(operation, scope, request, read(current.id(), false));
     }
 
-    private void publish(String id) { mapper.history(id); mapper.change(id); }
+    private void publish(String id) { mapper.history(id); changeLog.publish(id); }
 
     private NoteFileEntity required(String id) {
         var result = mapper.find(UUID.fromString(id).toString());

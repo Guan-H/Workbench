@@ -51,6 +51,7 @@ private-space:
     history-days: ${PRIVATE_SPACE_HISTORY_RETENTION_DAYS:30}
     recycle-days: ${PRIVATE_SPACE_RECYCLE_RETENTION_DAYS:30}
     orphan-days: ${PRIVATE_SPACE_ORPHAN_RETENTION_DAYS:30}
+    change-days: ${PRIVATE_SPACE_CHANGE_RETENTION_DAYS:90}
     export-lease: ${PRIVATE_SPACE_EXPORT_LEASE:PT2H}
   import:
     max-files: ${PRIVATE_SPACE_IMPORT_MAX_FILES:2000}
