@@ -264,31 +264,45 @@ public class NoteServiceImpl implements NoteService {
 
     @Transactional
     public Map<String, Object> syncSnapshot(java.util.List<String> folders) {
-        mapper.lock();
-        var files = mapper.moveCatalog();
-        if (files.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "M0 对账原型最多验证 5000 个对象，请勿用于完整生产同步。");
+        return catalog(folders, true);
+    }
+
+    @Transactional
+    public Map<String, Object> syncCatalog(java.util.List<String> folders) {
+        return catalog(folders, false);
+    }
+
+    public java.util.List<String> syncAttachmentPaths(java.util.List<String> folders) {
+        if (folders.isEmpty()) return List.of();
         var references = new java.util.LinkedHashSet<String>();
-        if (!folders.isEmpty()) {
-            for (var file : files) {
-                if (file.deleted() || !file.type().equals("note") || folders.stream().noneMatch(root -> file.path().startsWith(root + "/"))) continue;
-                for (String reference : com.privatespace.modules.note.service.MarkdownAttachments.paths(file.path(), text(objects.read(file.objectId())))) {
-                    var existing = files.stream().filter(candidate -> candidate.path().equalsIgnoreCase(reference)).findFirst();
-                    if (existing.isEmpty()) references.add(reference);
-                    else if (existing.get().type().equals("attachment")) references.add(existing.get().path());
-                }
+        for (var file : mapper.syncReferenceSources(json.writeValueAsString(folders))) {
+            for (String path : com.privatespace.modules.note.service.MarkdownAttachments.paths(file.path(), file.content())) {
+                var existing = mapper.byPath(path);
+                if (existing == null) references.add(path);
+                else if (existing.type().equals("attachment")) references.add(existing.path());
             }
         }
+        return List.copyOf(references);
+    }
+
+    private Map<String, Object> catalog(java.util.List<String> folders, boolean bounded) {
+        mapper.lock();
+        var files = mapper.moveCatalog();
+        if (bounded && files.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "旧目录接口最多支持 5000 个对象，请升级同步助手。");
+        var references = new java.util.HashSet<>(syncAttachmentPaths(folders));
+        var identities = files.stream().map(NoteFileEntity::id).collect(java.util.stream.Collectors.toSet());
+        var paths = files.stream().map(file -> file.path().toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toSet());
         var selected = files.stream().filter(file -> folders.isEmpty() || folders.stream().anyMatch(root -> file.path().equals(root) || file.path().startsWith(root + "/"))
                 || file.type().equals("attachment") && references.contains(file.path())).toList();
         var purged = changeLog.retainedTombstones().stream()
-                .filter(file -> files.stream().noneMatch(current -> current.id().equals(file.id()) || current.path().equalsIgnoreCase(file.path())))
+                .filter(file -> !identities.contains(file.id()) && !paths.contains(file.path().toLowerCase(Locale.ROOT)))
                 .filter(file -> folders.isEmpty() || folders.stream().anyMatch(root -> file.path().equals(root) || file.path().startsWith(root + "/"))
                     || file.type().equals("attachment") && references.contains(file.path())).toList();
-        if (selected.size() + purged.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "当前对账最多支持 5000 个对象（含保留的删除记录）。");
+        if (bounded && selected.size() + purged.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "旧目录接口最多支持 5000 个对象（含保留的删除记录），请升级同步助手。");
         var items = new java.util.ArrayList<>(selected.stream().map(file -> response(file, null)).toList());
         items.addAll(purged);
         return Map.of("cursor", Long.toString(mapper.syncCursor()), "items", items, "purgedIds", purged.stream().map(NoteResponse::id).toList(),
-                "attachmentPaths", references.stream().filter(path -> files.stream().noneMatch(file -> file.path().equals(path) && !file.type().equals("attachment"))).toList());
+                "attachmentPaths", references.stream().sorted().toList());
     }
 
     public byte[] syncRead(String id, String version) {

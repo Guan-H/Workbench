@@ -55,7 +55,6 @@ public class NoteChangeServiceImpl implements NoteChangeService {
 
     public List<NoteResponse> retainedTombstones() {
         var rows = mapper.retainedPurges();
-        if (rows.size() > 5000) throw new ApiException(413, "PROTOTYPE_LIMIT", "当前对账最多支持 5000 个对象。");
         return rows.stream().map(row -> json.readValue(row.metadataJson(), NoteResponse.class)).toList();
     }
 

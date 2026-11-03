@@ -1,6 +1,6 @@
 """M0 reconciliation prototype: real HTTP, SQLite queue, byte hashes and real files.
 
-This is deliberately a bounded full-snapshot prototype, not the M2 incremental client.
+Catalog bootstrap and subsequent changes are paginated; caches publish only complete views.
 """
 
 from __future__ import annotations

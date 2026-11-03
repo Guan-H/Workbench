@@ -64,7 +64,7 @@ class Relay:
                 with actual:
                     payload = actual.read()
                     partial = False
-                    kind = 'changes' if self.path.startswith('/api/v1/sync/changes?') else 'snapshot' if self.path == '/api/v1/sync/snapshot' else None
+                    kind = 'changes' if self.path.startswith('/api/v1/sync/changes?') else 'snapshot' if self.path == '/api/v1/sync/snapshot' or self.path.startswith('/api/v1/sync/snapshot-pages?') and 'snapshot=' not in self.path else None
                     if kind:
                         result = json.loads(payload)
                         relay.responses.append({'kind': kind, 'status': actual.status, 'result': result})

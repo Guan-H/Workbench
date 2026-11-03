@@ -31,8 +31,13 @@ class NotesIT {
     @Test
     void verifiesAuthenticatedNotebookAndRestartPersistence() throws Exception {
         try (var socket = new ServerSocket(0)) { frontendPort = socket.getLocalPort(); }
-        if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog();
+        if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog("6");
+        if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) seedLegacySyncLog("7");
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) {
+                snapshotPages(context, true);
+                return;
+            }
             if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) {
                 assertThat(context.getBean(com.privatespace.modules.note.mapper.NoteMapper.class).syncFloor()).isEqualTo(1L);
                 incremental(context, "initialize");
@@ -83,6 +88,7 @@ class NotesIT {
         try (var context = start()) {
             browser(context, "restore");
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) sync(context, "restore");
+            if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) snapshotPages(context, false);
         }
     }
 
@@ -425,13 +431,13 @@ class NotesIT {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_change WHERE purged = TRUE", Long.class)).isGreaterThan(0L);
     }
 
-    private void seedLegacySyncLog() {
+    private void seedLegacySyncLog(String target) {
         String url = System.getenv("IT_DB_URL");
         if (url == null || !url.matches("jdbc:mysql://127\\.0\\.0\\.1:[0-9]+/private_space_it(?:\\?.*)?")) {
             throw new IllegalStateException("Migration fixture requires the local isolated integration database");
         }
         var legacy = org.flywaydb.core.Flyway.configure().dataSource(url, System.getenv("IT_DB_USERNAME"), System.getenv("IT_DB_PASSWORD"))
-                .locations("filesystem:../database/migrations").target("6").load();
+                .locations("filesystem:../database/migrations").target(target).load();
         assertThat(legacy.info().current()).as("Migration fixture requires an empty isolated database").isNull();
         legacy.migrate();
         var jdbc = new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(
@@ -439,6 +445,53 @@ class NotesIT {
         String id = UUID.randomUUID().toString();
         jdbc.update("INSERT INTO note_file (id, path, type, version) VALUES (?, 'V6迁移旧目录', 'folder', 1)", id);
         jdbc.update("INSERT INTO note_change (file_id, version, deleted) VALUES (?, 1, FALSE)", id);
+    }
+
+    private void snapshotPages(ConfigurableApplicationContext context, boolean initialize) throws Exception {
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页验证", "folder", "", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页其他", "folder", "", null), UUID.randomUUID().toString());
+        assertThat(notes.syncAttachmentPaths(java.util.List.of("分页验证"))).isEmpty();
+        // Every fixture goes through the real publication transaction; no synthetic API response or direct metadata INSERT.
+        for (int index = 0; index < 5005; index++) {
+            notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页验证/空目录" + index, "folder", "", null), UUID.randomUUID().toString());
+        }
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页验证/正文.md", "note", "# 原始正文\r\n\r\n[附件](../分页其他/附件.bin)\r\n", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页验证/删除.md", "note", "# 保留删除前字节\r\n", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页其他/不选.md", "note", "# 范围外正文", null), UUID.randomUUID().toString());
+        notes.upload("分页其他/附件.bin", "shared attachment\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8), UUID.randomUUID().toString());
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/snapshot-pages-" + run).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        runSnapshotPages(output, port, initialize ? "initialize" : "existing");
+        var state = context.getBean(tools.jackson.databind.ObjectMapper.class).readTree(Files.readString(output.resolve("expiry.json")));
+        var jdbc = context.getBean(JdbcTemplate.class);
+        assertThat(jdbc.update("UPDATE sync_snapshot SET expires_at = UTC_TIMESTAMP(6) - INTERVAL 1 SECOND WHERE id = ?", state.get("snapshot").asText())).isOne();
+        runSnapshotPages(output, port, "expired");
+        // Starting a new bootstrap also reclaims expired metadata pages through the FK cascade.
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sync_snapshot_item WHERE snapshot_id = ?", Long.class, state.get("snapshot").asText())).isZero();
+        // SQL candidate filtering must retain the exact path-prefix semantics of the existing Java scope.
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页ScopeCase", "folder", "", null), UUID.randomUUID().toString());
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("分页scopecase/范围外.md", "note", "[附件](../分页其他/附件.bin)", null), UUID.randomUUID().toString());
+        assertThat(notes.syncAttachmentPaths(java.util.List.of("分页ScopeCase"))).isEmpty();
+    }
+
+    private void runSnapshotPages(Path output, int port, String phase) throws Exception {
+        Path log = output.resolve(phase + ".log");
+        var builder = new ProcessBuilder("python", "verification/check_snapshot_pages.py", phase)
+                .directory(Path.of("../sync-client").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("NOTES_SETUP", setup);
+        builder.environment().put("SNAPSHOT_OUTPUT", output.toString());
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        Process process = builder.start();
+        boolean finished = process.waitFor(6, TimeUnit.MINUTES);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("Snapshot page verification timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: snapshot-pages-" + phase);
     }
 
     private void incremental(ConfigurableApplicationContext context, String phase) throws Exception {

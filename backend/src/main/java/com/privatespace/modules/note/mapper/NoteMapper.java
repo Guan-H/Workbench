@@ -28,6 +28,9 @@ public interface NoteMapper {
     @Select("SELECT id, path, type, version, object_id AS objectId, NULL AS content, deleted, favorite, last_opened_at AS lastOpenedAt, updated_at AS updatedAt, size, sha256 FROM note_file ORDER BY id")
     List<NoteFileEntity> moveCatalog();
 
+    @Select("SELECT " + FIELDS + " FROM note_file WHERE deleted = FALSE AND type = 'note' AND EXISTS (SELECT 1 FROM JSON_TABLE(#{folders}, '$[*]' COLUMNS(root VARCHAR(512) CHARACTER SET utf8mb4 PATH '$')) AS selected WHERE LEFT(path, CHAR_LENGTH(root) + 1) = CONCAT(root, '/') COLLATE utf8mb4_0900_bin) ORDER BY id")
+    List<NoteFileEntity> syncReferenceSources(String folders);
+
     @Update("UPDATE note_file SET path = #{path} WHERE id = #{id}")
     void repath(String id, String path);
 
@@ -40,7 +43,7 @@ public interface NoteMapper {
     @Select("SELECT floor_cursor FROM sync_log_state WHERE id = 1")
     long syncFloor();
 
-    @Select("SELECT sequence_id AS sequenceId, file_id AS fileId, metadata_json AS metadataJson, before_path AS beforePath, references_changed AS referencesChanged, purged FROM note_change WHERE purged = TRUE ORDER BY sequence_id DESC LIMIT 5001")
+    @Select("SELECT sequence_id AS sequenceId, file_id AS fileId, metadata_json AS metadataJson, before_path AS beforePath, references_changed AS referencesChanged, purged FROM note_change WHERE purged = TRUE ORDER BY sequence_id DESC")
     List<com.privatespace.modules.note.entity.NoteChangeEntity> retainedPurges();
 
     @Select("SELECT sequence_id AS sequenceId, file_id AS fileId, metadata_json AS metadataJson, before_path AS beforePath, references_changed AS referencesChanged, purged FROM note_change WHERE sequence_id > #{after} AND sequence_id <= #{until} ORDER BY sequence_id LIMIT #{limit}")

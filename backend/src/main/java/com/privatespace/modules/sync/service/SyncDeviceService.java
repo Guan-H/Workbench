@@ -16,6 +16,7 @@ public interface SyncDeviceService {
     SyncDeviceResponse current(String id);
     SyncDeviceResponse updateScope(String id, com.privatespace.modules.sync.dto.SyncScope scope, String version);
     Map<String, Object> snapshot(String deviceId);
+    Map<String, Object> snapshotPage(String deviceId, String snapshot, String after, int limit);
     com.privatespace.modules.note.dto.SyncChangePage changes(String deviceId, String scopeVersion, String after, String until, int limit);
     byte[] readFile(String deviceId, String scopeVersion, String id, String version);
     NoteResponse writeFile(String deviceId, String scopeVersion, SyncWriteRequest request, String operation);

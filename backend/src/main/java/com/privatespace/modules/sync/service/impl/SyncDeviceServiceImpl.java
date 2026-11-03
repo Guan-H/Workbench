@@ -26,11 +26,14 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
     private final NoteService notes;
     private final ObjectMapper json;
     private final com.privatespace.modules.note.service.NoteChangeService changeLog;
+    private final com.privatespace.modules.sync.service.SyncSnapshotService snapshots;
     private final SecureRandom random = new SecureRandom();
 
     public SyncDeviceServiceImpl(SyncDeviceMapper mapper, NoteService notes, ObjectMapper json,
-            com.privatespace.modules.note.service.NoteChangeService changeLog) {
+            com.privatespace.modules.note.service.NoteChangeService changeLog,
+            com.privatespace.modules.sync.service.SyncSnapshotService snapshots) {
         this.mapper = mapper; this.notes = notes; this.json = json; this.changeLog = changeLog;
+        this.snapshots = snapshots;
     }
 
     public Map<String, String> pairing(String name) {
@@ -102,6 +105,15 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
     }
 
     @Transactional
+    public Map<String, Object> snapshotPage(String deviceId, String snapshot, String after, int limit) {
+        var result = snapshots.page(current(deviceId), snapshot, after, limit);
+        if (Boolean.TRUE.equals(result.get("complete"))) {
+            mapper.saveSnapshotPaths(deviceId, json.writeValueAsString(result.get("attachmentPaths")));
+        }
+        return result;
+    }
+
+    @Transactional
     public com.privatespace.modules.note.dto.SyncChangePage changes(String deviceId, String scopeVersion, String after, String until, int limit) {
         var device = current(deviceId);
         checkVersion(device, scopeVersion);
@@ -145,9 +157,7 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
 
     private void checkPath(SyncDeviceResponse device, String path, boolean deleted) {
         if (device.scope().all() || device.scope().folders().stream().anyMatch(root -> path.startsWith(root + "/"))) return;
-        var snapshot = notes.syncSnapshot(device.scope().folders());
-        Object paths = snapshot.get("attachmentPaths");
-        if (!deleted && paths instanceof List<?> references && references.contains(path)) return;
+        if (!deleted && notes.syncAttachmentPaths(device.scope().folders()).contains(path)) return;
         throw new ApiException(403, "OUTSIDE_SYNC_SCOPE", "文件不在设备同步范围内；目录外引用附件不通过本地缺失传播删除。");
     }
 

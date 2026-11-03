@@ -32,6 +32,13 @@ public class SyncController {
         return devices.changes(device.getName(), scopeVersion, after, until, limit);
     }
 
+    @GetMapping("/snapshot-pages")
+    public Map<String, Object> snapshotPage(Principal device,
+            @RequestParam(required = false) String snapshot, @RequestParam(required = false) String after,
+            @RequestParam(defaultValue = "200") int limit) {
+        return devices.snapshotPage(device.getName(), snapshot, after, limit);
+    }
+
     @GetMapping("/files/{id}")
     public ResponseEntity<byte[]> content(@PathVariable String id, @RequestParam String version, Principal device,
             @RequestHeader(value = "X-Sync-Scope-Version", required = false) String scopeVersion) {

@@ -41,7 +41,8 @@ ERRORS = {
     'LOCAL_CHANGED_BEFORE_RENAME': '改名预检后本地文件又发生变化，未执行旧预览，请核对文件后重试。',
     'SYNC_CURSOR_EXPIRED': '同步记录已过期，已暂停；本地文件和队列保留，需要重新对账，不会自动删除或复活旧文件。',
     'SERVER_ROLLBACK_RECONCILIATION_REQUIRED': '服务器版本游标回退，已暂停；请保留本地文件和队列并核对服务器恢复情况。',
-    'INVALID_SYNC_RESPONSE': '增量目录响应不完整或游标无效，未提交本轮目录缓存；请重试。',
+    'INVALID_SYNC_RESPONSE': '目录响应不完整或分页参数无效，未提交本轮目录缓存；请重试。',
+    'SYNC_SNAPSHOT_EXPIRED': '本轮目录分页已失效，请手动重试；原文件、基线和同步队列均已保留。',
     'DELETED_REMOTE_REQUIRES_RECONCILIATION': '此路径有服务器删除记录，本地文件已保留；请先重新对账，不会自动重新上传。',
 }
 
@@ -90,7 +91,7 @@ class SyncApp:
         ttk.Label(body, text='同步助手', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 12))
         self.configure_button = ttk.Button(body, text='更换服务器 / 目录', command=self.manage_profiles)
         self.configure_button.grid(row=0, column=2, sticky='e', pady=(0, 12))
-        ttk.Label(body, text='首批仅支持新空目录与最多 5000 对象的全量快照。非空合并、增量和冲突解决尚在开发。',
+        ttk.Label(body, text='当前仅支持新空目录，后续变化自动同步。非空目录合并与冲突解决尚在开发。',
                   wraplength=780).grid(row=1, column=0, columnspan=3, sticky='ew', pady=(0, 16))
         ttk.Label(body, text='服务器地址').grid(row=2, column=0, sticky='w', padx=(0, 12))
         self.url_entry = ttk.Entry(body, textvariable=self.url)

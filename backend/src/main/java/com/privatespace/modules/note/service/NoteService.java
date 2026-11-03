@@ -23,6 +23,10 @@ public interface NoteService {
     byte[] download(String path);
     Map<String, Object> syncSnapshot();
     Map<String, Object> syncSnapshot(java.util.List<String> folders);
+    /** Builds metadata under the notebook lock for the paged protocol; does not impose the legacy 5000-item limit. */
+    Map<String, Object> syncCatalog(java.util.List<String> folders);
+    /** Resolves current standard Markdown attachment references without building a legacy snapshot or reading binary objects. */
+    java.util.List<String> syncAttachmentPaths(java.util.List<String> folders);
     java.util.List<String> validateSyncFolders(java.util.List<String> folders);
     byte[] syncRead(String id, String version);
     NoteResponse syncWrite(SyncWriteRequest request, String operation, String device);
