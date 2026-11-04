@@ -14,7 +14,20 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/sync")
 public class SyncController {
     private final SyncDeviceService devices;
-    public SyncController(SyncDeviceService devices) { this.devices = devices; }
+    private final com.privatespace.modules.sync.service.SyncConflictService conflicts;
+    public SyncController(SyncDeviceService devices, com.privatespace.modules.sync.service.SyncConflictService conflicts) {
+        this.devices = devices; this.conflicts = conflicts;
+    }
+
+    @GetMapping("/conflict-status")
+    public Map<String, Object> conflictStatus(Principal device) { return conflicts.deviceFeed(device.getName()); }
+
+    @PostMapping("/conflict-status")
+    public Map<String, Object> conflictStatus(Principal device,
+            @RequestHeader("X-Sync-Scope-Version") String scopeVersion,
+            @Valid @RequestBody com.privatespace.modules.sync.dto.ConflictStatusRequest request) {
+        return conflicts.report(device.getName(), scopeVersion, request);
+    }
 
     @PostMapping("/pair")
     public Map<String, String> pair(@RequestBody Map<String, String> request) { return devices.pair(request.get("code")); }

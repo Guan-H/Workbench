@@ -339,6 +339,9 @@ try:
     checks.append('a real server rejects the injected ahead cursor; stale approval is readonly; fresh Tk confirmation archives original tasks/baselines, restores a usable cursor, downloads the server move and retains ambiguous local bytes without recreating the old server path')
     from check_conflicts import check_conflicts
     checks.extend(check_conflicts(app, window, wait, request, pair, create, edit, upload, CommitRelay, output, published['path']))
+    if os.environ.get('CHECK_CONFLICT_REPORT') == '1':
+        from check_conflict_reporting import check_reporting
+        checks.extend(check_reporting(request, pair, create, edit, CommitRelay, output))
     (output / 'initial-merge.json').write_text(json.dumps({'checks': checks, 'packagedExecutableRoundtrip': False,
         'nativeVisualManualReview': False}, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS: initial-merge', flush=True)

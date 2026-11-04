@@ -284,6 +284,8 @@ class SyncApp:
                 self.summary.set(f"最近核对：队列 {result.get('queued', 0)} 项，范围外暂存 {result.get('heldQueued', 0)} 项，冲突 {len(result.get('conflicts', []))} 项，问题 {len(result.get('issues', []))} 项。" if result else '尚未完成同步检查')
                 if result.get('reconciliationArchives'):
                     self.summary.set(self.summary.get() + f" 本机保留 {result['reconciliationArchives']} 批对账归档，旧任务不自动重放。")
+                if result.get('conflictReportCode'):
+                    self.summary.set(self.summary.get() + ' 网页冲突状态未更新，元数据任务保留，下一次同步重试。[' + result['conflictReportCode'] + ']')
                 self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
                 self.items += [(item['path'], self.change_description(item)) for item in (result.get('deletionPreview') or {}).get('changes', [])]

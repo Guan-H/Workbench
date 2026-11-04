@@ -34,6 +34,11 @@ class NotesIT {
         if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog("6");
         if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) seedLegacySyncLog("7");
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_CONFLICT_REPORT"))) {
+                initialMerge(context, true);
+                conflictStatusBrowser(context);
+                return;
+            }
             if ("1".equals(System.getenv("IT_ONLY_MERGE"))) {
                 initialMerge(context, true);
                 return;
@@ -541,6 +546,7 @@ class NotesIT {
         builder.environment().put("NOTES_PASSWORD", password);
         builder.environment().put("NOTES_SETUP", setup);
         builder.environment().put("MERGE_OUTPUT", output.toString());
+        if ("1".equals(System.getenv("IT_ONLY_CONFLICT_REPORT"))) builder.environment().put("CHECK_CONFLICT_REPORT", "1");
         builder.environment().put("PYTHONIOENCODING", "utf-8");
         Process process = builder.start();
         boolean finished = process.waitFor(5, TimeUnit.MINUTES);
@@ -548,6 +554,24 @@ class NotesIT {
         assertThat(finished).as("Initial merge verification timed out").isTrue();
         assertThat(process.exitValue()).as(Files.readString(log)).isZero();
         assertThat(Files.readString(log)).contains("PASS: initial-merge");
+    }
+
+    private void conflictStatusBrowser(ConfigurableApplicationContext context) throws Exception {
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/initial-merge-" + run).toAbsolutePath().normalize();
+        Path log = output.resolve("web-conflicts.log");
+        var builder = new ProcessBuilder("node", "scripts/check-conflict-status.mjs")
+                .directory(Path.of("../frontend").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("CONFLICT_OUTPUT", output.toString());
+        var process = builder.start();
+        boolean finished = process.waitFor(90, TimeUnit.SECONDS);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("Conflict status browser timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: web-conflicts");
     }
 
     private void fileRenames(ConfigurableApplicationContext context, boolean initialize) throws Exception {

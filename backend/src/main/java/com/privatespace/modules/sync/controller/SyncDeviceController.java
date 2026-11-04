@@ -10,7 +10,14 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/sync-devices")
 public class SyncDeviceController {
     private final SyncDeviceService service;
-    public SyncDeviceController(SyncDeviceService service) { this.service = service; }
+    private final com.privatespace.modules.sync.service.SyncConflictService conflicts;
+    public SyncDeviceController(SyncDeviceService service, com.privatespace.modules.sync.service.SyncConflictService conflicts) {
+        this.service = service; this.conflicts = conflicts;
+    }
+
+    @GetMapping("/{id}/conflicts")
+    public Map<String, Object> conflicts(@PathVariable String id, @RequestParam(defaultValue = "") String cursor,
+            @RequestParam(defaultValue = "20") int limit) { return conflicts.page(id, cursor, limit); }
 
     @PostMapping("/pairing-code")
     public Map<String, String> pairing(@RequestBody com.privatespace.modules.sync.dto.PairingRequest request) { return service.pairing(request.name(), request.scope()); }

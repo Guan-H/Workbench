@@ -142,6 +142,14 @@ class SyncWorker:
             self.watcher.close()
             self.watcher = None
 
+    def _report_conflicts(self):
+        from .conflict_reporting import sync
+        try:
+            sync(self.engine)
+            self.last_result.pop('conflictReportCode', None)
+        except (SyncError, OSError, sqlite3.Error) as error:
+            self.last_result['conflictReportCode'] = error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE'
+
     def _cycle(self, confirmation: str | None = None, initial_confirmation: str | None = None):
         if not self.engine:
             raise SyncError('PAIR_FIRST')
@@ -155,6 +163,8 @@ class SyncWorker:
                 break
             result = self.engine.cycle(should_pause=self.pause_requested.is_set)
         self.last_result = result
+        if result.get('code') not in ('NETWORK_UNAVAILABLE', 'PAUSE_REQUESTED') and result['status'] != 'INITIAL_MERGE_REVIEW_REQUIRED':
+            self._report_conflicts()
         code = result.get('code')
         if code == 'NETWORK_UNAVAILABLE' and self.automatic:
             self.retry = min(self.retry + 1, 5)
@@ -209,6 +219,7 @@ class SyncWorker:
                         if command.fingerprint or command.resume:
                             self.last_result = resolve(self.engine, command.path, command.fingerprint,
                                 command.variant, command.merged, command.resume)
+                            self._report_conflicts()
                         else:
                             self.last_result = {'status': 'CONFLICT_REVIEW', 'conflictPreview': preview(self.engine, command.path),
                                                 **self.engine.status()}
@@ -225,6 +236,8 @@ class SyncWorker:
                                 raise SyncError('PAUSE_REQUESTED')
                         if command.confirmation:
                             self.last_result = apply(self.engine, command.confirmation, checkpoint)
+                            if self.last_result['status'] == 'OK':
+                                self._report_conflicts()
                         else:
                             review = preview(self.engine, checkpoint)
                             self.last_result = {'status': 'RECONCILIATION_PREVIEW', 'reconciliationPreview': review,

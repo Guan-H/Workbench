@@ -4,6 +4,7 @@ import { Copy, Monitor, RefreshCw, ShieldOff } from 'lucide-vue-next'
 import { api, write, listNotes, type Note } from '../../shared/api/client'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import SyncScopePicker, { type SyncScope } from './SyncScopePicker.vue'
+import SyncConflictPanel from './SyncConflictPanel.vue'
 
 interface SyncDevice { id: string; name: string; revoked: boolean; createdAt: string; lastSeenAt: string | null; scope: SyncScope; scopeVersion: string }
 const devices = ref<SyncDevice[]>([])
@@ -21,6 +22,7 @@ const scope = ref<SyncScope>({ all: true, folders: [] })
 const folders = ref<Note[]>([])
 const folderError = ref('')
 const editing = ref<SyncDevice>()
+const conflictDevice = ref<SyncDevice>()
 const editedScope = ref<SyncScope>({ all: true, folders: [] })
 const scopeError = ref('')
 const scopePanel = ref<HTMLElement>()
@@ -43,7 +45,10 @@ async function refresh() {
   listError.value = ''
   try {
     const result = await api<SyncDevice[]>('/sync-devices')
-    if (alive) { devices.value = result; page.value = Math.min(page.value, pages.value - 1) }
+    if (alive) {
+      devices.value = result; page.value = Math.min(page.value, pages.value - 1)
+      if (conflictDevice.value) conflictDevice.value = result.find(item => item.id === conflictDevice.value?.id)
+    }
     try { const catalog = await listNotes(); if (alive) { folders.value = catalog; folderError.value = '' } }
     catch (cause) { if (alive) folderError.value = message(cause) }
   } catch (cause) { if (alive) listError.value = message(cause) }
@@ -109,13 +114,13 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); pairing.value = und
 <template>
   <section class="sync-content" aria-labelledby="sync-title">
     <header class="sync-page-heading"><div><h1 id="sync-title">同步中心</h1><p>配对 Windows 助手，管理普通笔记的设备授权。</p></div><button :disabled="loading || busy" @click="refresh"><RefreshCw :size="16" aria-hidden="true" />刷新设备</button></header>
-    <p class="sync-scope">首批同步入口：当前助手仅接受新空目录，使用最多 5000 对象的全量快照。非空目录合并、增量同步和完整冲突处理仍在后续开发。</p>
+    <p class="sync-scope">请使用与服务器配套的助手版本。冲突记录来自助手实际成功上报；旧版或尚未上报的设备不能据此判断没有冲突。</p>
     <p v-if="problem" class="error-message" role="alert">{{ problem }}</p>
     <p v-if="listError" class="error-message" role="alert">{{ listError }}</p>
     <p v-if="feedback" role="status" class="sync-feedback">{{ feedback }}</p>
     <section class="home-card sync-pairing" aria-labelledby="pairing-title">
       <h2 id="pairing-title">添加设备</h2>
-      <p>生成配对码，在 Windows 助手中填写服务器地址、选择新空目录后完成配对。配对本身不会上传或下载文件。</p>
+      <p>生成配对码后，在 Windows 助手中填写服务器地址并选择同步目录。建议使用空目录；已有目录须使用支持合并预检的新版助手。配对本身不会上传或下载文件。</p>
       <form @submit.prevent="createPairing">
         <div><label for="sync-device-name">设备名称</label><input id="sync-device-name" v-model="name" maxlength="80" required :disabled="busy" autocomplete="off" /></div>
         <button class="primary" :disabled="busy || !name.trim() || !scope.all && (!scope.folders.length || !!folderError)">{{ busy ? '正在处理…' : '生成配对码' }}</button>
@@ -137,11 +142,12 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); pairing.value = und
       <p v-else-if="!devices.length">还没有配对设备。</p>
       <div v-else class="sync-device-scroll" tabindex="0" aria-label="设备列表">
         <table class="sync-device-table"><thead><tr><th scope="col">设备名称</th><th scope="col">授权状态</th><th scope="col">同步范围</th><th scope="col">创建时间</th><th scope="col">最近联系</th><th scope="col">操作</th></tr></thead>
-          <tbody><tr v-for="device in rows" :key="device.id" :data-sync-device="device.id"><td>{{ device.name }}</td><td>{{ device.revoked ? '已撤销' : '已授权' }}</td><td class="sync-scope-summary">{{ device.scope.all ? '全部同步' : device.scope.folders.join('、') }}</td><td>{{ time(device.createdAt) }}</td><td>{{ time(device.lastSeenAt) }}</td><td><div class="sync-device-actions"><button :disabled="device.revoked || busy" :aria-label="'修改同步范围 ' + device.name" @click="editScope(device)">修改范围</button><button :disabled="device.revoked || busy" :aria-label="'撤销设备 ' + device.name" @click="revokeTarget = device"><ShieldOff :size="15" aria-hidden="true" />撤销授权</button></div></td></tr></tbody>
+          <tbody><tr v-for="device in rows" :key="device.id" :data-sync-device="device.id"><td>{{ device.name }}</td><td>{{ device.revoked ? '已撤销' : '已授权' }}</td><td class="sync-scope-summary">{{ device.scope.all ? '全部同步' : device.scope.folders.join('、') }}</td><td>{{ time(device.createdAt) }}</td><td>{{ time(device.lastSeenAt) }}</td><td><div class="sync-device-actions"><button :aria-label="'查看冲突记录 ' + device.name" :aria-expanded="conflictDevice?.id === device.id" @click="conflictDevice = conflictDevice?.id === device.id ? undefined : device">冲突记录</button><button :disabled="device.revoked || busy" :aria-label="'修改同步范围 ' + device.name" @click="editScope(device)">修改范围</button><button :disabled="device.revoked || busy" :aria-label="'撤销设备 ' + device.name" @click="revokeTarget = device"><ShieldOff :size="15" aria-hidden="true" />撤销授权</button></div></td></tr></tbody>
         </table>
       </div>
       <footer class="sync-pagination"><button :disabled="page === 0 || loading" @click="page--">上一页</button><span>第 {{ page + 1 }} / {{ pages }} 页 · 每页 {{ pageSize }} 台</span><button :disabled="page + 1 >= pages || loading" @click="page++">下一页</button></footer>
     </section>
+    <SyncConflictPanel v-if="conflictDevice" :device="conflictDevice.id" :name="conflictDevice.name" :scope-version="conflictDevice.scopeVersion" :revoked="conflictDevice.revoked" />
     <ConfirmDialog v-if="revokeTarget" title="撤销设备授权" :message="`确定撤销“${revokeTarget.name}”吗？已有本地文件不会被删除，设备后续同步需要重新配对。`" confirm-label="撤销授权" @answer="revoke" />
     <div v-if="editing" class="modal-backdrop"><section ref="scopePanel" class="modal wide-modal" role="dialog" aria-modal="true" aria-label="修改同步范围" @keydown="scopeKey"><header><h2>修改同步范围 · {{ editing.name }}</h2><button :disabled="busy" @click="closeScope">关闭</button></header><form @submit.prevent="saveScope"><p>修改只影响本设备。取消勾选仅停止同步，两端已有文件保留。重新纳入时保留本地修改并重新核对，不按旧删除基线执行。</p><SyncScopePicker v-model="editedScope" :items="folders" :disabled="busy" /><p v-if="scopeError" class="error-message" role="alert">{{ scopeError }}</p><footer><button type="button" :disabled="busy" @click="closeScope">取消</button><button class="primary" :disabled="busy || !editedScope.all && (!editedScope.folders.length || !!folderError)">保存范围</button></footer></form></section></div>
   </section>
