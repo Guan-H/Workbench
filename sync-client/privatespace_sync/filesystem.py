@@ -103,7 +103,7 @@ class Filesystem:
             directory.mkdir(exist_ok=True)
         self.ready()
 
-    def scan(self, *, include=None, descend=None, identities=None) -> tuple[dict[str, str], list[dict]]:
+    def scan(self, *, include=None, descend=None, identities=None, directories=None, exclusions=None) -> tuple[dict[str, str], list[dict]]:
         self.ready()
         files: dict[str, str] = {}
         names: set[str] = set()
@@ -116,21 +116,31 @@ class Filesystem:
             for name in dirs:
                 relative = (parent / name).relative_to(self.root).as_posix()
                 if excluded(relative):
+                    if exclusions is not None:
+                        exclusions.append({'path': relative, 'code': 'EXCLUDED_DIRECTORY'})
                     continue
                 if descend is not None and not descend(relative):
+                    if exclusions is not None:
+                        exclusions.append({'path': relative, 'code': 'OUTSIDE_SYNC_SCOPE'})
                     continue
                 if (parent / name).is_symlink() or (parent / name).is_junction():
                     issues.append({"path": relative, "code": "UNSAFE_LINK"})
                 elif valid_path(relative):
                     safe_dirs.append(name)
+                    if directories is not None:
+                        directories.add(relative)
                 else:
                     issues.append({"path": relative, "code": "INVALID_PATH"})
             dirs[:] = safe_dirs
             for name in filenames:
                 relative = (parent / name).relative_to(self.root).as_posix()
                 if excluded(relative):
+                    if exclusions is not None and relative != MARKER:
+                        exclusions.append({'path': relative, 'code': 'EXCLUDED_FILE'})
                     continue
                 if include is not None and not include(relative):
+                    if exclusions is not None:
+                        exclusions.append({'path': relative, 'code': 'OUTSIDE_SYNC_SCOPE'})
                     continue
                 if not valid_path(relative) or relative.casefold() in names:
                     issues.append({"path": relative, "code": "INVALID_PATH"}); continue

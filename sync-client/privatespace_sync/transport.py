@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from http.client import HTTPException
 import urllib.error
 import urllib.parse
@@ -50,6 +51,7 @@ class Remote:
                 payload = response.read(71 * 1024 * 1024)
                 length = response.headers.get('Content-Length')
                 if length is not None and len(payload) != int(length):
+                    logging.debug('Sync response truncated: %s %s', request.get_method(), path.partition('?')[0])
                     raise SyncError('NETWORK_UNAVAILABLE')
                 try:
                     return payload if binary else json.loads(payload)
@@ -61,5 +63,7 @@ class Remote:
             except (ValueError, UnicodeError):
                 code = "HTTP_ERROR"
             raise SyncError(code, error.code) from None
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, HTTPException):
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, HTTPException) as error:
+            # Log only the route and exception type, never credentials, request bodies or server URLs.
+            logging.debug('Sync transport failed: %s %s (%s)', request.get_method(), path.partition('?')[0], type(error).__name__)
             raise SyncError("NETWORK_UNAVAILABLE") from None

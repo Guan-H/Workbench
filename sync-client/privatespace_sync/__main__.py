@@ -23,17 +23,19 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command")
-    gui = commands.add_parser('gui', help='Open the M2 desktop window; first slice requires a new empty directory')
+    gui = commands.add_parser('gui', help='Open the M2 desktop window with initial merge review')
     gui.add_argument('--state', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local'))) / 'PrivateSpace' / 'Sync')
     pair = commands.add_parser("pair", help="Pair an empty test directory with a five-minute single-use code")
     pair.add_argument("--url", required=True)
     pair.add_argument("--root", type=Path, required=True)
     pair.add_argument("--state", type=Path, required=True)
+    pair.add_argument('--allow-existing', action='store_true', help='Bind an existing directory; first merge requires preview confirmation')
     for name in ("once", "watch", "status"):
         command = commands.add_parser(name)
         command.add_argument("--state", type=Path, required=True)
         if name == "once":
             command.add_argument("--confirm-deletions", help="Fingerprint from a concrete deletion preview")
+            command.add_argument('--confirm-initial-merge', help='Fingerprint from the current initial merge preview')
     return parser
 
 
@@ -53,13 +55,13 @@ def main() -> int:
             run(args.state)
             return 0
         if args.command == "pair":
-            print(json.dumps(configure(args.url, args.root, args.state, getpass.getpass("Pairing code: ")), ensure_ascii=False))
+            print(json.dumps(configure(args.url, args.root, args.state, getpass.getpass("Pairing code: "), allow_existing=args.allow_existing), ensure_ascii=False))
             return 0
         engine = Engine(args.state)
         if args.command == "status":
             print(json.dumps(engine.status(), ensure_ascii=False)); return 0
         if args.command == "once":
-            result = engine.cycle(confirmation=args.confirm_deletions)
+            result = engine.cycle(confirmation=args.confirm_deletions, initial_confirmation=args.confirm_initial_merge)
             print(json.dumps(result, ensure_ascii=False))
             return 0 if result["status"] == "OK" else 2
         engine.fs.ready()

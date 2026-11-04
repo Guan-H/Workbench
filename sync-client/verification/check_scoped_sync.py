@@ -4,6 +4,7 @@ import base64
 import hashlib
 import http.cookiejar
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -20,6 +21,8 @@ from privatespace_sync.engine import Engine, configure
 from privatespace_sync.credentials import protect
 from privatespace_sync.transport import Remote, SyncError
 from check_profiles import check_profiles
+
+logging.basicConfig(level=logging.DEBUG)
 
 backend = os.environ['NOTES_BACKEND']
 origin = 'http://127.0.0.1:' + os.environ['NOTES_FRONTEND_PORT']
@@ -195,6 +198,10 @@ try:
     result = engine.cycle()
     assert any(issue['code'] == 'DIRECTORY_PATH_CONFLICT' for issue in result['issues']), result
     assert collision.read_bytes() == b'keep local bytes'
+    assert result['status'] == 'INITIAL_MERGE_REVIEW_REQUIRED', result
+    assert not (empty_root / '选择个人/空目录').exists(), 'initial preview must not create business directories'
+    result = engine.cycle(initial_confirmation=result['initialMergePreview']['fingerprint'])
+    assert any(issue['code'] == 'DIRECTORY_PATH_CONFLICT' for issue in result['issues']), result
     assert (empty_root / '选择个人/空目录').is_dir()
     collision.unlink()
     result = engine.cycle()

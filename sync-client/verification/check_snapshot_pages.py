@@ -172,7 +172,9 @@ try:
     expect('PROTOTYPE_LIMIT', lambda: a.remote.request('/snapshot'))
     checks.append('more than 5000 real objects arrive in bounded immutable pages; concurrent edit/delete/create arrive through the next incremental interval; legacy limit remains explicit')
 
-    result = a.cycle()
+    review = a.cycle()
+    assert review['status'] == 'INITIAL_MERGE_REVIEW_REQUIRED', review
+    result = a.cycle(initial_confirmation=review['initialMergePreview']['fingerprint'])
     assert result['status'] == 'OK' and not result['issues'] and not result['conflicts'], result
     assert len(list((root / '分页验证').glob('空目录*'))) == 5005
     assert (root / original['path']).read_bytes() == concurrent['edited']['content'].encode('utf-8')

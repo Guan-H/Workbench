@@ -21,9 +21,10 @@ from .state_lock import StateLock
 from .scope import SyncScope
 from .renames import Renames
 from .remote_catalog import RemoteCatalog
+from .initial_merge import InitialMerge
 
 
-def configure(url: str, root: Path, state: Path, code: str) -> dict:
+def configure(url: str, root: Path, state: Path, code: str, *, allow_existing: bool = False) -> dict:
     root = root.absolute()
     state = state.absolute()
     for directory in (root, state):
@@ -35,8 +36,18 @@ def configure(url: str, root: Path, state: Path, code: str) -> dict:
         raise SyncError("STATE_MUST_BE_SEPARATE")
     with StateLock(state):
         root.mkdir(parents=True, exist_ok=True)
-        if any(not excluded(item.name) for item in root.iterdir()) or (root / MARKER).exists():
+        if any((directory / MARKER).exists() or (directory / MARKER).is_symlink() for directory in (root, *root.parents)):
+            raise SyncError('DIRECTORY_ALREADY_BOUND')
+        if not allow_existing and any(not excluded(item.name) for item in root.iterdir()):
             raise SyncError("M0_REQUIRES_NEW_EMPTY_DIRECTORY")
+        if allow_existing:
+            def unavailable(_):
+                raise SyncError('DIRECTORY_UNAVAILABLE')
+            for directory, dirs, names in os.walk(root, followlinks=False, onerror=unavailable):
+                parent = Path(directory)
+                dirs[:] = [name for name in dirs if not (parent / name).is_symlink() and not (parent / name).is_junction()]
+                if any(name.casefold() == MARKER.casefold() for name in names):
+                    raise SyncError('DIRECTORY_ALREADY_BOUND')
         state.mkdir(parents=True, exist_ok=True)
         if any(state.iterdir()):
             raise SyncError("STATE_ALREADY_EXISTS")
@@ -44,8 +55,9 @@ def configure(url: str, root: Path, state: Path, code: str) -> dict:
         encrypted = protect(pairing["token"].encode("ascii"))
         identity = str(uuid.uuid4())
         (state / "device.dpapi").write_bytes(encrypted)
-        (root / MARKER).write_text(identity, encoding="ascii")
-        config = {"url": url, "root": str(root), "identity": identity, "device": pairing["id"]}
+        with (root / MARKER).open('x', encoding='ascii') as marker:
+            marker.write(identity)
+        config = {"url": url, "root": str(root), "identity": identity, "device": pairing["id"], 'initialMergeReview': True}
         (state / "config.json").write_text(json.dumps(config), encoding="utf-8")
         return {"device": pairing["id"], "root": str(root)}
 
@@ -141,8 +153,10 @@ class Engine:
         previous_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
         old = json.loads(previous_scope[0]) if previous_scope else {'version': '1', 'scope': {'all': True, 'folders': []}}
         with self.db:
-            if old['version'] != version or old['scope'] != selection.data():
+            if (old['version'] != version or old['scope'] != selection.data()) and not InitialMerge(self).pending():
                 # A selection revision never replays old deletion assumptions.
+                # Initial merges already disable deletion inference; reviewing a changed scope
+                # must retain the partially completed attempt's baselines and durable queue.
                 self.db.execute('DELETE FROM baseline')
                 self.db.execute('DELETE FROM local_identity WHERE path NOT IN (SELECT path FROM queue)')
                 self.db.execute('DELETE FROM local_rename')
@@ -222,16 +236,29 @@ class Engine:
             json.dump({"path": path, "version": version, "sha256": digest(data)}, output)
             output.flush(); os.fsync(output.fileno())
 
-    def cycle(self, *, confirmation: str | None = None, should_pause: Callable[[], bool] | None = None) -> dict:
+    def cycle(self, *, confirmation: str | None = None, initial_confirmation: str | None = None,
+              should_pause: Callable[[], bool] | None = None) -> dict:
         issues = []
         write_failure = None
+        initial = InitialMerge(self)
+        merging = initial.pending()
+        approved_local = None
         def checkpoint():
             if should_pause and should_pause():
                 raise SyncError('PAUSE_REQUESTED')
         try:
             checkpoint()
+            if merging:
+                preview, approved_local = initial.preview(checkpoint)
+                if not preview['canApply'] or preview['requiresConfirmation'] and preview['fingerprint'] != initial_confirmation:
+                    return {'status': 'INITIAL_MERGE_REVIEW_REQUIRED', 'code': 'INITIAL_MERGE_CHANGED' if initial_confirmation else None,
+                            'initialMergePreview': preview, 'issues': preview['issues'], **self.status()}
+                initial.begin(preview['fingerprint'])
+                issues.extend(preview['issues'])
             try:
                 initial_remote = self.snapshot(checkpoint)
+                if merging:
+                    initial.validate_remote(initial_remote)
                 issues.extend(self.prepare_directories(checkpoint))
             except SyncError as error:
                 if error.code != 'NETWORK_UNAVAILABLE' or not self.scope_known:
@@ -247,6 +274,8 @@ class Engine:
             issues.extend(first_issues + second_issues)
             unstable = {path for path in first.keys() | local.keys() if first.get(path) != local.get(path)}
             unstable.update(path for path in first_identities.keys() | identities.keys() if first_identities.get(path) != identities.get(path))
+            if merging and local != approved_local:
+                raise SyncError('INITIAL_MERGE_CHANGED')
             issues.extend({"path": path, "code": "FILE_BUSY"} for path in unstable)
             blocked = {row[0] for row in self.db.execute("SELECT path FROM conflict")}
             unsafe = [issue["path"] for issue in issues]
@@ -254,7 +283,7 @@ class Engine:
                 return not self.selection.includes(path) or path in blocked or path in unstable or any(path == bad or path.startswith(bad + "/") for bad in unsafe)
             renames = Renames(self)
             relocated, rename_issues, rename_blocked, outcome = (renames.receive(initial_remote, local, identities, skip, confirmation, checkpoint)
-                                                               if initial_remote is not None else (False, [], set(), None))
+                                                               if initial_remote is not None and not merging else (False, [], set(), None))
             issues.extend(rename_issues)
             if outcome:
                 return {**outcome, 'issues': issues, **self.status()}
@@ -266,12 +295,13 @@ class Engine:
                 local, rescan_issues = self.fs.scan(include=self.selection.includes, descend=self.selection.descends, identities=identities)
                 issues.extend(rescan_issues)
                 unsafe.extend(item['path'] for item in rescan_issues)
-            outcome, rename_blocked = renames.send(local, identities, skip, confirmation, checkpoint)
+            outcome, rename_blocked = renames.send(local, identities, skip, confirmation, checkpoint) if not merging else (None, set())
             if outcome:
                 return {**outcome, 'issues': issues + outcome.get('issues', []), **self.status()}
             blocked.update(rename_blocked)
             baseline = self.baseline()
             tombstones = {file['path'].casefold() for file in (initial_remote or {}).values() if file['deleted']}
+            initial_paths = {file['path']: file for file in (initial_remote or {}).values()}
             queued_paths = {row['path'] for row in self.db.execute('SELECT path FROM queue')}
             queued_identities = {row['path']: row['identity'] for row in self.db.execute('SELECT path, identity FROM local_identity') if row['path'] in queued_paths}
             moved_uploads = {(source, path) for path, key in identities.items() for source, known in queued_identities.items() if source != path and known == key}
@@ -283,7 +313,12 @@ class Engine:
                 if skip(path) or path in deferred_renames:
                     continue
                 base = baseline.get(path)
+                if merging and path in initial_paths and initial_paths[path]['sha256'] != sha:
+                    # First merge preserves differing variants even after a partially completed attempt.
+                    continue
                 if base is None and path.casefold() in tombstones:
+                    if merging:
+                        continue
                     issues.append({'path': path, 'code': 'DELETED_REMOTE_REQUIRES_RECONCILIATION'})
                     blocked.add(path)
                     continue
@@ -295,6 +330,8 @@ class Engine:
                         self.enqueue(path, base, data, identity=identity)
             checkpoint()
             remote = self.snapshot(checkpoint)
+            if merging:
+                initial.validate_remote(remote)
             by_path = {file["path"].casefold(): file for file in remote.values()}
             for row in list(self.db.execute("SELECT * FROM queue ORDER BY path")):
                 checkpoint()
@@ -318,11 +355,19 @@ class Engine:
                 if file and not file["deleted"] and not request["deleted"] and file["path"] == path and file["sha256"] == request["sha256"]:
                     self.acknowledge(file)
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit(); continue
+                if merging and file and not request['deleted']:
+                    self.conflict(path, file, request, 'INITIAL_COLLISION')
+                    blocked.add(path)
+                    continue
                 try:
                     result = self.remote.request("/files", body=request, operation=row["operation"])
+                    if merging:
+                        initial.published(result)
                     self.acknowledge(result)
                     self.db.execute("DELETE FROM queue WHERE path = ?", (path,)); self.db.commit()
                 except SyncError as error:
+                    if merging and error.status == 409:
+                        raise SyncError('INITIAL_MERGE_CHANGED') from None
                     if error.code == 'SYNC_SCOPE_CHANGED':
                         raise
                     if error.status != 409:
@@ -346,6 +391,8 @@ class Engine:
             blocked.update(deferred_sources)
             checkpoint()
             remote = self.snapshot(checkpoint)
+            if merging:
+                initial.validate_remote(remote)
             for issue in self.prepare_directories(checkpoint):
                 if issue not in issues:
                     issues.append(issue)
@@ -370,6 +417,12 @@ class Engine:
                 data = self.fs.read(path)
                 sha = digest(data) if data is not None else None
                 if file["deleted"]:
+                    if merging:
+                        if data is not None:
+                            self.conflict(path, file, None, 'INITIAL_TOMBSTONE')
+                        else:
+                            self.acknowledge(file)
+                        continue
                     if base is None:
                         # No common baseline: an old tombstone is never permission to delete a local file.
                         if data is not None:
@@ -386,6 +439,14 @@ class Engine:
                     continue
                 if sha == file["sha256"]:
                     self.acknowledge(file); continue
+                if merging and data is None:
+                    self.fs.atomic(path, self.download(file), None); self.acknowledge(file)
+                    continue
+                if merging:
+                    # A partial attempt's baseline must not turn the newly approved
+                    # "preserve both" preview into an overwrite of the local variant.
+                    self.conflict(path, file, None, 'INITIAL_COLLISION')
+                    continue
                 if base is None:
                     if data is None:
                         self.fs.atomic(path, self.download(file), None); self.acknowledge(file)
@@ -448,8 +509,12 @@ class Engine:
                 self.db.execute("INSERT OR REPLACE INTO setting VALUES ('delete_review', ?)", (fingerprint,))
                 self.db.commit()
                 pending_delete = {"fingerprint": fingerprint, "changes": deletes}
+            rescan = bool(deferred_renames or self.selection.attachments - scanned_attachments)
+            if merging and not write_failure and not pending_delete and not rescan and self.status()['queued'] == 0:
+                initial.validate_remote(self.snapshot(checkpoint))
+                initial.finish()
             return {"status": "PAUSED" if write_failure else "REQUIRES_CONFIRMATION" if pending_delete else "OK", "code": write_failure, "issues": issues,
-                    "deletionPreview": pending_delete, "rescanRequired": bool(deferred_renames or self.selection.attachments - scanned_attachments), **self.status()}
+                    "deletionPreview": pending_delete, "rescanRequired": rescan, **self.status()}
         except (SyncError, OSError, sqlite3.Error) as error:
             return {"status": "PAUSED", "code": error.code if isinstance(error, SyncError) else "LOCAL_IO_UNAVAILABLE",
                     "issues": issues, **self.status()}

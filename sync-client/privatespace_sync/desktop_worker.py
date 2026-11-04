@@ -25,10 +25,16 @@ class PairCommand:
 class RunCommand:
     automatic: bool = False
     confirmation: str | None = None
+    initial_confirmation: str | None = None
 
 
 @dataclass(frozen=True)
 class PauseCommand:
+    pass
+
+
+@dataclass(frozen=True)
+class ReconcilePreviewCommand:
     pass
 
 
@@ -46,7 +52,7 @@ class ExitCommand:
 class SyncWorker:
     def __init__(self, state: Path):
         self.state = state
-        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ProfileCommand | ExitCommand] = Queue()
+        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ReconcilePreviewCommand | ProfileCommand | ExitCommand] = Queue()
         self.events: Queue[dict] = Queue()
         self.pause_requested = threading.Event()
         self.stopped = threading.Event()
@@ -66,9 +72,9 @@ class SyncWorker:
         self.pause_requested.set()
         self.commands.put(PauseCommand())
 
-    def run_cycle(self, *, automatic: bool = False, confirmation: str | None = None):
+    def run_cycle(self, *, automatic: bool = False, confirmation: str | None = None, initial_confirmation: str | None = None):
         self.pause_requested.clear()
-        self.commands.put(RunCommand(automatic, confirmation))
+        self.commands.put(RunCommand(automatic, confirmation, initial_confirmation))
 
     def close(self):
         self.pause_requested.set()
@@ -127,13 +133,13 @@ class SyncWorker:
             self.watcher.close()
             self.watcher = None
 
-    def _cycle(self, confirmation: str | None = None):
+    def _cycle(self, confirmation: str | None = None, initial_confirmation: str | None = None):
         if not self.engine:
             raise SyncError('PAIR_FIRST')
         if self.watcher:
             self.watcher.event.clear()
         self._publish('RUNNING')
-        result = self.engine.cycle(confirmation=confirmation, should_pause=self.pause_requested.is_set)
+        result = self.engine.cycle(confirmation=confirmation, initial_confirmation=initial_confirmation, should_pause=self.pause_requested.is_set)
         # Newly saved note references may admit attachments that were deliberately not scanned before.
         for _ in range(2):
             if result['status'] != 'OK' or not result.get('rescanRequired') or self.pause_requested.is_set():
@@ -184,6 +190,20 @@ class SyncWorker:
                     if isinstance(command, PauseCommand):
                         self._stop_watcher()
                         self._publish('PAUSED' if self.engine else 'UNPAIRED')
+                    elif isinstance(command, ReconcilePreviewCommand):
+                        from .reconciliation import preview
+                        self._stop_watcher()
+                        if not self.engine:
+                            raise SyncError('PAIR_FIRST')
+                        self.pause_requested.clear()
+                        self._publish('RUNNING')
+                        def checkpoint():
+                            if self.pause_requested.is_set():
+                                raise SyncError('PAUSE_REQUESTED')
+                        review = preview(self.engine, checkpoint)
+                        self.last_result = {'status': 'RECONCILIATION_PREVIEW', 'reconciliationPreview': review,
+                                            'issues': review['issues'], **self.engine.status()}
+                        self._publish('ATTENTION')
                     elif isinstance(command, ProfileCommand):
                         self._change_profile(command)
                     elif isinstance(command, PairCommand):
@@ -193,7 +213,7 @@ class SyncWorker:
                         if not self.profiles:
                             raise SyncError('LOCAL_CONFIGURATION_UNAVAILABLE')
                         self.profiles.validate_root(command.root)
-                        configure(command.url, command.root, self.state, command.code)
+                        configure(command.url, command.root, self.state, command.code, allow_existing=True)
                         self.engine = Engine(self.state)
                         self.last_result = self.engine.status()
                         self._publish('PAUSED')
@@ -204,7 +224,7 @@ class SyncWorker:
                             self.engine.fs.ready()
                             self.watcher = DirectoryWatcher(self.engine.fs.root)
                             self.automatic = True
-                        self._cycle(command.confirmation)
+                        self._cycle(command.confirmation, command.initial_confirmation)
                 except (SyncError, OSError, ValueError, sqlite3.Error) as error:
                     self._stop_watcher()
                     self._publish('ERROR', error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE', configuration_finished=isinstance(command, ProfileCommand))

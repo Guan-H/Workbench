@@ -34,6 +34,10 @@ class NotesIT {
         if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog("6");
         if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) seedLegacySyncLog("7");
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_MERGE"))) {
+                initialMerge(context, true);
+                return;
+            }
             if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) {
                 snapshotPages(context, true);
                 return;
@@ -64,6 +68,7 @@ class NotesIT {
             verifyExportIntegrity(context);
             verifyUnrelatedRenamePreview(context);
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) {
+                initialMerge(context, false);
                 fileRenames(context, false);
                 verifyFileRenameRollback(context);
                 incremental(context, "existing");
@@ -513,6 +518,36 @@ class NotesIT {
         assertThat(finished).as("Incremental verification timed out").isTrue();
         assertThat(process.exitValue()).as(Files.readString(log)).isZero();
         assertThat(Files.readString(log)).contains("PASS: incremental-" + phase);
+    }
+
+    private void initialMerge(ConfigurableApplicationContext context, boolean initialize) throws Exception {
+        var notes = context.getBean(com.privatespace.modules.note.service.NoteService.class);
+        notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("合并清理", "folder", "", null), UUID.randomUUID().toString());
+        var expired = notes.create(new com.privatespace.modules.note.dto.WriteNoteRequest("合并清理/已过期.md", "note", "真实到期删除", null), UUID.randomUUID().toString());
+        notes.delete(expired.id(), expired.version(), UUID.randomUUID().toString());
+        // Age only this isolated fixture; actual retention code emits the purged tombstone.
+        var jdbc = context.getBean(JdbcTemplate.class);
+        jdbc.update("UPDATE note_file SET updated_at = UTC_TIMESTAMP(6) - INTERVAL 40 DAY WHERE id = ?", expired.id());
+        context.getBean(com.privatespace.modules.note.service.RetentionService.class).cleanup();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_file WHERE id = ?", Long.class, expired.id())).isZero();
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/initial-merge-" + run).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        Path log = output.resolve("verification.log");
+        var builder = new ProcessBuilder("python", "verification/check_initial_merge.py", initialize ? "initialize" : "existing")
+                .directory(Path.of("../sync-client").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("NOTES_SETUP", setup);
+        builder.environment().put("MERGE_OUTPUT", output.toString());
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        Process process = builder.start();
+        boolean finished = process.waitFor(5, TimeUnit.MINUTES);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("Initial merge verification timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: initial-merge");
     }
 
     private void fileRenames(ConfigurableApplicationContext context, boolean initialize) throws Exception {

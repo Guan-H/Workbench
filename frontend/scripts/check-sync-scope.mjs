@@ -28,7 +28,7 @@ export async function checkSyncScope(page, request, output) {
   let report
   try {
     report = await new Promise((resolve, reject) => {
-      const child = spawn('python', ['verification/check_scoped_sync.py'], { cwd: fileURLToPath(new URL('../../sync-client/', import.meta.url)), env: process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      const child = spawn('python', ['verification/check_scoped_sync.py'], { cwd: fileURLToPath(new URL('../../sync-client/', import.meta.url)), env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
       let stdout = '', stderr = ''
       const timer = setTimeout(() => { child.kill(); reject(new Error('Scoped real-chain timeout')) }, 150000)
       child.stdout.on('data', data => { stdout += data })

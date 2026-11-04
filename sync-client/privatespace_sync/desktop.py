@@ -8,11 +8,13 @@ from queue import Empty
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-from .desktop_worker import PairCommand, SyncWorker
+from .desktop_worker import PairCommand, ReconcilePreviewCommand, SyncWorker
 
 
 ERRORS = {
     'M0_REQUIRES_NEW_EMPTY_DIRECTORY': '请选择一个新的空目录；当前版本不会接管已有文件库。',
+    'DIRECTORY_ALREADY_BOUND': '此目录已有同步绑定标记，请使用原配置；不能由其他配置接管。',
+    'INITIAL_MERGE_CHANGED': '两端内容或同步范围已变化，原确认已失效；请重新查看合并预检。',
     'STATE_ALREADY_EXISTS': '此状态目录已有配对信息，请使用现有配置或指定另一个状态目录。',
     'STATE_IN_USE': '另一个助手或命令正在使用此状态目录，请先退出另一个进程。',
     'STATE_MUST_BE_SEPARATE': '同步目录和助手状态目录不能重叠。',
@@ -25,7 +27,7 @@ ERRORS = {
     'LOCAL_IO_UNAVAILABLE': '本地文件或数据库操作失败，已暂停。',
     'ROOT_UNAVAILABLE': '同步目录暂不可用，已暂停，不会据此传播删除。',
     'ROOT_IDENTITY_CHANGED': '同步目录标记不一致，已暂停，需重新核对目录。',
-    'PAIR_FIRST': '先选择新空目录并配对。',
+    'PAIR_FIRST': '先选择未绑定的本地目录并配对；已有内容会在同步前预检。',
     'ALREADY_PAIRED': '当前助手已配对。',
     'DIRECTORY_WATCH_UNAVAILABLE': '文件监听不可用，已暂停，请检查目录权限。',
     'INTERNAL_ERROR': '助手发生内部错误，已停止，请保留状态目录并重新启动。',
@@ -33,7 +35,7 @@ ERRORS = {
     'OUTSIDE_SYNC_SCOPE': '文件已不在设备同步范围内，未发布修改或删除。',
     'INVALID_PROFILE_NAME': '配置名称须为 1–80 个字符。',
     'PROFILE_NOT_FOUND': '所选配置不存在，请重新打开配置管理。',
-    'PROFILE_ROOT_OVERLAP': '此目录与已有配置的同步目录或助手状态目录重叠，请选择独立的新空目录。',
+    'PROFILE_ROOT_OVERLAP': '此目录与已有配置的同步目录或助手状态目录重叠，请选择独立的未绑定目录。',
     'DIRECTORY_PATH_CONFLICT': '服务器目录与本地同名文件冲突，已保留本地文件，请检查待处理路径。',
     'PARENT_DIRECTORY_UNAVAILABLE': '原有文件的父目录缺失，已停止该范围操作，避免误传删除。',
     'RENAME_SERVER_UPGRADE_REQUIRED': '此服务器尚未支持保留文件身份的改名；已暂停，未新增或删除文件。请先升级服务端。',
@@ -68,6 +70,7 @@ class SyncApp:
         self.items: list[tuple[str, str]] = []
         self.item_page = 0
         self.deletion_dialog: tk.Toplevel | None = None
+        self.merge_dialog: tk.Toplevel | None = None
         self.url = tk.StringVar(value='http://127.0.0.1:8080')
         self.directory = tk.StringVar()
         self.code = tk.StringVar()
@@ -91,12 +94,12 @@ class SyncApp:
         ttk.Label(body, text='同步助手', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 12))
         self.configure_button = ttk.Button(body, text='更换服务器 / 目录', command=self.manage_profiles)
         self.configure_button.grid(row=0, column=2, sticky='e', pady=(0, 12))
-        ttk.Label(body, text='当前仅支持新空目录，后续变化自动同步。非空目录合并与冲突解决尚在开发。',
+        ttk.Label(body, text='可选择新目录或已有目录。已有内容先预检并确认，同名不同内容保留双方；完整冲突解决仍在开发。',
                   wraplength=780).grid(row=1, column=0, columnspan=3, sticky='ew', pady=(0, 16))
         ttk.Label(body, text='服务器地址').grid(row=2, column=0, sticky='w', padx=(0, 12))
         self.url_entry = ttk.Entry(body, textvariable=self.url)
         self.url_entry.grid(row=2, column=1, columnspan=2, sticky='ew', pady=6)
-        ttk.Label(body, text='本地新空目录').grid(row=3, column=0, sticky='w')
+        ttk.Label(body, text='本地同步目录').grid(row=3, column=0, sticky='w')
         self.directory_entry = ttk.Entry(body, textvariable=self.directory)
         self.directory_entry.grid(row=3, column=1, sticky='ew', pady=6)
         self.choose_button = ttk.Button(body, text='选择目录', command=self.choose)
@@ -115,6 +118,8 @@ class SyncApp:
         self.preview_button = ttk.Button(controls, text='查看变更预览', command=self.preview_deletions)
         for button in (self.start_button, self.pause_button, self.once_button, self.open_button, self.preview_button):
             button.pack(side='left', padx=(0, 8))
+        self.reconcile_button = ttk.Button(body, text='重新对账预检（只查看）', command=self.preview_reconciliation)
+        self.reconcile_button.grid(row=14, column=0, columnspan=3, sticky='w', pady=(8, 0))
         ttk.Label(body, textvariable=self.status, style='Status.TLabel', wraplength=780).grid(row=6, column=0, columnspan=3, sticky='ew', pady=(0, 8))
         ttk.Label(body, textvariable=self.summary, wraplength=780).grid(row=7, column=0, columnspan=3, sticky='ew', pady=(0, 12))
         ttk.Label(body, text='待处理项与错误').grid(row=8, column=0, columnspan=3, sticky='w')
@@ -148,13 +153,13 @@ class SyncApp:
         self.poll_timer = self.window.after(100, self.poll)
 
     def choose(self):
-        selected = filedialog.askdirectory(parent=self.window, title='选择新建的空目录', mustexist=True)
+        selected = filedialog.askdirectory(parent=self.window, title='选择同步目录（已有内容会先预检）', mustexist=True)
         if selected:
             self.directory.set(selected)
 
     def pair(self):
         if not self.url.get().strip() or not self.directory.get().strip() or not self.code.get().strip():
-            self.status.set('填写服务器地址，选择新空目录，并输入网页生成的配对码。')
+            self.status.set('填写服务器地址，选择同步目录，并输入网页生成的配对码。')
             return
         command = PairCommand(self.url.get().strip(), Path(self.directory.get()), self.code.get().strip())
         self.code.set('')
@@ -178,6 +183,7 @@ class SyncApp:
 
     def update_controls(self, paired: bool, busy: bool):
         busy = busy or self.reconfiguring
+        self.reconcile_button.configure(state='normal' if paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.configure_button.configure(state='disabled' if busy or self.closing or self.worker.stopped.is_set() or not self.snapshot.get('profiles') else 'normal')
         for field in (self.url_entry, self.directory_entry, self.code_entry, self.choose_button, self.pair_button):
             field.configure(state='disabled' if paired or busy or self.closing else 'normal')
@@ -185,12 +191,17 @@ class SyncApp:
             button.configure(state='normal' if paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.pause_button.configure(state='normal' if paired and not self.closing else 'disabled')
         self.open_button.configure(state='normal' if paired else 'disabled')
-        preview = self.snapshot.get('result', {}).get('deletionPreview')
+        preview = self.snapshot.get('result', {}).get('deletionPreview') or self.snapshot.get('result', {}).get('initialMergePreview')
         self.preview_button.configure(state='normal' if preview and not busy and not self.closing else 'disabled')
+        self.preview_button.configure(text='查看合并预检' if self.snapshot.get('result', {}).get('initialMergePreview') else '查看变更预览')
 
     def turn_page(self, offset: int):
         self.item_page += offset
         self.render_items()
+
+    def preview_reconciliation(self):
+        self.update_controls(True, True)
+        self.worker.commands.put(ReconcilePreviewCommand())
 
     def render_items(self):
         pages = max(1, (len(self.items) + 19) // 20)
@@ -227,6 +238,11 @@ class SyncApp:
                     text = '已切换到“' + active['name'] + '”；' + text + '。需要手动开始同步。'
                 self.status.set(text)
                 result = event['result']
+                if self.phase == 'ATTENTION' and result.get('reconciliationPreview'):
+                    self.status.set('重新对账预检完成：下方显示两端差异。当前仅查看，尚未执行上传、下载、删除或旧任务；确认执行将在后续版本提供。')
+                if result.get('status') == 'INITIAL_MERGE_REVIEW_REQUIRED':
+                    self.status.set('首次合并待确认：点击“查看合并预检”，核对上传、下载、冲突和跳过项；确认前不传文件。' +
+                                    (' 两端已变化，请重新核对。' if event['code'] == 'INITIAL_MERGE_CHANGED' else ''))
                 if self.phase == 'ATTENTION' and not event['code'] and result.get('status') == 'REQUIRES_CONFIRMATION':
                     rename_review = any(item['direction'].startswith('rename-') for item in result['deletionPreview']['changes'])
                     self.status.set('文件改名待确认：请点击“查看变更预览”核对，确认后原文件 ID 和历史保持不变。' if rename_review
@@ -240,6 +256,8 @@ class SyncApp:
                 self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
                 self.items += [(item['path'], self.change_description(item)) for item in (result.get('deletionPreview') or {}).get('changes', [])]
+                self.items += [(item['path'], self.merge_description(item)) for item in (result.get('initialMergePreview') or {}).get('changes', [])]
+                self.items += [(item['path'], self.merge_description(item)) for item in (result.get('reconciliationPreview') or {}).get('changes', [])]
                 self.render_items()
                 self.update_controls(paired, self.phase in ('PAIRING', 'RUNNING', 'CONFIGURING'))
         except Empty:
@@ -257,7 +275,7 @@ class SyncApp:
         dialog.title('更换服务器或本地目录'); dialog.transient(self.window); dialog.grab_set()
         dialog.geometry('760x560'); dialog.minsize(620, 500)
         frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='新建独立配置后，可重新填写服务器和选择新空目录。原配置、文件和待上传队列保留，可在这里切回；切换后默认暂停。', wraplength=700).pack(anchor='w', pady=(0, 12))
+        ttk.Label(frame, text='新建独立配置后，可重新填写服务器和选择未绑定的目录；已有内容先预检。原配置、文件和待上传队列保留，可在这里切回；切换后默认暂停。', wraplength=700).pack(anchor='w', pady=(0, 12))
         self.profile_name = tk.StringVar()
         ttk.Label(frame, text='新配置名称').pack(anchor='w')
         entry = ttk.Entry(frame, textvariable=self.profile_name); entry.pack(fill='x', pady=(6, 8))
@@ -313,6 +331,9 @@ class SyncApp:
         render(); entry.focus_set()
 
     def preview_deletions(self):
+        if self.snapshot.get('result', {}).get('initialMergePreview'):
+            self.preview_initial_merge()
+            return
         preview = self.snapshot.get('result', {}).get('deletionPreview')
         if not preview or self.deletion_dialog and self.deletion_dialog.winfo_exists():
             return
@@ -348,6 +369,74 @@ class SyncApp:
         ttk.Button(controls, text='确认本批变更', command=confirm).pack(side='right', padx=8)
         dialog.bind('<Escape>', lambda _: dialog.destroy())
         render()
+
+    def preview_initial_merge(self):
+        preview = self.snapshot.get('result', {}).get('initialMergePreview')
+        if not preview or self.merge_dialog and self.merge_dialog.winfo_exists():
+            return
+        dialog = self.merge_dialog = tk.Toplevel(self.window)
+        dialog.title('首次合并预检'); dialog.transient(self.window); dialog.grab_set()
+        dialog.geometry('780x570'); dialog.minsize(640, 470)
+        frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
+        summary = preview['summary']
+        ttk.Label(frame, text=f"上传 {summary.get('upload', 0)} · 下载 {summary.get('download', 0)} · 内容一致 {summary.get('same', 0)} · 冲突 {summary.get('conflict', 0) + summary.get('deleted-conflict', 0) + summary.get('existing-conflict', 0)} · 跳过 {summary.get('skip', 0)}", wraplength=730).pack(anchor='w', pady=(0, 10))
+        ttk.Label(frame, text='初始合并不推断删除。同名不同内容：服务器版本放回原路径，本地内容另存冲突副本；服务器已删除的路径保留本地内容并记录冲突。跳过项保留原状。取消后不执行本次合并。', wraplength=730).pack(anchor='w', pady=(0, 10))
+        if not preview['canApply']:
+            ttk.Label(frame, text='部分文件仍在变化，请等待保存完成后重新预检。', wraplength=730).pack(anchor='w', pady=(0, 8))
+        listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
+        text = tk.Text(listing, wrap='word', state='disabled', height=16)
+        text.pack(side='left', fill='both', expand=True)
+        scroll = ttk.Scrollbar(listing, orient='vertical', command=text.yview)
+        scroll.pack(side='right', fill='y'); text.configure(yscrollcommand=scroll.set)
+        controls = ttk.Frame(frame); controls.pack(fill='x', pady=(12, 0))
+        page_label = ttk.Label(controls)
+        page = 0
+        def render(offset=0):
+            nonlocal page
+            count = max(1, (len(preview['changes']) + 19) // 20)
+            page = max(0, min(count - 1, page + offset))
+            text.configure(state='normal'); text.delete('1.0', 'end')
+            for item in preview['changes'][page * 20:(page + 1) * 20]:
+                details = (' · 本地摘要 ' + item['localSha256'][:12]) if item.get('localSha256') else ''
+                if item.get('remoteVersion'):
+                    details += ' · 服务器版本 ' + item['remoteVersion']
+                text.insert('end', self.merge_description(item) + '：' + item['path'] + details + '\n\n')
+            text.configure(state='disabled'); page_label.configure(text=f'{page + 1} / {count} 页 · 每页 20 项')
+            previous.configure(state='normal' if page else 'disabled'); following.configure(state='normal' if page + 1 < count else 'disabled')
+        previous = ttk.Button(controls, text='上一页', command=lambda: render(-1)); previous.pack(side='left')
+        page_label.pack(side='left', padx=8)
+        following = ttk.Button(controls, text='下一页', command=lambda: render(1)); following.pack(side='left')
+        def apply():
+            dialog.destroy(); self.update_controls(True, True)
+            self.worker.run_cycle(initial_confirmation=preview['fingerprint'])
+        def refresh():
+            dialog.destroy(); self.run()
+        self.merge_confirm_button = ttk.Button(controls, text='确认并合并', command=apply,
+            state='normal' if preview['canApply'] else 'disabled')
+        self.merge_confirm_button.pack(side='right')
+        cancel = self.merge_cancel_button = ttk.Button(controls, text='取消', command=dialog.destroy)
+        cancel.pack(side='right', padx=8)
+        ttk.Button(controls, text='重新预检', command=refresh).pack(side='right')
+        dialog.bind('<Escape>', lambda _: dialog.destroy())
+        render(); cancel.focus_set()
+
+    @staticmethod
+    def merge_description(item):
+        labels = {'uncertain-delete': '旧记录对应路径已缺失，保留本地内容和记录，等待确认',
+            'local-only': '仅本地存在，等待确认处理', 'held-task': '旧任务保留，本次不重放',
+            'upload': '上传本地文件', 'download': '下载服务器文件', 'same': '内容一致，建立映射',
+            'conflict': '保留双方，另存本地冲突副本', 'deleted-conflict': '删除记录冲突，保留本地内容',
+            'existing-conflict': '已有待处理冲突，保留', 'keep-tombstone': '保留删除记录，不删除本地文件',
+            'create-directory': '创建服务器目录结构', 'keep-directory': '保留已有目录（本地空目录不上传）',
+            'queued': '恢复已确认的持久化任务', 'skip': '跳过并保留原状'}
+        reasons = {'EXCLUDED_DIRECTORY': '配置或缓存目录，默认排除', 'EXCLUDED_FILE': '临时文件或配置文件，默认排除',
+            'EXCLUDED_REMOTE': '服务器上的排除项，不下载', 'OUTSIDE_SYNC_SCOPE': '不在此设备选择的同步范围内',
+            'FILE_TOO_LARGE': '超过单文件大小限制，请缩小文件后重试', 'INVALID_PATH': '文件名或路径不符合规则，请检查后重试',
+            'FILE_BUSY': '文件仍在变化，请等待保存完成后重新预检',
+            'INITIAL_PATH_CASE_CONFLICT': '两端路径大小写不同，Windows 无法分别保存，请先统一名称'}
+        code = item.get('code')
+        detail = (' · ' + reasons.get(code, ERRORS.get(code, code)) + ' [' + code + ']') if code else ''
+        return labels.get(item['action'], item['action']) + detail
 
     @staticmethod
     def change_description(item):
