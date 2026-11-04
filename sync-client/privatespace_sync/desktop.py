@@ -15,6 +15,7 @@ ERRORS = {
     'M0_REQUIRES_NEW_EMPTY_DIRECTORY': '请选择一个新的空目录；当前版本不会接管已有文件库。',
     'DIRECTORY_ALREADY_BOUND': '此目录已有同步绑定标记，请使用原配置；不能由其他配置接管。',
     'INITIAL_MERGE_CHANGED': '两端内容或同步范围已变化，原确认已失效；请重新查看合并预检。',
+    'RECONCILIATION_CHANGED': '对账预检已变化，原确认失效；请重新查看当前对账预检。',
     'STATE_ALREADY_EXISTS': '此状态目录已有配对信息，请使用现有配置或指定另一个状态目录。',
     'STATE_IN_USE': '另一个助手或命令正在使用此状态目录，请先退出另一个进程。',
     'STATE_MUST_BE_SEPARATE': '同步目录和助手状态目录不能重叠。',
@@ -118,7 +119,7 @@ class SyncApp:
         self.preview_button = ttk.Button(controls, text='查看变更预览', command=self.preview_deletions)
         for button in (self.start_button, self.pause_button, self.once_button, self.open_button, self.preview_button):
             button.pack(side='left', padx=(0, 8))
-        self.reconcile_button = ttk.Button(body, text='重新对账预检（只查看）', command=self.preview_reconciliation)
+        self.reconcile_button = ttk.Button(body, text='重新对账', command=self.preview_reconciliation)
         self.reconcile_button.grid(row=14, column=0, columnspan=3, sticky='w', pady=(8, 0))
         ttk.Label(body, textvariable=self.status, style='Status.TLabel', wraplength=780).grid(row=6, column=0, columnspan=3, sticky='ew', pady=(0, 8))
         ttk.Label(body, textvariable=self.summary, wraplength=780).grid(row=7, column=0, columnspan=3, sticky='ew', pady=(0, 12))
@@ -191,9 +192,12 @@ class SyncApp:
             button.configure(state='normal' if paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.pause_button.configure(state='normal' if paired and not self.closing else 'disabled')
         self.open_button.configure(state='normal' if paired else 'disabled')
-        preview = self.snapshot.get('result', {}).get('deletionPreview') or self.snapshot.get('result', {}).get('initialMergePreview')
+        preview = (self.snapshot.get('result', {}).get('deletionPreview') or self.snapshot.get('result', {}).get('initialMergePreview')
+                   or self.snapshot.get('result', {}).get('reconciliationPreview'))
         self.preview_button.configure(state='normal' if preview and not busy and not self.closing else 'disabled')
         self.preview_button.configure(text='查看合并预检' if self.snapshot.get('result', {}).get('initialMergePreview') else '查看变更预览')
+        if self.snapshot.get('result', {}).get('reconciliationPreview'):
+            self.preview_button.configure(text='查看对账预检')
 
     def turn_page(self, offset: int):
         self.item_page += offset
@@ -239,7 +243,8 @@ class SyncApp:
                 self.status.set(text)
                 result = event['result']
                 if self.phase == 'ATTENTION' and result.get('reconciliationPreview'):
-                    self.status.set('重新对账预检完成：下方显示两端差异。当前仅查看，尚未执行上传、下载、删除或旧任务；确认执行将在后续版本提供。')
+                    self.status.set('重新对账预检完成：点击“查看对账预检”核对并确认。确认前保留文件和旧任务；有歧义的删除不执行。' +
+                                    (' 内容已变化，请核对新预检。' if event['code'] else ''))
                 if result.get('status') == 'INITIAL_MERGE_REVIEW_REQUIRED':
                     self.status.set('首次合并待确认：点击“查看合并预检”，核对上传、下载、冲突和跳过项；确认前不传文件。' +
                                     (' 两端已变化，请重新核对。' if event['code'] == 'INITIAL_MERGE_CHANGED' else ''))
@@ -253,6 +258,8 @@ class SyncApp:
                 else:
                     self.scope_label.set('同步范围尚未核对；配对时在网页选择。')
                 self.summary.set(f"最近核对：队列 {result.get('queued', 0)} 项，范围外暂存 {result.get('heldQueued', 0)} 项，冲突 {len(result.get('conflicts', []))} 项，问题 {len(result.get('issues', []))} 项。" if result else '尚未完成同步检查')
+                if result.get('reconciliationArchives'):
+                    self.summary.set(self.summary.get() + f" 本机保留 {result['reconciliationArchives']} 批对账归档，旧任务不自动重放。")
                 self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
                 self.items += [(item['path'], self.change_description(item)) for item in (result.get('deletionPreview') or {}).get('changes', [])]
@@ -331,6 +338,9 @@ class SyncApp:
         render(); entry.focus_set()
 
     def preview_deletions(self):
+        if self.snapshot.get('result', {}).get('reconciliationPreview'):
+            self.preview_initial_merge()
+            return
         if self.snapshot.get('result', {}).get('initialMergePreview'):
             self.preview_initial_merge()
             return
@@ -371,18 +381,21 @@ class SyncApp:
         render()
 
     def preview_initial_merge(self):
-        preview = self.snapshot.get('result', {}).get('initialMergePreview')
+        reconciliation = bool(self.snapshot.get('result', {}).get('reconciliationPreview'))
+        preview = self.snapshot.get('result', {}).get('reconciliationPreview') if reconciliation else self.snapshot.get('result', {}).get('initialMergePreview')
         if not preview or self.merge_dialog and self.merge_dialog.winfo_exists():
             return
         dialog = self.merge_dialog = tk.Toplevel(self.window)
-        dialog.title('首次合并预检'); dialog.transient(self.window); dialog.grab_set()
+        dialog.title('重新对账预检' if reconciliation else '首次合并预检'); dialog.transient(self.window); dialog.grab_set()
         dialog.geometry('780x570'); dialog.minsize(640, 470)
         frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
         summary = preview['summary']
-        ttk.Label(frame, text=f"上传 {summary.get('upload', 0)} · 下载 {summary.get('download', 0)} · 内容一致 {summary.get('same', 0)} · 冲突 {summary.get('conflict', 0) + summary.get('deleted-conflict', 0) + summary.get('existing-conflict', 0)} · 跳过 {summary.get('skip', 0)}", wraplength=730).pack(anchor='w', pady=(0, 10))
+        ttk.Label(frame, text=f"上传 {summary.get('upload', 0) + summary.get('local-only', 0)} · 下载 {summary.get('download', 0)} · 内容一致 {summary.get('same', 0)} · 冲突 {summary.get('conflict', 0) + summary.get('deleted-conflict', 0) + summary.get('existing-conflict', 0)} · 跳过 {summary.get('skip', 0)}", wraplength=730).pack(anchor='w', pady=(0, 10))
         ttk.Label(frame, text='初始合并不推断删除。同名不同内容：服务器版本放回原路径，本地内容另存冲突副本；服务器已删除的路径保留本地内容并记录冲突。跳过项保留原状。取消后不执行本次合并。', wraplength=730).pack(anchor='w', pady=(0, 10))
+        if reconciliation:
+            ttk.Label(frame, text=f"无法确定的删除 {summary.get('uncertain-delete', 0)} · 旧任务 {summary.get('held-task', 0)}。确认后将旧任务与基线归档到本机状态库，不重放旧删除或改名；有歧义的内容列为冲突，等待后续处理。", wraplength=730).pack(anchor='w', pady=(0, 8))
         if not preview['canApply']:
-            ttk.Label(frame, text='部分文件仍在变化，请等待保存完成后重新预检。', wraplength=730).pack(anchor='w', pady=(0, 8))
+            ttk.Label(frame, text='预检有待处理问题，请先处理下方问题并重新预检。' if reconciliation else '部分文件仍在变化，请等待保存完成后重新预检。', wraplength=730).pack(anchor='w', pady=(0, 8))
         listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
         text = tk.Text(listing, wrap='word', state='disabled', height=16)
         text.pack(side='left', fill='both', expand=True)
@@ -408,9 +421,13 @@ class SyncApp:
         following = ttk.Button(controls, text='下一页', command=lambda: render(1)); following.pack(side='left')
         def apply():
             dialog.destroy(); self.update_controls(True, True)
-            self.worker.run_cycle(initial_confirmation=preview['fingerprint'])
+            if reconciliation:
+                self.worker.commands.put(ReconcilePreviewCommand(preview['fingerprint']))
+            else:
+                self.worker.run_cycle(initial_confirmation=preview['fingerprint'])
         def refresh():
-            dialog.destroy(); self.run()
+            dialog.destroy()
+            self.preview_reconciliation() if reconciliation else self.run()
         self.merge_confirm_button = ttk.Button(controls, text='确认并合并', command=apply,
             state='normal' if preview['canApply'] else 'disabled')
         self.merge_confirm_button.pack(side='right')

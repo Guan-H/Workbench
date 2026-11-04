@@ -12,6 +12,8 @@ class InitialMerge:
         self.db = engine.db
 
     def pending(self):
+        if self.db.execute("SELECT 1 FROM setting WHERE key = 'reconciliation_active'").fetchone():
+            return True
         return bool(self.engine.config.get('initialMergeReview')) and not self.db.execute(
             "SELECT 1 FROM setting WHERE key = 'initial_merge_complete'").fetchone()
 
@@ -170,4 +172,5 @@ class InitialMerge:
                 raise SyncError('INITIAL_MERGE_CHANGED')
         self.db.execute("INSERT OR REPLACE INTO setting VALUES ('initial_merge_complete', 'true')")
         self.db.execute("DELETE FROM setting WHERE key = 'initial_merge_attempt'")
+        self.db.execute("DELETE FROM setting WHERE key = 'reconciliation_active'")
         self.db.commit()

@@ -296,6 +296,16 @@ try:
     assert after['version'] == '1' and not after['deleted'] and relay.posts == 2
     checks.append('real process kill after the second committed upload preserves the first baseline and pending operation; scope expansion during review changes neither; confirmation preserves both versions of a remotely edited acknowledged file and restores the missing file without server deletion or duplicate publication')
     resumed.close(); resumed = None
+    # Fault injection: retained client state is ahead of the actual server, as after a rollback.
+    resumed = Engine(resume_state, stable_seconds=.01, delete_grace=0)
+    resumed.enqueue(published['path'], after, b'# earlier queued edit\r\n')
+    pending.write_bytes(b'# latest local edit\r\n')
+    view_row = json.loads(resumed.db.execute("SELECT value FROM setting WHERE key='remote_view'").fetchone()[0])
+    view_row['cursor'] = str(int(view_row['cursor']) + 1000000)
+    resumed.db.execute("UPDATE setting SET value=? WHERE key='remote_view'", (json.dumps(view_row),))
+    resumed.db.execute("UPDATE setting SET value=? WHERE key='cursor'", (view_row['cursor'],)); resumed.db.commit()
+    assert resumed.cycle()['code'] == 'SERVER_ROLLBACK_RECONCILIATION_REQUIRED'
+    resumed.close(); resumed = None
     before_review = {name: table(resume_state, name) for name in ('baseline', 'queue', 'setting', 'remote_catalog', 'rename_queue', 'local_identity')}
     files_before_review = inventory(resume_root)
     window = tk.Tk(); window.withdraw(); app = SyncApp(window, resume_state)
@@ -308,6 +318,25 @@ try:
     assert {name: table(resume_state, name) for name in before_review} == before_review
     assert not app.worker.automatic
     checks.append('real Tk reconciliation preview reads a fresh paginated server inventory while preserving files, SQLite cursor/catalog/baselines/queues/identities and stopping automatic synchronization')
+    move = {'targetPath': '合并中断/服务端新名.md', 'baseVersion': after['version']}
+    plan = request('/notes/' + after['id'] + '/move-preview', move)
+    moved = request('/notes/' + after['id'] + '/move', {**move, 'fingerprint': plan['fingerprint']})
+    app.preview_button.invoke(); app.merge_confirm_button.invoke()
+    wait(lambda: app.phase == 'ATTENTION' and app.snapshot.get('code') == 'RECONCILIATION_CHANGED', 'stale reconciliation confirmation')
+    assert {name: table(resume_state, name) for name in before_review} == before_review
+    current_review = app.snapshot['result']['reconciliationPreview']
+    assert any(item['path'] == published['path'] and item['action'] == 'uncertain-delete' for item in current_review['changes'])
+    app.preview_button.invoke(); app.merge_confirm_button.invoke()
+    wait(lambda: app.phase == 'ATTENTION' and app.snapshot['result'].get('status') == 'OK', 'confirmed reconciliation')
+    assert pending.read_bytes() == b'# latest local edit\r\n'
+    assert (resume_root / moved['path']).read_bytes() == b'# commit once\r\n'
+    assert request('/notes/' + published['id'])['path'] == moved['path']
+    assert not [item for item in request('/notes?query=' + urllib.parse.quote(published['path']))['items'] if item['path'] == published['path']]
+    archived = json.loads(table(resume_state, 'reconciliation_archive')[0][2])['state']
+    assert base64.b64decode(json.loads(archived['queue'][0]['request'])['contentBase64']) == b'# earlier queued edit\r\n'
+    assert archived['baseline'] and not table(resume_state, 'queue')
+    assert not any(row[0] == 'reconciliation_active' for row in table(resume_state, 'setting'))
+    checks.append('a real server rejects the injected ahead cursor; stale approval is readonly; fresh Tk confirmation archives original tasks/baselines, restores a usable cursor, downloads the server move and retains ambiguous local bytes without recreating the old server path')
     (output / 'initial-merge.json').write_text(json.dumps({'checks': checks, 'packagedExecutableRoundtrip': False,
         'nativeVisualManualReview': False}, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS: initial-merge', flush=True)

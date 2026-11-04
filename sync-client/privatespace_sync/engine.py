@@ -89,6 +89,7 @@ class Engine:
                 request TEXT NOT NULL, identity TEXT NOT NULL, attempted INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS local_rename (id TEXT PRIMARY KEY, intent TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS remote_catalog (id TEXT PRIMARY KEY, metadata TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS reconciliation_archive (id TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL);
             """)
             cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
             cached = json.loads(cached_scope[0]) if cached_scope else {}
@@ -135,6 +136,7 @@ class Engine:
         eligible_renames = sum(self.selection.explicit(row['source']) and self.selection.explicit(row['target']) for row in rename_queued)
         transfer = self.db.execute("SELECT value FROM setting WHERE key = 'remote_transfer'").fetchone()
         return {"queued": sum(self.selection.includes(path) for path in queued) + eligible_renames,
+                "reconciliationArchives": self.db.execute('SELECT COUNT(*) FROM reconciliation_archive').fetchone()[0],
                 "heldQueued": sum(not self.selection.includes(path) for path in queued) + len(rename_queued) - eligible_renames,
                 "pendingRenames": len(rename_queued),
                 "catalog": json.loads(transfer[0]) if transfer else None,

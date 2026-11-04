@@ -35,7 +35,7 @@ class PauseCommand:
 
 @dataclass(frozen=True)
 class ReconcilePreviewCommand:
-    pass
+    confirmation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -191,7 +191,7 @@ class SyncWorker:
                         self._stop_watcher()
                         self._publish('PAUSED' if self.engine else 'UNPAIRED')
                     elif isinstance(command, ReconcilePreviewCommand):
-                        from .reconciliation import preview
+                        from .reconciliation import preview, apply
                         self._stop_watcher()
                         if not self.engine:
                             raise SyncError('PAIR_FIRST')
@@ -200,10 +200,16 @@ class SyncWorker:
                         def checkpoint():
                             if self.pause_requested.is_set():
                                 raise SyncError('PAUSE_REQUESTED')
-                        review = preview(self.engine, checkpoint)
-                        self.last_result = {'status': 'RECONCILIATION_PREVIEW', 'reconciliationPreview': review,
-                                            'issues': review['issues'], **self.engine.status()}
-                        self._publish('ATTENTION')
+                        if command.confirmation:
+                            self.last_result = apply(self.engine, command.confirmation, checkpoint)
+                        else:
+                            review = preview(self.engine, checkpoint)
+                            self.last_result = {'status': 'RECONCILIATION_PREVIEW', 'reconciliationPreview': review,
+                                                'issues': review['issues'], **self.engine.status()}
+                        ready = (self.last_result['status'] == 'OK' and not self.last_result.get('conflicts')
+                                 and not self.last_result.get('issues') and not self.last_result.get('queued')
+                                 and not self.last_result.get('rescanRequired'))
+                        self._publish('READY' if ready else 'ATTENTION', self.last_result.get('code'))
                     elif isinstance(command, ProfileCommand):
                         self._change_profile(command)
                     elif isinstance(command, PairCommand):
