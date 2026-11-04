@@ -48,6 +48,12 @@ class ConflictCommand:
 
 
 @dataclass(frozen=True)
+class ConflictDraftCommand:
+    path: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ProfileCommand:
     identity: str | None = None
     name: str | None = None
@@ -61,7 +67,7 @@ class ExitCommand:
 class SyncWorker:
     def __init__(self, state: Path):
         self.state = state
-        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ReconcilePreviewCommand | ConflictCommand | ProfileCommand | ExitCommand] = Queue()
+        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ReconcilePreviewCommand | ConflictCommand | ConflictDraftCommand | ProfileCommand | ExitCommand] = Queue()
         self.events: Queue[dict] = Queue()
         self.pause_requested = threading.Event()
         self.stopped = threading.Event()
@@ -94,6 +100,8 @@ class SyncWorker:
         self.commands.put(ProfileCommand(identity, name))
 
     def _publish(self, phase: str, code: str | None = None, *, configuration_finished=False):
+        if self.engine and phase in ('PAUSED', 'READY', 'WATCHING', 'ATTENTION', 'ERROR', 'STOPPED') and code not in ('NETWORK_UNAVAILABLE', 'DEVICE_UNAUTHORIZED'):
+            self._report_conflicts(phase, code, observations=phase in ('READY', 'WATCHING', 'ATTENTION'))
         self.events.put({'phase': phase, 'code': code, 'automatic': self.automatic,
                          'root': self.engine.config['root'] if self.engine else None,
                          'url': self.engine.config['url'] if self.engine else None,
@@ -142,10 +150,13 @@ class SyncWorker:
             self.watcher.close()
             self.watcher = None
 
-    def _report_conflicts(self):
+    def _report_conflicts(self, phase, code=None, *, observations=True):
         from .conflict_reporting import sync
         try:
-            sync(self.engine)
+            state = self.engine.status()
+            status = {'phase': phase, 'queued': state['queued'], 'heldQueued': state['heldQueued'],
+                'conflicts': len(state['conflicts']), 'issues': len(self.last_result.get('issues', [])), 'code': code}
+            sync(self.engine, status, observations=observations)
             self.last_result.pop('conflictReportCode', None)
         except (SyncError, OSError, sqlite3.Error) as error:
             self.last_result['conflictReportCode'] = error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE'
@@ -163,8 +174,6 @@ class SyncWorker:
                 break
             result = self.engine.cycle(should_pause=self.pause_requested.is_set)
         self.last_result = result
-        if result.get('code') not in ('NETWORK_UNAVAILABLE', 'PAUSE_REQUESTED') and result['status'] != 'INITIAL_MERGE_REVIEW_REQUIRED':
-            self._report_conflicts()
         code = result.get('code')
         if code == 'NETWORK_UNAVAILABLE' and self.automatic:
             self.retry = min(self.retry + 1, 5)
@@ -205,10 +214,17 @@ class SyncWorker:
                     continue
                 try:
                     if isinstance(command, ExitCommand):
+                        self._publish('STOPPED')
                         break
                     if isinstance(command, PauseCommand):
                         self._stop_watcher()
                         self._publish('PAUSED' if self.engine else 'UNPAIRED')
+                    elif isinstance(command, ConflictDraftCommand):
+                        from .conflicts import save_draft
+                        if not self.engine:
+                            raise SyncError('PAIR_FIRST')
+                        save_draft(self.engine, command.path, command.content)
+                        self.events.put({'draftSaved': command.path})
                     elif isinstance(command, ConflictCommand):
                         from .conflicts import preview, resolve
                         self._stop_watcher()
@@ -219,7 +235,6 @@ class SyncWorker:
                         if command.fingerprint or command.resume:
                             self.last_result = resolve(self.engine, command.path, command.fingerprint,
                                 command.variant, command.merged, command.resume)
-                            self._report_conflicts()
                         else:
                             self.last_result = {'status': 'CONFLICT_REVIEW', 'conflictPreview': preview(self.engine, command.path),
                                                 **self.engine.status()}
@@ -236,8 +251,6 @@ class SyncWorker:
                                 raise SyncError('PAUSE_REQUESTED')
                         if command.confirmation:
                             self.last_result = apply(self.engine, command.confirmation, checkpoint)
-                            if self.last_result['status'] == 'OK':
-                                self._report_conflicts()
                         else:
                             review = preview(self.engine, checkpoint)
                             self.last_result = {'status': 'RECONCILIATION_PREVIEW', 'reconciliationPreview': review,

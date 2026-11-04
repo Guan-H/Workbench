@@ -17,7 +17,12 @@ public class SyncDeviceController {
 
     @GetMapping("/{id}/conflicts")
     public Map<String, Object> conflicts(@PathVariable String id, @RequestParam(defaultValue = "") String cursor,
-            @RequestParam(defaultValue = "20") int limit) { return conflicts.page(id, cursor, limit); }
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(defaultValue = "pending") String state) { return conflicts.page(id, cursor, limit, state); }
+
+    @GetMapping("/{id}/activity")
+    public Map<String, Object> activity(@PathVariable String id, @RequestParam(defaultValue = "") String cursor,
+            @RequestParam(defaultValue = "20") int limit) { return conflicts.activity(id, cursor, limit); }
 
     @PostMapping("/pairing-code")
     public Map<String, String> pairing(@RequestBody com.privatespace.modules.sync.dto.PairingRequest request) { return service.pairing(request.name(), request.scope()); }

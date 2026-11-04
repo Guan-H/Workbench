@@ -47,6 +47,7 @@ class Gate:
         self.drop_next = False
         self.offline = False
         self.committed = False
+        self.after_read = None
         gate = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_):
@@ -64,6 +65,9 @@ class Gate:
                     response = error
                 with response:
                     body = response.read()
+                    if gate.after_read and self.command == 'GET' and self.path.startswith('/api/v1/sync/changes?') and response.status == 200:
+                        action, gate.after_read = gate.after_read, None
+                        action()
                     if gate.drop_next and self.path == '/api/v1/sync/file-renames' and response.status == 200:
                         gate.drop_next = False; gate.committed = True
                         self.connection.close(); return
@@ -121,6 +125,19 @@ try:
     root_a, state_a, a = pair('A', gate.url)
     root_b, state_b, b = pair('B', backend)
     settle(a); settle(b)
+    mid_source, mid_target = f'{folder}/保留11.md', f'{folder}/本轮中途改名.md'
+    mid = note_at(a, mid_source)
+    def rename_between_real_views():
+        body = {'targetPath': mid_target, 'baseVersion': mid['version']}
+        plan = request('/notes/' + mid['id'] + '/move-preview', body)
+        request('/notes/' + mid['id'] + '/move', {**body, 'fingerprint': plan['fingerprint']})
+    gate.after_read = rename_between_real_views
+    result = settle(a)
+    assert result['rescanRequired'] and (root_a / mid_source).is_file() and not (root_a / mid_target).exists()
+    settle(a); settle(b)
+    assert not (root_a / mid_source).exists() and (root_a / mid_target).read_bytes() == b'# identical\r\n'
+    assert note_at(a, mid_target)['id'] == mid['id']
+    checks.append('a real server rename between two actual HTTP views defers the path without writes, then the next stable cycle preserves its ID and original bytes instead of falsely pausing for reconciliation')
     old = f'{folder}/原名.txt'; new = f'{folder}/新名.md'
     (root_a / old).write_bytes(b'# original\r\n')
     settle(a); settle(b)

@@ -7,6 +7,24 @@ from privatespace_sync.installer import EXECUTABLE, SHORTCUT, install_bundle, re
 
 
 class InstallerTests(unittest.TestCase):
+    def test_opt_in_startup_isolated_shortcut_survives_update_and_can_be_disabled(self):
+        from privatespace_sync.startup import enabled, set_enabled, shortcut
+        with tempfile.TemporaryDirectory() as temporary:
+            source, root, folders = self.fixture(Path(temporary))
+            startup = Path(temporary) / 'isolated-startup'
+            state = Path(temporary) / 'state with spaces'
+            first, _ = install_bundle(source, root, folders=folders, startup_directory=startup)
+            self.assertFalse(enabled(first, state, directory=startup))
+            set_enabled(first, state, True, directory=startup)
+            self.assertTrue(enabled(first, state, directory=startup))
+            set_enabled(first, state, True, directory=startup)
+            self.assertEqual(len(list(startup.iterdir())), 1)
+            second, _ = install_bundle(source, root, folders=folders, startup_directory=startup)
+            self.assertTrue(enabled(second, state, directory=startup))
+            self.assertTrue(first.exists())
+            set_enabled(second, state, False, directory=startup)
+            self.assertFalse(shortcut(state, startup).exists())
+
     def fixture(self, base):
         source = base / '解压目录'
         (source / '_internal').mkdir(parents=True)

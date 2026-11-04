@@ -22,12 +22,29 @@ def check_conflicts(app, window, wait, request, pair, create, edit, upload, Rela
     wait(lambda: app.conflict_dialog is not None and app.conflict_dialog.window.winfo_exists(), 'conflict dialog')
     dialog = app.conflict_dialog
     index = next(index for index, item in enumerate(dialog.review['variants']) if item['id'].startswith('archive:'))
+    dialog.table.selection_set(str(index)); window.update()
+    assert dialog.server_content.get('1.0', 'end-1c') and dialog.content.get('1.0', 'end-1c')
+    dialog.manual.invoke(); window.update()
+    dialog.editor.delete('1.0', 'end'); dialog.editor.insert('1.0', '# durable local merge draft\r\n')
+    dialog.close_merge.invoke()
+    def draft_saved():
+        with __import__('sqlite3').connect(app.worker.state / 'sync.sqlite') as db:
+            row = db.execute('SELECT content FROM conflict_draft WHERE path=?', (archived_path,)).fetchone()
+            return row and row[0] == '# durable local merge draft\r\n'
+    wait(draft_saved, 'persisted local merge draft')
+    previous_dialog = dialog
+    dialog.refresh()
+    wait(lambda: app.conflict_dialog is not previous_dialog and app.conflict_dialog.window.winfo_exists(), 'reload saved draft')
+    dialog = app.conflict_dialog
+    index = next(index for index, item in enumerate(dialog.review['variants']) if item['id'].startswith('archive:'))
     dialog.table.selection_set(str(index)); window.update(); dialog.manual.invoke(); window.update()
+    assert dialog.editor.get('1.0', 'end-1c') == '# durable local merge draft\r\n'
     dialog.editor.delete('1.0', 'end'); dialog.editor.insert('1.0', '# explicitly merged archived edit\r\n')
     dialog.save_merge.invoke()
     wait(lambda: app.snapshot['result'].get('status') == 'CONFLICT_RESOLVED', 'manual conflict resolution')
     saved = next(item for item in request('/notes?query=' + urllib.parse.quote(archived_path))['items'] if item['path'] == archived_path)
     assert request('/notes/' + saved['id'])['content'] == '# explicitly merged archived edit\r\n'
+    assert not draft_saved()
     checks.append('real Tk opens an archived conflict, reads preserved bytes and explicitly publishes a manual Markdown merge through the conditional backend API')
 
     create('冲突验收', kind='folder')
@@ -41,6 +58,11 @@ def check_conflicts(app, window, wait, request, pair, create, edit, upload, Rela
         (root / note['path']).write_bytes(b'# local variant\r\n')
         note = edit(note, '# server variant\r\n'); assert engine.cycle()['conflicts']
         review = preview(engine, note['path'])
+        from privatespace_sync.conflicts import save_draft
+        save_draft(engine, note['path'], '# survives an actual engine restart\r\n')
+        engine.close(); engine = Engine(state_dir, stable_seconds=.01, delete_grace=0)
+        review = preview(engine, note['path'])
+        assert review['draft'] == '# survives an actual engine restart\r\n'
         source = next(item['id'] for item in review['variants'] if item['id'].startswith('copy:'))
         note = edit(note, '# third edit\r\n')
         try:

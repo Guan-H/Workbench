@@ -34,9 +34,17 @@ class NotesIT {
         if ("1".equals(System.getenv("IT_ONLY_INCREMENTAL"))) seedLegacySyncLog("6");
         if ("1".equals(System.getenv("IT_ONLY_SNAPSHOT"))) seedLegacySyncLog("7");
         try (var context = start()) {
+            if ("1".equals(System.getenv("IT_ONLY_PACKAGED_M2"))) {
+                packagedDesktop(context, true);
+                return;
+            }
             if ("1".equals(System.getenv("IT_ONLY_CONFLICT_REPORT"))) {
                 initialMerge(context, true);
                 conflictStatusBrowser(context);
+                if ("1".equals(System.getenv("IT_M2_FINAL"))) {
+                    packagedDesktop(context, false);
+                    fileRenames(context, false);
+                }
                 return;
             }
             if ("1".equals(System.getenv("IT_ONLY_MERGE"))) {
@@ -74,6 +82,10 @@ class NotesIT {
             verifyUnrelatedRenamePreview(context);
             if ("1".equals(System.getenv("IT_INCLUDE_SYNC"))) {
                 initialMerge(context, false);
+                if ("1".equals(System.getenv("IT_M2_FINAL"))) {
+                    conflictStatusBrowser(context);
+                    packagedDesktop(context, false);
+                }
                 fileRenames(context, false);
                 verifyFileRenameRollback(context);
                 incremental(context, "existing");
@@ -546,7 +558,7 @@ class NotesIT {
         builder.environment().put("NOTES_PASSWORD", password);
         builder.environment().put("NOTES_SETUP", setup);
         builder.environment().put("MERGE_OUTPUT", output.toString());
-        if ("1".equals(System.getenv("IT_ONLY_CONFLICT_REPORT"))) builder.environment().put("CHECK_CONFLICT_REPORT", "1");
+        if ("1".equals(System.getenv("IT_ONLY_CONFLICT_REPORT")) || "1".equals(System.getenv("IT_M2_FINAL"))) builder.environment().put("CHECK_CONFLICT_REPORT", "1");
         builder.environment().put("PYTHONIOENCODING", "utf-8");
         Process process = builder.start();
         boolean finished = process.waitFor(5, TimeUnit.MINUTES);
@@ -572,6 +584,28 @@ class NotesIT {
         assertThat(finished).as("Conflict status browser timed out").isTrue();
         assertThat(process.exitValue()).as(Files.readString(log)).isZero();
         assertThat(Files.readString(log)).contains("PASS: web-conflicts");
+    }
+
+    private void packagedDesktop(ConfigurableApplicationContext context, boolean initialize) throws Exception {
+        int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
+        Path output = Path.of("../frontend/test-results/packaged-m2-" + run).toAbsolutePath().normalize();
+        Files.createDirectories(output);
+        Path log = output.resolve("verification.log");
+        var builder = new ProcessBuilder("python", "verification/check_packaged_m2.py")
+                .directory(Path.of("../sync-client").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
+        builder.environment().put("NOTES_BACKEND", "http://127.0.0.1:" + port);
+        builder.environment().put("NOTES_FRONTEND_PORT", Integer.toString(frontendPort));
+        builder.environment().put("NOTES_PASSWORD", password);
+        builder.environment().put("NOTES_SETUP", setup);
+        builder.environment().put("PACKAGED_INITIALIZE", initialize ? "1" : "0");
+        builder.environment().put("PACKAGED_OUTPUT", output.toString());
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        Process process = builder.start();
+        boolean finished = process.waitFor(4, TimeUnit.MINUTES);
+        if (!finished) process.destroyForcibly();
+        assertThat(finished).as("Frozen M2 GUI timed out").isTrue();
+        assertThat(process.exitValue()).as(Files.readString(log)).isZero();
+        assertThat(Files.readString(log)).contains("PASS: packaged-m2");
     }
 
     private void fileRenames(ConfigurableApplicationContext context, boolean initialize) throws Exception {

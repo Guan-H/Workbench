@@ -58,7 +58,18 @@ def preview(engine, path):
         'pending': pending}
     return {'path': path, 'file': file, 'variants': variants, 'pending': pending,
         'fingerprint': digest(json.dumps(signature, sort_keys=True).encode()), 'localSha256': digest(local) if local is not None else None,
-        'scopeVersion': engine.remote.scope_version, 'conflict': dict(row), 'queue': queue}
+        'scopeVersion': engine.remote.scope_version, 'conflict': dict(row), 'queue': queue,
+        'draft': next((item['content'] for item in engine.db.execute('SELECT content FROM conflict_draft WHERE path=?', (path,))), None)}
+
+
+def save_draft(engine, path, content):
+    if not engine.db.execute('SELECT 1 FROM conflict WHERE path=?', (path,)).fetchone():
+        raise SyncError('CONFLICT_NOT_FOUND')
+    if not path.lower().endswith('.md') or len(content.encode('utf-8')) > 1024 * 1024:
+        raise SyncError('FILE_TOO_LARGE')
+    # Drafts remain ordinary local note data, owned by the same SQLite writer as sync jobs.
+    with engine.db:
+        engine.db.execute('INSERT OR REPLACE INTO conflict_draft VALUES (?,?)', (path, content))
 
 
 def resolve(engine, path, fingerprint, variant=None, merged=None, resume=None):
@@ -94,7 +105,8 @@ def resolve(engine, path, fingerprint, variant=None, merged=None, resume=None):
         operation = str(uuid.uuid4())
         plan = {'data': base64.b64encode(data).decode('ascii') if data is not None else None, 'request': request,
             'remote': state(file), 'localSha256': review['localSha256'], 'scopeVersion': review['scopeVersion'],
-            'oldQueue': review['queue'], 'conflict': review['conflict']}
+            'oldQueue': review['queue'], 'conflict': review['conflict'],
+            'choice': 'merged' if merged is not None else variant.partition(':')[0]}
         with engine.db:
             engine.db.execute("UPDATE conflict_resolution SET status='held' WHERE path=? AND status='pending'", (path,))
             engine.db.execute("INSERT INTO conflict_resolution VALUES (?,?,?,'pending')", (operation, path, json.dumps(plan)))
@@ -152,5 +164,6 @@ def execute(engine, path, operation, plan):
         engine.db.execute('DELETE FROM missing WHERE path=?', (path,))
         engine.db.execute('DELETE FROM queue WHERE path=?', (path,))
         engine.db.execute('DELETE FROM conflict WHERE path=?', (path,))
+        engine.db.execute('DELETE FROM conflict_draft WHERE path=?', (path,))
         engine.db.execute("UPDATE conflict_resolution SET status='done' WHERE id=?", (operation,))
     return {'status': 'CONFLICT_RESOLVED', **engine.status()}

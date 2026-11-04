@@ -61,7 +61,7 @@ def read_shortcut(path):
     return json.loads(powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($p.path); @{target=$s.TargetPath; arguments=$s.Arguments} | ConvertTo-Json -Compress", {'path': str(path)}))
 
 
-def install_bundle(source, root, *, folders=None, progress=None, arguments=''):
+def install_bundle(source, root, *, folders=None, progress=None, arguments='', startup_directory=None):
     source, root = source.absolute(), root.absolute()
     safe(source); safe(root)
     source = source.resolve()
@@ -96,6 +96,24 @@ def install_bundle(source, root, *, folders=None, progress=None, arguments=''):
                 old_links[link] = link.read_bytes()
             else:
                 old_links[link] = None
+        # Update only shortcuts already opted into for this exact managed release.
+        # Tests with isolated folders never enumerate the real user's Startup folder.
+        startup_links = []
+        if previous:
+            from .startup import folder as startup_folder, PREFIX
+            directory = startup_directory if startup_directory is not None else startup_folder() if folders is None else None
+            old_executable = (root / previous['executable']).absolute()
+            safe(old_executable)
+            if not old_executable.is_relative_to(root):
+                raise ValueError('原安装记录的程序路径无效。')
+            if directory is not None:
+                safe(directory)
+                for link in directory.glob(PREFIX + '*.lnk'):
+                    safe(link)
+                    item = read_shortcut(link)
+                    if Path(item['target']).absolute() == old_executable:
+                        old_links[link] = link.read_bytes()
+                        startup_links.append((link, item['arguments']))
         release = root / 'releases' / uuid.uuid4().hex
         safe(release)
         release.mkdir(parents=True)
@@ -118,6 +136,9 @@ def install_bundle(source, root, *, folders=None, progress=None, arguments=''):
                 link.parent.mkdir(parents=True, exist_ok=True)
                 changed.append(link)
                 save_shortcut(link, target, arguments)
+            for link, startup_arguments in startup_links:
+                changed.append(link)
+                save_shortcut(link, target, startup_arguments)
             descriptor, temporary = tempfile.mkstemp(prefix='.install-', dir=root)
             try:
                 with os.fdopen(descriptor, 'w', encoding='utf-8') as output:

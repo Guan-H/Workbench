@@ -91,6 +91,7 @@ class Engine:
             CREATE TABLE IF NOT EXISTS remote_catalog (id TEXT PRIMARY KEY, metadata TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS reconciliation_archive (id TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS conflict_resolution (id TEXT PRIMARY KEY, path TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS conflict_draft (path TEXT PRIMARY KEY, content TEXT NOT NULL);
             """)
             cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
             cached = json.loads(cached_scope[0]) if cached_scope else {}
@@ -402,6 +403,7 @@ class Engine:
                     unsafe.append(issue['path'])
             baseline = self.baseline()
             deletes = []
+            late_remote_rename = False
             for file in remote.values():
                 checkpoint()
                 path = file["path"]
@@ -416,7 +418,14 @@ class Engine:
                     issues.append({"path": path, "code": "PARENT_DIRECTORY_UNAVAILABLE"}); continue
                 same_id = next((old for old in baseline.values() if old["id"] == file["id"]), None)
                 if same_id and same_id["path"] != path:
-                    issues.append({"path": path, "code": "REMOTE_RENAME_REQUIRES_RECONCILIATION"}); continue
+                    initial_file = initial_remote.get(file['id']) if initial_remote is not None else None
+                    if not merging and initial_file and initial_file['path'] == same_id['path']:
+                        # The rename arrived after receive() scanned its initial view.
+                        # Leave both paths untouched and let the next stable pass validate identity.
+                        late_remote_rename = True
+                    else:
+                        issues.append({"path": path, "code": "REMOTE_RENAME_REQUIRES_RECONCILIATION"})
+                    continue
                 data = self.fs.read(path)
                 sha = digest(data) if data is not None else None
                 if file["deleted"]:
@@ -512,7 +521,7 @@ class Engine:
                 self.db.execute("INSERT OR REPLACE INTO setting VALUES ('delete_review', ?)", (fingerprint,))
                 self.db.commit()
                 pending_delete = {"fingerprint": fingerprint, "changes": deletes}
-            rescan = bool(deferred_renames or self.selection.attachments - scanned_attachments)
+            rescan = bool(late_remote_rename or deferred_renames or self.selection.attachments - scanned_attachments)
             if merging and not write_failure and not pending_delete and not rescan and self.status()['queued'] == 0:
                 initial.validate_remote(self.snapshot(checkpoint))
                 initial.finish()

@@ -1,9 +1,10 @@
 """Paged conflict versions and an explicit Markdown merge editor."""
 
 import base64
+import difflib
 import tkinter as tk
 from tkinter import ttk
-from .desktop_worker import ConflictCommand
+from .desktop_worker import ConflictCommand, ConflictDraftCommand
 
 
 class ConflictDialog:
@@ -26,17 +27,25 @@ class ConflictDialog:
         previous = ttk.Button(pager, text='上一页', command=lambda: render(-1)); previous.pack(side='left')
         label = ttk.Label(pager); label.pack(side='left', padx=10)
         following = ttk.Button(pager, text='下一页', command=lambda: render(1)); following.pack(side='left')
-        view = ttk.Frame(frame); view.pack(fill='both', expand=True)
-        self.content = tk.Text(view, wrap='word', height=10, state='disabled'); self.content.pack(side='left', fill='both', expand=True)
-        scroll = ttk.Scrollbar(view, command=self.content.yview); scroll.pack(side='right', fill='y'); self.content.configure(yscrollcommand=scroll.set)
-        ttk.Label(frame, text='预览最多显示前 64 KiB；二进制显示十六进制片段。采用时使用完整字节。').pack(anchor='w', pady=6)
+        view = ttk.Panedwindow(frame, orient='horizontal'); view.pack(fill='both', expand=True)
+        def pane(label):
+            column = ttk.Frame(view); view.add(column, weight=1)
+            ttk.Label(column, text=label).pack(anchor='w', pady=4)
+            area = ttk.Frame(column); area.pack(fill='both', expand=True)
+            text = tk.Text(area, wrap='word', height=10, width=30, state='disabled'); text.pack(side='left', fill='both', expand=True)
+            scroll = ttk.Scrollbar(area, command=text.yview); scroll.pack(side='right', fill='y'); text.configure(yscrollcommand=scroll.set)
+            text.tag_configure('difference', background='#fff1cf', foreground='#704413')
+            return text
+        self.server_content = pane('服务器当前版本')
+        self.content = pane('所选版本（仅预览）')
+        ttk.Label(frame, text='两栏各预览前 64 KiB，琥珀色标出文本差异；二进制显示片段。采用使用完整字节。', wraplength=760).pack(anchor='w', pady=6)
         actions = ttk.Frame(frame); actions.pack(fill='x', pady=8)
         self.adopt = ttk.Button(actions, text='采用所选版本', command=lambda: self.submit(variant=self.selected['id']), state='disabled'); self.adopt.pack(side='right')
         self.manual = ttk.Button(actions, text='手动合并 Markdown', command=self.edit, state='disabled'); self.manual.pack(side='right', padx=8)
         if review['pending']:
             ttk.Button(actions, text='继续上次处理', command=lambda: self.submit(resume=review['pending'])).pack(side='left')
         ttk.Button(actions, text='刷新版本', command=self.refresh).pack(side='left', padx=8)
-        cancel = ttk.Button(actions, text='取消', command=dialog.destroy); cancel.pack(side='right', padx=8)
+        cancel = ttk.Button(actions, text='暂不处理', command=dialog.destroy); cancel.pack(side='right', padx=8)
         def render(offset=0):
             count = max(1, (len(review['variants']) + 19) // 20)
             self.page = max(0, min(count - 1, self.page + offset)); self.selected = None
@@ -54,12 +63,25 @@ class ConflictDialog:
         if not selected:
             return
         self.selected = self.review['variants'][int(selected[0])]
-        encoded = self.selected['data']; data = base64.b64decode(encoded[:87380]) if encoded is not None else b''
-        try:
-            text = data.decode('utf-8')
-        except UnicodeError:
-            text = '二进制片段：\n' + data[:256].hex(' ')
-        self.content.configure(state='normal'); self.content.delete('1.0', 'end'); self.content.insert('end', text); self.content.configure(state='disabled')
+        def display(widget, item):
+            encoded = item['data']; data = base64.b64decode(encoded[:87380]) if encoded is not None else b''
+            try:
+                text = data.decode('utf-8'); textual = True
+            except UnicodeError:
+                text, textual = '二进制片段：\n' + data[:256].hex(' '), False
+            if encoded is None:
+                text = '此版本无文件内容。'
+            widget.configure(state='normal'); widget.delete('1.0', 'end'); widget.insert('end', text); widget.configure(state='disabled')
+            return text.splitlines(), textual
+        server = next(item for item in self.review['variants'] if item['id'] == 'server')
+        left, left_text = display(self.server_content, server)
+        right, right_text = display(self.content, self.selected)
+        if left_text and right_text:
+            for kind, start, end, other_start, other_end in difflib.SequenceMatcher(None, left, right).get_opcodes():
+                if kind != 'equal':
+                    self.server_content.tag_add('difference', f'{start + 1}.0', f'{end + 1}.0')
+                    self.content.tag_add('difference', f'{other_start + 1}.0', f'{other_end + 1}.0')
+        encoded = self.selected['data']
         self.adopt.configure(state='normal'); self.manual.configure(state='normal' if self.review['path'].lower().endswith('.md') and encoded is not None else 'disabled')
 
     def submit(self, **choice):
@@ -74,20 +96,29 @@ class ConflictDialog:
             text = base64.b64decode(self.selected['data']).decode('utf-8')
         except (UnicodeError, TypeError):
             return
-        if self.app.conflict_draft and self.app.conflict_draft[0] == self.review['path']:
-            text = self.app.conflict_draft[1]
+        if self.review.get('draft') is not None:
+            text = self.review['draft']
         window = self.editor_window = tk.Toplevel(self.window)
         window.title('手动合并 Markdown'); window.transient(self.window); window.grab_set(); window.geometry('760x560')
         frame = ttk.Frame(window, padding=16); frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='点击保存才提交。版本过期会拒绝；本次编辑保留在当前助手内存中。', wraplength=700).pack(anchor='w', pady=8)
+        message = tk.StringVar(value='保存合并结果才提交服务器。关闭时保存本机草稿，重启后可继续；版本变化仍需重新核对。')
+        ttk.Label(frame, textvariable=message, wraplength=700).pack(anchor='w', pady=8)
         listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
         self.editor = tk.Text(listing, wrap='word'); self.editor.pack(side='left', fill='both', expand=True); self.editor.insert('1.0', text)
         scroll = ttk.Scrollbar(listing, command=self.editor.yview); scroll.pack(side='right', fill='y'); self.editor.configure(yscrollcommand=scroll.set)
         def close():
-            self.app.conflict_draft = (self.review['path'], self.editor.get('1.0', 'end-1c')); window.destroy(); self.window.grab_set()
+            value = self.editor.get('1.0', 'end-1c')
+            if len(value.encode('utf-8')) > 1024 * 1024:
+                message.set('草稿超过 Markdown 1 MiB 限额，请缩小内容后再保存或关闭。'); return False
+            self.review['draft'] = value
+            self.app.worker.commands.put(ConflictDraftCommand(self.review['path'], value))
+            window.destroy(); self.window.grab_set(); return True
         def save():
-            value = self.editor.get('1.0', 'end-1c'); close(); self.submit(merged=value)
+            value = self.editor.get('1.0', 'end-1c')
+            if close(): self.submit(merged=value)
+        self.close_editor = close
         controls = ttk.Frame(frame); controls.pack(fill='x', pady=12)
         self.save_merge = ttk.Button(controls, text='保存合并结果', command=save); self.save_merge.pack(side='right')
-        ttk.Button(controls, text='关闭并保留本次编辑', command=close).pack(side='right', padx=8)
+        self.close_merge = ttk.Button(controls, text='关闭并保存本机草稿', command=close); self.close_merge.pack(side='right', padx=8)
+        ttk.Button(controls, text='放弃本次修改', command=lambda: (window.destroy(), self.window.grab_set())).pack(side='left')
         window.protocol('WM_DELETE_WINDOW', close); window.bind('<Escape>', lambda _: close())

@@ -33,7 +33,7 @@ class Remote:
         self.scope_version: str | None = None
         self.opener = urllib.request.build_opener(NoRedirect())
 
-    def request(self, path: str, *, body=None, operation: str | None = None, binary: bool = False):
+    def request(self, path: str, *, body=None, operation: str | None = None, binary: bool = False, timeout: float = 15):
         headers = {"Accept": "application/json"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
@@ -47,7 +47,7 @@ class Remote:
             headers["Idempotency-Key"] = operation
         request = urllib.request.Request(self.url + "/api/v1/sync" + path, data=data, headers=headers)
         try:
-            with self.opener.open(request, timeout=15) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 payload = response.read(71 * 1024 * 1024)
                 length = response.headers.get('Content-Length')
                 if length is not None and len(payload) != int(length):

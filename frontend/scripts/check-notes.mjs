@@ -54,8 +54,7 @@ try {
 
   async function request(path, method = 'GET', body, operation = crypto.randomUUID(), extra = {}) {
     return page.evaluate(async ({ path, method, body, operation, extra }) => {
-      const tokenResponse = await fetch('/api/v1/auth/csrf')
-      const { token } = await tokenResponse.json()
+      const token = method === 'GET' ? undefined : (await (await fetch('/api/v1/auth/csrf')).json()).token
       const response = await fetch('/api/v1' + path, { method, headers: {
         'Content-Type': 'application/json', 'X-CSRF-TOKEN': token, 'Idempotency-Key': operation, ...extra,
       }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -208,8 +207,10 @@ try {
     await page.getByRole('button', { name: '上传附件', exact: true }).click()
     await page.locator('input[type=file]:not([accept])').setInputFiles({ name: '图片.png', mimeType: 'image/png', buffer: bytes })
     await poll(list, items => items.some(item => item.type === 'attachment'), 'attachment upload')
+    await page.getByRole('button', { name: '上传附件', exact: true }).waitFor({ state: 'visible' })
+    await poll(() => page.getByRole('button', { name: '上传附件', exact: true }).isEnabled(), Boolean, 'attachment UI finished')
     await page.getByRole('button', { name: '保存笔记', exact: true }).click()
-    await page.getByTestId('save-feedback').filter({ hasText: '已保存到服务器' }).waitFor()
+    await poll(() => request('/notes/' + importedNote.id), response => response.body.content?.includes('![图片.png](assets/'), 'attachment reference saved')
     const attachment = (await list()).find(item => item.type === 'attachment')
     const imageResponse = await context.request.get(origin + '/api/v1/files/content?path=' + encodeURIComponent(attachment.path))
     assert.deepEqual(await imageResponse.body(), bytes)

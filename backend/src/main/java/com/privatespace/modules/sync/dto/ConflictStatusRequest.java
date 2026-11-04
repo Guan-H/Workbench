@@ -6,7 +6,14 @@ import jakarta.validation.constraints.*;
 
 /** Metadata observed by one authorized helper; no file content or local absolute path. */
 public record ConflictStatusRequest(@NotBlank @Pattern(regexp = "[1-9][0-9]{0,18}") @DecimalMax("9223372036854775807") String revision,
-        @NotNull @Size(max = 200) List<@NotNull @Valid Item> items) {
+        @NotNull @Size(max = 200) List<@NotNull @Valid Item> items, @Valid Status status) {
+    public record Status(
+            @NotBlank @Pattern(regexp = "PAUSED|READY|WATCHING|ATTENTION|ERROR|STOPPED") String phase,
+            @Min(0) @Max(100000000) int queued,
+            @Min(0) @Max(100000000) int heldQueued,
+            @Min(0) @Max(100000000) int conflicts,
+            @Min(0) @Max(100000000) int issues,
+            @Pattern(regexp = "[A-Z_0-9]{1,80}") String code) { }
     public record Item(@NotBlank @Size(max = 240) String path, @NotNull Boolean active,
             @NotBlank @Pattern(regexp = "[A-Z_]{1,80}") String reason,
             @NotBlank @Pattern(regexp = "present|missing|unavailable") String localState,
@@ -14,5 +21,6 @@ public record ConflictStatusRequest(@NotBlank @Pattern(regexp = "[1-9][0-9]{0,18
             @Pattern(regexp = "[a-f0-9-]{36}") String baselineId,
             @Pattern(regexp = "[1-9][0-9]{0,18}") String baselineVersion,
             @Pattern(regexp = "[a-f0-9]{64}") String baselineSha256,
-            @Min(0) @Max(1000000) int copies) { }
+            @Min(0) @Max(1000000) int copies,
+            @Pattern(regexp = "server|local|copy|archive|job|merged") String resolution) { }
 }

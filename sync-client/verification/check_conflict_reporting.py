@@ -35,10 +35,12 @@ def check_reporting(request, pair, create, edit, Relay, output):
         with sqlite3.connect(state / 'sync.sqlite') as db:
             assert db.execute('SELECT COUNT(*) FROM conflict_report_outbox').fetchone()[0] == 1
         engine = Engine(state, stable_seconds=.01, delete_grace=0)
-        sync(engine)
+        observed = {'phase': 'ATTENTION', 'queued': 0, 'heldQueued': 0, 'conflicts': 25, 'issues': 0, 'code': None}
+        sync(engine, observed)
         assert engine.db.execute('SELECT COUNT(*) FROM conflict_report_outbox').fetchone()[0] == 0
         first = request('/sync-devices/' + device + '/conflicts?limit=20')
         assert first['reported'] and len(first['items']) == 20 and first['nextCursor']
+        assert first['helperStatus'] == observed and first['statusReportedAt']
         import urllib.parse
         second = request('/sync-devices/' + device + '/conflicts?limit=20&cursor=' + urllib.parse.quote(first['nextCursor']))
         assert len(second['items']) == 5 and second['nextCursor'] is None
@@ -56,6 +58,25 @@ def check_reporting(request, pair, create, edit, Relay, output):
         chosen = notes[0]['path']; review = preview(engine, chosen)
         resolve(engine, chosen, review['fingerprint'], 'server'); sync(engine)
         assert not any(item['path'] == chosen for item in request('/sync-devices/' + device + '/conflicts?limit=100')['items'])
+        history = request('/sync-devices/' + device + '/conflicts?state=resolved&limit=1')
+        assert len(history['items']) == 1 and history['items'][0]['resolution'] == 'server'
+        # A later conflict at the same path must not erase its previous resolution record.
+        (root / chosen).write_bytes(b'# second local conflict\n')
+        saved = request('/notes/' + notes[0]['id'])
+        edit(saved, '# second remote conflict\n')
+        assert engine.cycle()['conflicts']
+        sync(engine)
+        review = preview(engine, chosen); resolve(engine, chosen, review['fingerprint'], 'server'); sync(engine)
+        history = request('/sync-devices/' + device + '/conflicts?state=resolved&limit=1')
+        assert history['nextCursor']
+        following = request('/sync-devices/' + device + '/conflicts?state=resolved&limit=1&cursor=' + urllib.parse.quote(history['nextCursor']))
+        assert following['items'][0]['path'] == chosen and following['items'][0]['revision'] != history['items'][0]['revision']
+        assert following['nextCursor'] is None
+        sync(engine, {**observed, 'conflicts': 24})
+        activity = request('/sync-devices/' + device + '/activity?limit=1')
+        assert activity['items'][0]['status']['conflicts'] == 24 and activity['nextCursor']
+        previous_activity = request('/sync-devices/' + device + '/activity?limit=1&cursor=' + activity['nextCursor'])
+        assert previous_activity['items'][0]['status']['conflicts'] == 25
         assert not request('/sync-devices/' + unknown_id + '/conflicts')['reported']
         (output / 'web-conflicts.json').write_text(json.dumps({'device': device, 'unknown': unknown_id,
             'name': '合并-reporting', 'unknownName': '合并-unreported', 'count': 24}), encoding='utf-8')

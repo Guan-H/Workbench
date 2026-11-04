@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from queue import Empty
 import tkinter as tk
@@ -57,6 +58,7 @@ PHASES = {
     'WATCHING': '本轮检查完成，正在监听本地变化', 'READY': '本轮检查完成，自动监听未开启',
     'OFFLINE': '连接中断，等待重试', 'ATTENTION': '有待处理项，自动同步已暂停', 'ERROR': '操作失败，已暂停',
     'CONFIGURING': '正在停止原配置并切换，原文件与待上传内容保留…',
+    'STOPPED': '助手正在退出，监听已停止',
 }
 
 
@@ -86,8 +88,8 @@ class SyncApp:
         self.profile_label = tk.StringVar(value='正在读取配置…')
         self.page_label = tk.StringVar()
         window.title('私有空间 · 同步助手')
-        window.geometry('860x650')
-        window.minsize(720, 560)
+        window.geometry('860x710')
+        window.minsize(720, 620)
         window.protocol('WM_DELETE_WINDOW', self.close)
         style = ttk.Style(window)
         style.configure('Heading.TLabel', font=('Microsoft YaHei UI', 16, 'bold'))
@@ -99,7 +101,7 @@ class SyncApp:
         ttk.Label(body, text='同步助手', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 12))
         self.configure_button = ttk.Button(body, text='更换服务器 / 目录', command=self.manage_profiles)
         self.configure_button.grid(row=0, column=2, sticky='e', pady=(0, 12))
-        ttk.Label(body, text='可选择新目录或已有目录。已有内容先预检并确认，同名不同内容保留双方；完整冲突解决仍在开发。',
+        ttk.Label(body, text='已有内容先预检并确认，同名不同内容保留双方。出现冲突后，在助手中对比版本并手动处理。',
                   wraplength=780).grid(row=1, column=0, columnspan=3, sticky='ew', pady=(0, 16))
         ttk.Label(body, text='服务器地址').grid(row=2, column=0, sticky='w', padx=(0, 12))
         self.url_entry = ttk.Entry(body, textvariable=self.url)
@@ -127,6 +129,17 @@ class SyncApp:
         self.reconcile_button.grid(row=14, column=0, sticky='w', pady=(8, 0))
         self.conflict_button = ttk.Button(body, text='处理选中冲突', command=self.open_conflict)
         self.conflict_button.grid(row=14, column=1, columnspan=2, sticky='w', pady=(8, 0))
+        self.startup_enabled = tk.BooleanVar(value=False)
+        self.startup_button = ttk.Checkbutton(body, text='登录 Windows 时打开助手（保持暂停）', variable=self.startup_enabled, command=self.change_startup)
+        self.startup_button.grid(row=15, column=0, columnspan=3, sticky='w', pady=(8, 0))
+        if getattr(sys, 'frozen', False):
+            try:
+                from .startup import enabled
+                self.startup_enabled.set(enabled(Path(sys.executable), self.state))
+            except (OSError, ValueError) as error:
+                self.status.set('无法读取开机启动设置：' + str(error))
+        else:
+            self.startup_button.configure(state='disabled')
         ttk.Label(body, textvariable=self.status, style='Status.TLabel', wraplength=780).grid(row=6, column=0, columnspan=3, sticky='ew', pady=(0, 8))
         ttk.Label(body, textvariable=self.summary, wraplength=780).grid(row=7, column=0, columnspan=3, sticky='ew', pady=(0, 12))
         ttk.Label(body, text='待处理项与错误').grid(row=8, column=0, columnspan=3, sticky='w')
@@ -164,6 +177,16 @@ class SyncApp:
         selected = filedialog.askdirectory(parent=self.window, title='选择同步目录（已有内容会先预检）', mustexist=True)
         if selected:
             self.directory.set(selected)
+
+    def change_startup(self):
+        from .startup import set_enabled
+        wanted = self.startup_enabled.get()
+        try:
+            set_enabled(Path(sys.executable), self.state, wanted)
+            self.status.set('已启用登录启动；助手打开后保持暂停，需手动开始监听。' if wanted else '已关闭登录启动。')
+        except (OSError, ValueError) as error:
+            self.startup_enabled.set(not wanted)
+            self.status.set('未更改开机启动设置：' + str(error))
 
     def pair(self):
         if not self.url.get().strip() or not self.directory.get().strip() or not self.code.get().strip():
@@ -238,6 +261,9 @@ class SyncApp:
         try:
             while True:
                 event = self.worker.events.get_nowait()
+                if 'draftSaved' in event:
+                    self.status.set('合并草稿已保存到本机，尚未提交服务器；重启助手后可继续编辑。')
+                    continue
                 self.snapshot = event
                 self.phase = event['phase']
                 if event.get('configurationFinished'):
@@ -491,6 +517,9 @@ class SyncApp:
 
     def close(self):
         if not self.closing:
+            if self.conflict_dialog and getattr(self.conflict_dialog, 'editor_window', None) and self.conflict_dialog.editor_window.winfo_exists():
+                if not self.conflict_dialog.close_editor():
+                    return
             self.closing = True
             self.status.set('正在安全退出，等待当前文件操作完成；队列和草稿不会清除。')
             self.update_controls(self.snapshot.get('root') is not None, True)
