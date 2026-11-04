@@ -30,5 +30,7 @@ public interface NoteService {
     java.util.List<String> validateSyncFolders(java.util.List<String> folders);
     byte[] syncRead(String id, String version);
     NoteResponse syncWrite(SyncWriteRequest request, String operation, String device);
+    /** Explicit version-checked publication of the user's conflict choice. */
+    NoteResponse syncResolve(SyncWriteRequest request, String operation, String device);
     NoteResponse syncRename(com.privatespace.modules.note.dto.SyncRenameRequest request, String operation, String device);
 }

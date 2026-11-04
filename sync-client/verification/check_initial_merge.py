@@ -84,7 +84,7 @@ def table(state, name):
 
 class CommitRelay:
     """Pause delivery only after the real backend has committed an upload."""
-    def __init__(self):
+    def __init__(self, hold_path='/api/v1/sync/files', hold_after=2):
         relay = self
         self.committed = threading.Event(); self.release = threading.Event()
         self.hold = True; self.posts = 0
@@ -102,9 +102,9 @@ class CommitRelay:
                     actual = error
                 with actual:
                     body = actual.read()
-                    if self.command == 'POST' and self.path == '/api/v1/sync/files':
+                    if self.command == 'POST' and self.path == hold_path:
                         relay.posts += 1
-                        if relay.hold and relay.posts == 2 and actual.status == 200:
+                        if relay.hold and relay.posts == hold_after and actual.status == 200:
                             relay.committed.set(); relay.release.wait(20)
                     try:
                         self.send_response(actual.status)
@@ -337,6 +337,8 @@ try:
     assert archived['baseline'] and not table(resume_state, 'queue')
     assert not any(row[0] == 'reconciliation_active' for row in table(resume_state, 'setting'))
     checks.append('a real server rejects the injected ahead cursor; stale approval is readonly; fresh Tk confirmation archives original tasks/baselines, restores a usable cursor, downloads the server move and retains ambiguous local bytes without recreating the old server path')
+    from check_conflicts import check_conflicts
+    checks.extend(check_conflicts(app, window, wait, request, pair, create, edit, upload, CommitRelay, output, published['path']))
     (output / 'initial-merge.json').write_text(json.dumps({'checks': checks, 'packagedExecutableRoundtrip': False,
         'nativeVisualManualReview': False}, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS: initial-merge', flush=True)

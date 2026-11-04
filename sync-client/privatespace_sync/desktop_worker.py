@@ -39,6 +39,15 @@ class ReconcilePreviewCommand:
 
 
 @dataclass(frozen=True)
+class ConflictCommand:
+    path: str
+    fingerprint: str | None = None
+    variant: str | None = None
+    merged: str | None = None
+    resume: str | None = None
+
+
+@dataclass(frozen=True)
 class ProfileCommand:
     identity: str | None = None
     name: str | None = None
@@ -52,7 +61,7 @@ class ExitCommand:
 class SyncWorker:
     def __init__(self, state: Path):
         self.state = state
-        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ReconcilePreviewCommand | ProfileCommand | ExitCommand] = Queue()
+        self.commands: Queue[PairCommand | RunCommand | PauseCommand | ReconcilePreviewCommand | ConflictCommand | ProfileCommand | ExitCommand] = Queue()
         self.events: Queue[dict] = Queue()
         self.pause_requested = threading.Event()
         self.stopped = threading.Event()
@@ -190,6 +199,20 @@ class SyncWorker:
                     if isinstance(command, PauseCommand):
                         self._stop_watcher()
                         self._publish('PAUSED' if self.engine else 'UNPAIRED')
+                    elif isinstance(command, ConflictCommand):
+                        from .conflicts import preview, resolve
+                        self._stop_watcher()
+                        if not self.engine:
+                            raise SyncError('PAIR_FIRST')
+                        self.pause_requested.clear()
+                        self._publish('RUNNING')
+                        if command.fingerprint or command.resume:
+                            self.last_result = resolve(self.engine, command.path, command.fingerprint,
+                                command.variant, command.merged, command.resume)
+                        else:
+                            self.last_result = {'status': 'CONFLICT_REVIEW', 'conflictPreview': preview(self.engine, command.path),
+                                                **self.engine.status()}
+                        self._publish('READY' if self.last_result['status'] == 'CONFLICT_RESOLVED' and not self.last_result.get('conflicts') else 'ATTENTION')
                     elif isinstance(command, ReconcilePreviewCommand):
                         from .reconciliation import preview, apply
                         self._stop_watcher()

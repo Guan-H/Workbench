@@ -20,5 +20,6 @@ public interface SyncDeviceService {
     com.privatespace.modules.note.dto.SyncChangePage changes(String deviceId, String scopeVersion, String after, String until, int limit);
     byte[] readFile(String deviceId, String scopeVersion, String id, String version);
     NoteResponse writeFile(String deviceId, String scopeVersion, SyncWriteRequest request, String operation);
+    NoteResponse resolveFile(String deviceId, String scopeVersion, SyncWriteRequest request, String operation);
     NoteResponse renameFile(String deviceId, String scopeVersion, com.privatespace.modules.note.dto.SyncRenameRequest request, String operation);
 }

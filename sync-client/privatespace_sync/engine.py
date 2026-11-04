@@ -90,6 +90,7 @@ class Engine:
             CREATE TABLE IF NOT EXISTS local_rename (id TEXT PRIMARY KEY, intent TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS remote_catalog (id TEXT PRIMARY KEY, metadata TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS reconciliation_archive (id TEXT PRIMARY KEY, created REAL NOT NULL, payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS conflict_resolution (id TEXT PRIMARY KEY, path TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL);
             """)
             cached_scope = self.db.execute("SELECT value FROM setting WHERE key = 'scope_policy'").fetchone()
             cached = json.loads(cached_scope[0]) if cached_scope else {}

@@ -140,6 +140,14 @@ public class SyncDeviceServiceImpl implements SyncDeviceService {
     }
 
     @Transactional
+    public NoteResponse resolveFile(String deviceId, String scopeVersion, SyncWriteRequest request, String operation) {
+        var device = current(deviceId);
+        checkVersion(device, scopeVersion);
+        checkPath(device, request.path(), false);
+        return notes.syncResolve(request, operation, deviceId);
+    }
+
+    @Transactional
     public NoteResponse renameFile(String deviceId, String scopeVersion,
             com.privatespace.modules.note.dto.SyncRenameRequest request, String operation) {
         var device = current(deviceId);

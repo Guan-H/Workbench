@@ -314,8 +314,18 @@ public class NoteServiceImpl implements NoteService {
 
     @Transactional
     public NoteResponse syncWrite(SyncWriteRequest request, String operation, String device) {
+        return syncWrite(request, operation, device, false);
+    }
+
+    @Transactional
+    public NoteResponse syncResolve(SyncWriteRequest request, String operation, String device) {
+        if (request.deleted()) throw new ApiException(400, "INVALID_REQUEST", "冲突解决仅发布用户明确选择的内容。");
+        return syncWrite(request, operation, device, true);
+    }
+
+    private NoteResponse syncWrite(SyncWriteRequest request, String operation, String device, boolean resolve) {
         mapper.lock();
-        String scope = "sync:" + UUID.fromString(device);
+        String scope = (resolve ? "sync-resolve:" : "sync:") + UUID.fromString(device);
         var previous = previous(operation, scope, request);
         if (previous != null) return previous;
         String path = validatePath(request.path());
@@ -323,7 +333,7 @@ public class NoteServiceImpl implements NoteService {
         if (current == null && (!"0".equals(request.baseVersion()) || request.deleted())) throw new ApiException(400, "INVALID_REQUEST", "新增文件不能携带旧版本或删除标记。");
         if (current != null) {
             expected(current, request.baseVersion());
-            if (current.deleted() || !current.path().equals(path) || "folder".equals(current.type())) throw new ApiException(409, "VERSION_CONFLICT", "文件路径或状态已变化，请重新对账。");
+            if (current.deleted() && !resolve || !current.path().equals(path) || "folder".equals(current.type())) throw new ApiException(409, "VERSION_CONFLICT", "文件路径或状态已变化，请重新对账。");
         } else if (mapper.byPath(path) != null) throw new ApiException(409, "PATH_CONFLICT", "路径已存在或位于回收站，未覆盖内容。");
         if (request.deleted()) {
             mapper.update(current.id(), current.version() + 1, current.objectId(), current.content(), current.size(), current.sha256(), true);
@@ -336,7 +346,7 @@ public class NoteServiceImpl implements NoteService {
         String type = current == null ? (path.toLowerCase(Locale.ROOT).endsWith(".md") ? "note" : "attachment") : current.type();
         if (bytes.length > ("note".equals(type) ? 1024 * 1024 : 50 * 1024 * 1024)) throw new ApiException(413, "FILE_TOO_LARGE", "同步文件超出限额。");
         String body = "note".equals(type) ? text(bytes) : null;
-        if (current != null && current.sha256().equals(request.sha256())) return remember(operation, scope, request, read(current.id(), false));
+        if (current != null && !current.deleted() && current.sha256().equals(request.sha256())) return remember(operation, scope, request, read(current.id(), false));
         // Parent creation and the file publication share the same notebook transaction.
         syncParents(path);
         var object = objects.write(bytes);

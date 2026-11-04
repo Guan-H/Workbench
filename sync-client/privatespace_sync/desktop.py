@@ -8,7 +8,7 @@ from queue import Empty
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-from .desktop_worker import PairCommand, ReconcilePreviewCommand, SyncWorker
+from .desktop_worker import ConflictCommand, PairCommand, ReconcilePreviewCommand, SyncWorker
 
 
 ERRORS = {
@@ -16,6 +16,8 @@ ERRORS = {
     'DIRECTORY_ALREADY_BOUND': '此目录已有同步绑定标记，请使用原配置；不能由其他配置接管。',
     'INITIAL_MERGE_CHANGED': '两端内容或同步范围已变化，原确认已失效；请重新查看合并预检。',
     'RECONCILIATION_CHANGED': '对账预检已变化，原确认失效；请重新查看当前对账预检。',
+    'CONFLICT_CHANGED': '文件或版本已变化，未采用旧选择；请刷新冲突版本，合并草稿保留在当前助手内存。',
+    'CONFLICT_NOT_FOUND': '此冲突已处理或不在当前范围，请刷新待处理列表。',
     'STATE_ALREADY_EXISTS': '此状态目录已有配对信息，请使用现有配置或指定另一个状态目录。',
     'STATE_IN_USE': '另一个助手或命令正在使用此状态目录，请先退出另一个进程。',
     'STATE_MUST_BE_SEPARATE': '同步目录和助手状态目录不能重叠。',
@@ -72,6 +74,8 @@ class SyncApp:
         self.item_page = 0
         self.deletion_dialog: tk.Toplevel | None = None
         self.merge_dialog: tk.Toplevel | None = None
+        self.conflict_dialog = None
+        self.conflict_draft = None
         self.url = tk.StringVar(value='http://127.0.0.1:8080')
         self.directory = tk.StringVar()
         self.code = tk.StringVar()
@@ -120,7 +124,9 @@ class SyncApp:
         for button in (self.start_button, self.pause_button, self.once_button, self.open_button, self.preview_button):
             button.pack(side='left', padx=(0, 8))
         self.reconcile_button = ttk.Button(body, text='重新对账', command=self.preview_reconciliation)
-        self.reconcile_button.grid(row=14, column=0, columnspan=3, sticky='w', pady=(8, 0))
+        self.reconcile_button.grid(row=14, column=0, sticky='w', pady=(8, 0))
+        self.conflict_button = ttk.Button(body, text='处理选中冲突', command=self.open_conflict)
+        self.conflict_button.grid(row=14, column=1, columnspan=2, sticky='w', pady=(8, 0))
         ttk.Label(body, textvariable=self.status, style='Status.TLabel', wraplength=780).grid(row=6, column=0, columnspan=3, sticky='ew', pady=(0, 8))
         ttk.Label(body, textvariable=self.summary, wraplength=780).grid(row=7, column=0, columnspan=3, sticky='ew', pady=(0, 12))
         ttk.Label(body, text='待处理项与错误').grid(row=8, column=0, columnspan=3, sticky='w')
@@ -133,6 +139,7 @@ class SyncApp:
         self.table.grid(row=0, column=0, sticky='nsew')
         scroll = ttk.Scrollbar(listing, orient='vertical', command=self.table.yview)
         scroll.grid(row=0, column=1, sticky='ns'); self.table.configure(yscrollcommand=scroll.set)
+        self.table.bind('<<TreeviewSelect>>', lambda _: self.update_controls(self.snapshot.get('root') is not None, self.phase in ('RUNNING', 'PAIRING', 'CONFIGURING')))
         pager = ttk.Frame(body)
         pager.grid(row=10, column=0, columnspan=3, sticky='e')
         self.previous_button = ttk.Button(pager, text='上一页', command=lambda: self.turn_page(-1))
@@ -184,6 +191,10 @@ class SyncApp:
 
     def update_controls(self, paired: bool, busy: bool):
         busy = busy or self.reconfiguring
+        selected = self.table.selection()
+        path = self.table.item(selected[0], 'values')[0] if selected else None
+        eligible = any(item['path'] == path for item in self.snapshot.get('result', {}).get('conflicts', []))
+        self.conflict_button.configure(state='normal' if eligible and paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.reconcile_button.configure(state='normal' if paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.configure_button.configure(state='disabled' if busy or self.closing or self.worker.stopped.is_set() or not self.snapshot.get('profiles') else 'normal')
         for field in (self.url_entry, self.directory_entry, self.code_entry, self.choose_button, self.pair_button):
@@ -206,6 +217,12 @@ class SyncApp:
     def preview_reconciliation(self):
         self.update_controls(True, True)
         self.worker.commands.put(ReconcilePreviewCommand())
+
+    def open_conflict(self):
+        selected = self.table.selection()
+        if selected:
+            self.update_controls(True, True)
+            self.worker.commands.put(ConflictCommand(self.table.item(selected[0], 'values')[0]))
 
     def render_items(self):
         pages = max(1, (len(self.items) + 19) // 20)
@@ -242,6 +259,13 @@ class SyncApp:
                     text = '已切换到“' + active['name'] + '”；' + text + '。需要手动开始同步。'
                 self.status.set(text)
                 result = event['result']
+                if result.get('status') == 'CONFLICT_REVIEW' and self.phase == 'ATTENTION' and not event['code']:
+                    from .conflict_dialog import ConflictDialog
+                    if not self.conflict_dialog or not self.conflict_dialog.window.winfo_exists():
+                        self.conflict_dialog = ConflictDialog(self, result['conflictPreview'])
+                if result.get('status') == 'CONFLICT_RESOLVED' and not event['code']:
+                    self.conflict_draft = None
+                    self.status.set('此冲突已处理；原始副本、归档和回收副本保留，自动监听未开启。')
                 if self.phase == 'ATTENTION' and result.get('reconciliationPreview'):
                     self.status.set('重新对账预检完成：点击“查看对账预检”核对并确认。确认前保留文件和旧任务；有歧义的删除不执行。' +
                                     (' 内容已变化，请核对新预检。' if event['code'] else ''))

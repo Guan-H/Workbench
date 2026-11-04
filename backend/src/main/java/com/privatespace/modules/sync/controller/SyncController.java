@@ -53,6 +53,12 @@ public class SyncController {
         return devices.writeFile(device.getName(), scopeVersion, request, operation);
     }
 
+    @PostMapping("/conflict-files")
+    public NoteResponse resolve(@Valid @RequestBody SyncWriteRequest request, @RequestHeader("Idempotency-Key") String operation, Principal device,
+            @RequestHeader(value = "X-Sync-Scope-Version", required = false) String scopeVersion) {
+        return devices.resolveFile(device.getName(), scopeVersion, request, operation);
+    }
+
     @PostMapping("/file-renames")
     public NoteResponse rename(@Valid @RequestBody com.privatespace.modules.note.dto.SyncRenameRequest request,
             @RequestHeader("Idempotency-Key") String operation, Principal device,
