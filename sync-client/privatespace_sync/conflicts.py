@@ -13,6 +13,9 @@ def state(file):
 
 
 def preview(engine, path):
+    from . import rename_conflicts
+    if rename_conflicts.find(engine, path):
+        return rename_conflicts.preview(engine, path)
     row = engine.db.execute('SELECT * FROM conflict WHERE path=?', (path,)).fetchone()
     if not row:
         raise SyncError('CONFLICT_NOT_FOUND')
@@ -63,7 +66,8 @@ def preview(engine, path):
 
 
 def save_draft(engine, path, content):
-    if not engine.db.execute('SELECT 1 FROM conflict WHERE path=?', (path,)).fetchone():
+    from .rename_conflicts import find
+    if not engine.db.execute('SELECT 1 FROM conflict WHERE path=?', (path,)).fetchone() and not find(engine, path):
         raise SyncError('CONFLICT_NOT_FOUND')
     if not path.lower().endswith('.md') or len(content.encode('utf-8')) > 1024 * 1024:
         raise SyncError('FILE_TOO_LARGE')
@@ -80,6 +84,7 @@ def resolve(engine, path, fingerprint, variant=None, merged=None, resume=None):
         operation, plan = row['id'], json.loads(row['payload'])
     else:
         review = preview(engine, path)
+        path = review['path']
         if review['fingerprint'] != fingerprint:
             raise SyncError('CONFLICT_CHANGED')
         if merged is not None:
@@ -107,6 +112,8 @@ def resolve(engine, path, fingerprint, variant=None, merged=None, resume=None):
             'remote': state(file), 'localSha256': review['localSha256'], 'scopeVersion': review['scopeVersion'],
             'oldQueue': review['queue'], 'conflict': review['conflict'],
             'choice': 'merged' if merged is not None else variant.partition(':')[0]}
+        if review.get('rename'):
+            plan['rename'] = review['rename']
         with engine.db:
             engine.db.execute("UPDATE conflict_resolution SET status='held' WHERE path=? AND status='pending'", (path,))
             engine.db.execute("INSERT INTO conflict_resolution VALUES (?,?,?,'pending')", (operation, path, json.dumps(plan)))
@@ -119,6 +126,9 @@ def resolve(engine, path, fingerprint, variant=None, merged=None, resume=None):
 
 
 def execute(engine, path, operation, plan):
+    if plan.get('rename'):
+        from .rename_conflicts import execute as execute_rename
+        return execute_rename(engine, path, operation, plan)
     # A resolution can be resumed only for the same chosen payload and operation.
     # Never turn a 409 into an unconditional retry with a newer base version.
     engine.snapshot()

@@ -223,6 +223,7 @@ class SyncApp:
         selected = self.table.selection()
         path = self.table.item(selected[0], 'values')[0] if selected else None
         eligible = any(item['path'] == path for item in self.snapshot.get('result', {}).get('conflicts', []))
+        eligible = eligible or any(item.get('path') == path and item.get('code') in ('RENAME_MODIFY_CONFLICT', 'RENAME_PATH_CONFLICT', 'RENAME_IDENTITY_UNAVAILABLE', 'LOCAL_CHANGED_BEFORE_RENAME') for item in self.snapshot.get('result', {}).get('issues', []))
         self.conflict_button.configure(state='normal' if eligible and paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.reconcile_button.configure(state='normal' if paired and not busy and not self.closing and not self.worker.stopped.is_set() else 'disabled')
         self.configure_button.configure(state='disabled' if busy or self.closing or self.worker.stopped.is_set() or not self.snapshot.get('profiles') else 'normal')

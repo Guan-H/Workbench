@@ -339,6 +339,8 @@ try:
     checks.append('a real server rejects the injected ahead cursor; stale approval is readonly; fresh Tk confirmation archives original tasks/baselines, restores a usable cursor, downloads the server move and retains ambiguous local bytes without recreating the old server path')
     from check_conflicts import check_conflicts
     checks.extend(check_conflicts(app, window, wait, request, pair, create, edit, upload, CommitRelay, output, published['path']))
+    from check_rename_choices import check_rename_choices
+    checks.extend(check_rename_choices(app, window, wait, request, pair, create, edit, CommitRelay, output))
     if os.environ.get('CHECK_CONFLICT_REPORT') == '1':
         from check_conflict_reporting import check_reporting
         checks.extend(check_reporting(request, pair, create, edit, CommitRelay, output))

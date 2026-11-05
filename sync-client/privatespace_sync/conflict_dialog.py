@@ -15,6 +15,12 @@ class ConflictDialog:
         dialog.geometry('820x650'); dialog.minsize(660, 520)
         frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
         ttk.Label(frame, text=review['path'], wraplength=760).pack(anchor='w')
+        if review.get('rename'):
+            ttk.Label(frame, text='原文件名：' + review['rename']['intent']['source'] + '\n处理后文件名：' + review['path'] + '\n由你选择采用哪份内容；助手会备份本地原文件，再完成改名和同步。', wraplength=760).pack(anchor='w', pady=6)
+            choices = ttk.Frame(frame); choices.pack(fill='x', pady=6)
+            self.use_server = ttk.Button(choices, text='以服务器为准', command=lambda: self.submit(variant='server')); self.use_server.pack(side='left')
+            self.use_local = ttk.Button(choices, text='以本地内容为准', command=lambda: self.submit(variant='local'),
+                state='normal' if any(item['id'] == 'local' for item in review['variants']) else 'disabled'); self.use_local.pack(side='left', padx=8)
         ttk.Label(frame, text='先查看版本，再明确采用。替换或删除原文件前会保存本机回收副本，原冲突副本和归档保留。采用本地版本可恢复服务器已删除的文件；已删除的父目录须先在网页恢复。', wraplength=760).pack(anchor='w', pady=10)
         listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
         self.table = ttk.Treeview(listing, columns=('label', 'size', 'sha'), show='headings', height=6)
