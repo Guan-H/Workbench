@@ -89,7 +89,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   }
   const open = async (useDrop = false) => {
     await page.getByRole('button', { name: '导入/导出', exact: true }).click()
-    await page.getByRole('button', { name: '批量导入目录', exact: true }).click()
+    await page.getByRole('menuitem', { name: '批量导入目录', exact: true }).click()
     await dialog.getByRole('button', { name: '选择目录', exact: true }).waitFor({ state: 'visible' })
     await importTarget('')
     if (useDrop) {
@@ -119,17 +119,17 @@ export async function checkNoteImports(page, request, context, origin, output) {
   await connection.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 512 * 1024 })
   await page.evaluate(() => {
     window.uploadEvidence = []
-    window.uploadObserver = new MutationObserver(() => document.querySelectorAll('progress[aria-label="总上传进度"]').forEach(element => {
-      if (element.hasAttribute('value')) window.uploadEvidence.push(Number(element.getAttribute('value')))
+    window.uploadObserver = new MutationObserver(() => document.querySelectorAll('[role="progressbar"][aria-label="总上传进度"]').forEach(element => {
+      if (element.hasAttribute('aria-valuenow')) window.uploadEvidence.push(Number(element.getAttribute('aria-valuenow')))
     }))
-    window.uploadObserver.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['value'] })
+    window.uploadObserver.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-valuenow'] })
   })
   await open()
   const evidence = await page.evaluate(() => { window.uploadObserver.disconnect(); return window.uploadEvidence })
   assert.ok(evidence.some(value => value > 0 && value < 100), 'real throttled batch upload reports intermediate byte progress')
   await connection.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 })
   await connection.detach()
-  await page.locator('.modal-backdrop').click({ position: { x: 2, y: 2 } })
+  await page.locator('.ant-modal-wrap').click({ position: { x: 2, y: 2 } })
   assert.equal(await dialog.isVisible(), true, 'backdrop click does not dismiss import')
   assert.equal((await catalog()).length, before)
   for (const [width, height] of [[1440, 960], [375, 812], [812, 375]]) {
@@ -233,7 +233,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   await anonymous.close()
 
   await page.getByRole('button', { name: '导入/导出', exact: true }).click()
-  await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
+  await page.getByRole('menuitem', { name: '导出笔记 ZIP', exact: true }).click()
   const selectionDialog = page.getByRole('dialog', { name: '导出笔记', exact: true })
   assert.equal(await selectionDialog.locator('input[type=checkbox]:checked').count(), 0, 'export opens with nothing selected')
   assert.equal(await selectionDialog.getByRole('button', { name: '确认导出', exact: true }).isDisabled(), true)
@@ -245,7 +245,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   const selectedNames = JSON.parse(execFileSync('python', ['-c', 'import zipfile,json,sys; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist(),ensure_ascii=True))', selectedArchive], { encoding: 'utf8' }))
   assert.deepEqual(selectedNames.sort(), ['批量目录/assets/可视图.png', '批量目录/中文, 特殊.md'].sort(), 'selected note exports only its referenced attachment')
   await page.getByRole('button', { name: '导入/导出', exact: true }).click()
-  await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
+  await page.getByRole('menuitem', { name: '导出笔记 ZIP', exact: true }).click()
   await selectionDialog.getByRole('button', { name: '展开目录：批量目录', exact: true }).click()
   await selectionDialog.getByRole('checkbox', { name: '目录：批量目录', exact: true }).check()
   await selectionDialog.getByRole('checkbox', { name: '批量目录/中文, 特殊.md', exact: true }).check()
@@ -260,7 +260,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   // Download the actual ZIP through the UI, inspect with the standard ZIP reader and import it back.
   const downloaded = page.waitForEvent('download')
   await page.getByRole('button', { name: '导入/导出', exact: true }).click()
-  await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
+  await page.getByRole('menuitem', { name: '导出笔记 ZIP', exact: true }).click()
   await page.getByRole('dialog', { name: '导出笔记', exact: true }).getByRole('button', { name: '全选', exact: true }).click()
   await page.getByRole('dialog', { name: '导出笔记', exact: true }).getByRole('button', { name: '确认导出', exact: true }).click()
   const downloadFile = await downloaded
@@ -285,7 +285,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   await request('/notes', 'POST', { path: 'ZIP往返', type: 'folder', content: '' })
   await page.getByRole('button', { name: '刷新目录', exact: true }).click()
   await page.getByRole('button', { name: '导入/导出', exact: true }).click()
-  await page.getByRole('button', { name: '批量导入目录', exact: true }).click()
+  await page.getByRole('menuitem', { name: '批量导入目录', exact: true }).click()
   await importTarget('ZIP往返')
   await page.getByLabel('选择导入目录', { exact: true }).setInputFiles(fileURLToPath(new URL('zip-expanded/批量目录/', output)))
   await dialog.getByRole('button', { name: '重新预检', exact: true }).click()

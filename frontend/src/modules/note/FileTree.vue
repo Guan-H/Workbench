@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { Button as AButton, Tree as ATree } from 'ant-design-vue'
+
 import { computed, ref, watch } from 'vue'
 import { ChevronRight, ChevronDown, Folder, FileText, Paperclip } from 'lucide-vue-next'
 import type { Note } from '../../shared/api/client'
+import { fileNodes } from './file-tree'
 
-const props = withDefaults(defineProps<{ items: Note[]; parent?: string; selected?: string; revealPath?: string; depth?: number }>(), { parent: '', depth: 0, selected: '', revealPath: '' })
+const props = withDefaults(defineProps<{ items: Note[]; selected?: string; revealPath?: string }>(), { selected: '', revealPath: '' })
 const emit = defineEmits<{ open: [note: Note]; folder: [path: string]; context: [value: { note: Note; x: number; y: number; anchor: HTMLElement }]; move: [id: string, destination: string] }>()
 const expanded = ref(new Set<string>())
 const dropTarget = ref('')
@@ -34,27 +37,25 @@ function drop(event: DragEvent, note: Note) {
   event.preventDefault(); event.stopPropagation(); dropTarget.value = ''; expanded.value.add(note.id)
   emit('move', event.dataTransfer.getData('application/x-private-space-file'), note.path)
 }
-const children = computed(() => props.items.filter((item) => item.path.split('/').slice(0, -1).join('/') === props.parent)
-  .sort((a, b) => Number(b.type === 'folder') - Number(a.type === 'folder') || a.path.localeCompare(b.path, 'zh-CN')))
+const nodes = computed(() => fileNodes(props.items))
 function toggle(id: string) { if (expanded.value.has(id)) expanded.value.delete(id); else expanded.value.add(id) }
 watch(() => props.revealPath, () => {
-  for (const note of children.value) {
+  for (const note of props.items) {
     if (note.type === 'folder' && (props.revealPath === note.path || props.revealPath.startsWith(note.path + '/'))) expanded.value.add(note.id)
   }
 }, { immediate: true })
 </script>
 <template>
-  <ul class="file-tree">
-    <li v-for="note in children" :key="note.id">
-      <div class="tree-item" :style="{ paddingLeft: `${6 + depth * 16}px` }">
-        <button v-if="note.type === 'folder'" class="tree-toggle" :aria-label="`${expanded.has(note.id) ? '收起' : '展开'}文件夹：${note.path}`" :title="`${expanded.has(note.id) ? '收起' : '展开'}文件夹：${note.path}`" :aria-expanded="expanded.has(note.id)" @click="toggle(note.id)" @contextmenu="context($event, note)" @keydown="contextKey($event, note)"><component :is="expanded.has(note.id) ? ChevronDown : ChevronRight" :size="14" /></button>
-        <span v-else class="tree-toggle-space" />
-      <button class="tree-row" :class="{ selected: selected === note.id, 'drop-target': dropTarget === note.id }" @click="note.type === 'folder' ? emit('folder', note.path) : emit('open', note)" @dblclick="note.type === 'folder' && toggle(note.id)" @contextmenu="context($event, note)" @keydown="contextKey($event, note)" draggable="true" @dragstart="drag($event, note)" @dragover="dragOver($event, note)" @drop="drop($event, note)" @dragleave="dropTarget = ''" @dragend="dropTarget = ''" :data-file-id="note.id" :data-file-path="note.path" :title="note.type === 'folder' ? `${note.path}（双击展开或收起）` : note.path" :aria-pressed="selected === note.id" :aria-expanded="note.type === 'folder' ? expanded.has(note.id) : undefined" aria-haspopup="menu">
-        <component :is="note.type === 'folder' ? Folder : note.type === 'note' ? FileText : Paperclip" :size="16" />
-        <span>{{ note.path.split('/').at(-1) }}</span>
-      </button>
-      </div>
-      <FileTree v-if="note.type === 'folder' && expanded.has(note.id)" :items="items" :parent="note.path" :depth="depth + 1" :selected="selected" :reveal-path="revealPath" @open="emit('open', $event)" @folder="emit('folder', $event)" @context="emit('context', $event)" @move="(id, destination) => emit('move', id, destination)" />
-    </li>
-  </ul>
+  <ATree :expanded-keys="[...expanded]" :tree-data="nodes" :selectable="false" block-node class="workspace-tree" @expand="keys => expanded = new Set(keys.map(String))">
+    <template #switcherIcon="{ dataRef: node }">
+      <AButton type="text" class="tree-toggle" :aria-label="`${expanded.has(node.key) ? '收起' : '展开'}文件夹：${node.item.path}`" :title="`${expanded.has(node.key) ? '收起' : '展开'}文件夹：${node.item.path}`" :aria-expanded="expanded.has(node.key)" @click.stop="toggle(node.key)" @contextmenu="context($event, node.item)" @keydown="contextKey($event, node.item)"><component :is="expanded.has(node.key) ? ChevronDown : ChevronRight" :size="14" /></AButton>
+    </template>
+    <template #title="{ item: note }">
+      <AButton type="text" class="tree-row" :class="{ selected: selected === note.id, 'drop-target': dropTarget === note.id }" :data-file-id="note.id" :data-file-path="note.path" :title="note.type === 'folder' ? `${note.path}（双击展开或收起）` : note.path" :aria-pressed="selected === note.id" :aria-expanded="note.type === 'folder' ? expanded.has(note.id) : undefined" aria-haspopup="menu"
+        @click.stop="note.type === 'folder' ? emit('folder', note.path) : emit('open', note)" @dblclick.stop="note.type === 'folder' && toggle(note.id)" @contextmenu="context($event, note)" @keydown="contextKey($event, note)"
+        draggable="true" @dragstart="drag($event, note)" @dragover="dragOver($event, note)" @drop="drop($event, note)" @dragleave="dropTarget = ''" @dragend="dropTarget = ''">
+        <component :is="note.type === 'folder' ? Folder : note.type === 'note' ? FileText : Paperclip" :size="16" /><span>{{ note.path.split('/').at(-1) }}</span>
+      </AButton>
+    </template>
+  </ATree>
 </template>

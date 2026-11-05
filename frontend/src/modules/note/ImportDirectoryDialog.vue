@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { Button as AButton } from 'ant-design-vue'
+import AppDialog from '../../shared/AppDialog.vue'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
@@ -160,14 +163,14 @@ onMounted(async () => {
 onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (previousFocus?.isConnected) previousFocus.focus() })
 </script>
 <template>
-  <div class="modal-backdrop">
-    <section ref="dialog" class="modal wide-modal import-dialog" role="dialog" aria-modal="true" aria-label="批量导入目录" @keydown="key">
-      <header><h2><FolderInput :size="19" aria-hidden="true" />批量导入目录</h2><button class="icon-button" title="关闭对话框" aria-label="关闭对话框" :disabled="busy || scanning" @click="close"><X :size="19" /></button></header>
+  <AppDialog label="批量导入目录" wide>
+    <section ref="dialog" class="modal wide-modal import-dialog"    @keydown="key">
+      <header><h2><FolderInput :size="19" aria-hidden="true" />批量导入目录</h2><AButton type="text" class="icon-button" title="关闭对话框" aria-label="关闭对话框" :disabled="busy || scanning" @click="close"><X :size="19" /></AButton></header>
       <div class="import-body">
         <template v-if="!result">
           <p class="field-help">选择 Markdown 目录及附件，保留所选目录名称和内部层级。已有目录可以合并，同名文件不会覆盖；发现问题时整批暂停。当前不导入空目录；以 . 开头的目录默认排除。</p>
           <label for="import-target">导入到</label><DirectoryPicker id="import-target" v-model="target" :items="items" :disabled="busy || scanning || uncertain" />
-          <div class="import-pickers"><button :disabled="busy || scanning || uncertain || !limits" @click="directoryInput?.click()"><FolderInput :size="16" aria-hidden="true" />选择目录</button><button :disabled="busy || scanning || uncertain || !limits" @click="filesInput?.click()"><Upload :size="16" aria-hidden="true" />选择多个文件</button></div>
+          <div class="import-pickers"><AButton :disabled="busy || scanning || uncertain || !limits" @click="directoryInput?.click()"><FolderInput :size="16" aria-hidden="true" />选择目录</AButton><AButton :disabled="busy || scanning || uncertain || !limits" @click="filesInput?.click()"><Upload :size="16" aria-hidden="true" />选择多个文件</AButton></div>
           <div class="directory-dropzone" :class="{ 'drag-active': dragging, 'drop-disabled': busy || scanning || uncertain }" role="region" aria-label="拖入目录" :aria-busy="scanning" @dragover.prevent.stop="dragging = !busy && !scanning && !uncertain" @dragleave.prevent="dragging = false" @drop.prevent.stop="dropped">
             <FolderInput :size="26" aria-hidden="true" />
             <strong>{{ scanning ? '正在读取目录…' : '将本机文件夹拖到这里' }}</strong>
@@ -191,8 +194,8 @@ onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (prev
         </template>
         <div v-else class="import-success" role="status" tabindex="0"><CheckCircle2 :size="30" aria-hidden="true" /><h3>导入成功</h3><p>服务器已确认保存 {{ result.filesCreated }} 个文件，新建 {{ result.foldersCreated }} 个目录，共 {{ size(result.totalBytes) }}。</p><p class="field-help">关闭后可在文件树中展开目录查看。</p></div>
       </div>
-      <footer><button :disabled="busy || scanning" @click="close">{{ result ? '完成' : '取消' }}</button><template v-if="!result"><button :disabled="busy || scanning || uncertain || !limits || !files.length || !!problems.length" @click="inspect">重新预检</button><button v-if="preview?.canImport" class="primary" :disabled="busy || scanning" @click="commit">{{ uncertain ? '重试确认' : '确认导入' }}</button></template></footer>
+      <footer><AButton :disabled="busy || scanning" @click="close">{{ result ? '完成' : '取消' }}</AButton><template v-if="!result"><AButton :disabled="busy || scanning || uncertain || !limits || !files.length || !!problems.length" @click="inspect">重新预检</AButton><AButton type="primary" v-if="preview?.canImport" class="primary" :disabled="busy || scanning" @click="commit">{{ uncertain ? '重试确认' : '确认导入' }}</AButton></template></footer>
     </section>
     <ConfirmDialog v-if="closing" title="关闭导入" message="导入结果尚未确认，关闭后请先刷新目录核对，不要直接重新导入。仍要关闭吗？" confirm-label="关闭导入" @answer="value => { closing = false; if (value) emit('close') }" />
-  </div>
+  </AppDialog>
 </template>

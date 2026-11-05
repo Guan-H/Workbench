@@ -12,6 +12,22 @@ describe('MarkdownPreview DOM updates', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
+  it.each(['\n', '\r\n'])('preserves ordinary line breaks in a paragraph (%j)', newline => {
+    const wrapper = mount(PreviewHost, { props: { source: '# 换行\n\n' + ['asdasd', 'asdasd', 'asdasd'].join(newline), path: '换行.md' } })
+    expect(wrapper.get('p').findAll('br')).toHaveLength(2)
+    expect(wrapper.get('p').element.innerHTML).toMatch(/asdasd<br>\s*asdasd<br>\s*asdasd/)
+    wrapper.unmount()
+  })
+
+  it('keeps blank-line paragraphs, explicit breaks and code-block newlines distinct', () => {
+    const wrapper = mount(PreviewHost, { props: { source: '# 段落\n\n第一段\n\n第二段  \n下一行\n\n```text\n代码一\n代码二\n```', path: '段落.md' } })
+    expect(wrapper.findAll('p')).toHaveLength(2)
+    expect(wrapper.findAll('br')).toHaveLength(1)
+    expect(wrapper.get('pre code').text()).toContain('代码一\n代码二')
+    expect(wrapper.get('pre').findAll('br')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
   it('retains an image when surrounding text changes or paragraphs are inserted', async () => {
     const wrapper = mount(PreviewHost, { props: { source: '# 标题\n\n说明 ![图](<图片 1.png>)\n', path: '目录/笔记.md' } })
     const image = wrapper.get('img').element

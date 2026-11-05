@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { Button as AButton, Input as AInput, Select as ASelect, SelectOption as ASelectOption } from 'ant-design-vue'
+import AppDialog from '../../shared/AppDialog.vue'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, FolderInput, Pencil } from 'lucide-vue-next'
 import { api, write, ApiError, type Note, type MovePreview } from '../../shared/api/client'
@@ -56,13 +59,13 @@ onMounted(async () => { await nextTick(); (dialog.value?.querySelector<HTMLEleme
 onBeforeUnmount(() => { if (previousFocus?.isConnected) previousFocus.focus(); else document.querySelector<HTMLElement>('[aria-label="刷新目录"]')?.focus() })
 </script>
 <template>
-  <div class="modal-backdrop">
-    <section ref="dialog" class="modal wide-modal move-dialog" role="dialog" aria-modal="true" :aria-label="mode === 'rename' ? '重命名文件' : '移动文件'" @keydown="key">
-      <header><h2><component :is="mode === 'rename' ? Pencil : FolderInput" :size="18" />{{ mode === 'rename' ? '重命名' : '移动到目录' }}</h2><button class="icon-button" title="关闭对话框" aria-label="关闭对话框" :disabled="busy" @click="close"><X :size="18" /></button></header>
+  <AppDialog :label="mode === 'rename' ? '重命名文件' : '移动文件'" wide>
+    <section ref="dialog" class="modal wide-modal move-dialog"    @keydown="key">
+      <header><h2><component :is="mode === 'rename' ? Pencil : FolderInput" :size="18" />{{ mode === 'rename' ? '重命名' : '移动到目录' }}</h2><AButton type="text" class="icon-button" title="关闭对话框" aria-label="关闭对话框" :disabled="busy" @click="close"><X :size="18" /></AButton></header>
       <form @submit.prevent="inspect" class="move-form">
         <p class="move-path">原路径：{{ note.path }}</p>
-        <template v-if="mode === 'rename'"><label for="move-name">新名称</label><input id="move-name" v-model="name" maxlength="240" required :disabled="busy" /></template>
-        <template v-else><label for="move-folder">目标目录</label><select id="move-folder" v-model="folder" :disabled="busy"><option value="">根目录 /</option><option v-for="item in destinations" :key="item.id" :value="item.path">{{ item.path }}</option></select></template>
+        <template v-if="mode === 'rename'"><label for="move-name">新名称</label><AInput id="move-name" v-model:value="name" :maxlength="240" required :disabled="busy" /></template>
+        <template v-else><label for="move-folder">目标目录</label><ASelect id="move-folder" v-model:value="folder" :disabled="busy"><ASelectOption value="">根目录 /</ASelectOption><ASelectOption v-for="item in destinations" :key="item.id" :value="item.path">{{ item.path }}</ASelectOption></ASelect></template>
         <p class="field-help">目标：{{ target }}。同名内容不会被覆盖；确认前会预览目录和标准相对链接的变化。</p>
         <p v-if="error" class="error-message" role="alert">{{ error }}</p>
         <div v-if="preview" class="move-preview" tabindex="0">
@@ -71,8 +74,8 @@ onBeforeUnmount(() => { if (previousFocus?.isConnected) previousFocus.focus(); e
           <template v-if="preview.warnings.length"><h3>需要手动检查（不会自动改写）</h3><ul class="move-warnings"><li v-for="(warning, index) in preview.warnings" :key="index">{{ warning }}</li></ul></template>
           <p v-if="blockedDrafts.length" class="error-message">以下笔记有本机草稿，请先打开并保存后再操作：{{ blockedDrafts.map(change => change.fromPath).join('、') }}</p>
         </div>
-        <footer><button type="button" :disabled="busy" @click="close">取消</button><button type="submit" :disabled="busy">{{ busy ? '正在处理…' : '预览变更' }}</button><button v-if="preview" class="primary" type="button" :disabled="busy || !!blockedDrafts.length" @click="commit">确认{{ mode === 'rename' ? '重命名' : '移动' }}</button></footer>
+        <footer><AButton html-type="button" :disabled="busy" @click="close">取消</AButton><AButton html-type="submit" :disabled="busy">{{ busy ? '正在处理…' : '预览变更' }}</AButton><AButton type="primary" v-if="preview" class="primary" html-type="button" :disabled="busy || !!blockedDrafts.length" @click="commit">确认{{ mode === 'rename' ? '重命名' : '移动' }}</AButton></footer>
       </form>
     </section>
-  </div>
+  </AppDialog>
 </template>

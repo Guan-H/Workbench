@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { Button as AButton } from 'ant-design-vue'
+import AppDialog from './AppDialog.vue'
+
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 const props = withDefaults(defineProps<{ message: string; title?: string; confirmLabel?: string }>(), { title: '确认操作', confirmLabel: '确认' })
 const emit = defineEmits<{ answer: [accepted: boolean] }>()
@@ -17,5 +20,5 @@ onMounted(async () => { await nextTick(); panel.value?.querySelector('button')?.
 onBeforeUnmount(() => { if (previous?.isConnected) previous.focus() })
 </script>
 <template>
-  <div class="modal-backdrop confirmation-backdrop"><section ref="panel" class="modal confirmation-dialog" role="alertdialog" aria-modal="true" :aria-label="props.title" @keydown="key"><header><h2>{{ title }}</h2></header><p class="confirmation-message">{{ message }}</p><footer><button @click="emit('answer', false)">取消</button><button class="primary" @click="emit('answer', true)">{{ confirmLabel }}</button></footer></section></div>
+  <AppDialog :label="props.title"><section ref="panel" class="modal confirmation-dialog"    @keydown="key"><header><h2>{{ title }}</h2></header><p class="confirmation-message">{{ message }}</p><footer><AButton @click="emit('answer', false)">取消</AButton><AButton type="primary" class="primary" @click="emit('answer', true)">{{ confirmLabel }}</AButton></footer></section></AppDialog>
 </template>

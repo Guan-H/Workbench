@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Table as ATable, Button as AButton } from 'ant-design-vue'
+
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../../shared/api/client'
 import { helperPhases, type HelperStatus } from './status'
@@ -33,15 +35,24 @@ onBeforeUnmount(() => request?.abort())
 <template>
   <div aria-label="设备同步记录">
     <p>以下记录来自助手成功上报的观察；断网期间尚未上报的操作可能缺失，记录时间是服务器接收时间。</p>
-    <button :disabled="loading" @click="load(true)">刷新同步记录</button>
+    <AButton :disabled="loading" @click="load(true)">刷新同步记录</AButton>
     <p v-if="loading" role="status">正在读取同步记录…</p>
-    <p v-else-if="error" role="alert">{{ error }} <button @click="load()">重试</button></p>
+    <p v-else-if="error" role="alert">{{ error }} <AButton @click="load()">重试</AButton></p>
     <p v-else-if="data && !data.items.length">暂无成功上报的同步记录。</p>
     <div v-else-if="data" class="sync-device-scroll" tabindex="0" aria-label="同步记录列表">
-      <table class="sync-device-table"><thead><tr><th scope="col">接收时间</th><th scope="col">助手状态</th><th scope="col">待上传/改名</th><th scope="col">范围外暂存</th><th scope="col">冲突 / 问题</th><th scope="col">错误 / 范围</th></tr></thead><tbody>
-        <tr v-for="item in data.items" :key="item.revision" data-sync-activity><td>{{ new Date(item.reportedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) }}</td><td>{{ helperPhases[item.status.phase] }}</td><td>{{ item.status.queued }}</td><td>{{ item.status.heldQueued }}</td><td>{{ item.status.conflicts }} / {{ item.status.issues }}</td><td>{{ item.status.code ?? '无已上报错误' }}<span v-if="item.scopeVersion !== data.scopeVersion"> · 旧范围记录</span></td></tr>
-      </tbody></table>
+      <ATable :columns='[{"key":"0","title":"接收时间"},{"key":"1","title":"助手状态"},{"key":"2","title":"待上传/改名"},{"key":"3","title":"范围外暂存"},{"key":"4","title":"冲突 / 问题"},{"key":"5","title":"错误 / 范围"}]' :data-source="data.items" :row-key="item => item.revision" :pagination="false" size="small" :scroll="{ x: 980 }" :custom-row="() => ({ class: 'sync-record-row', 'data-sync-activity': '' })">
+        <template #bodyCell="{ column, record }">
+          <template v-for="item in (data?.items ?? []).filter(row => row.revision === record.revision)" :key="item.revision">
+          <template v-if="column.key === '0'">{{ new Date(item.reportedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) }}</template>
+          <template v-else-if="column.key === '1'">{{ helperPhases[item.status.phase] }}</template>
+          <template v-else-if="column.key === '2'">{{ item.status.queued }}</template>
+          <template v-else-if="column.key === '3'">{{ item.status.heldQueued }}</template>
+          <template v-else-if="column.key === '4'">{{ item.status.conflicts }} / {{ item.status.issues }}</template>
+          <template v-else-if="column.key === '5'">{{ item.status.code ?? '无已上报错误' }}<span v-if="item.scopeVersion !== data.scopeVersion"> · 旧范围记录</span></template>
+          </template>
+        </template>
+      </ATable>
     </div>
-    <footer class="sync-pagination"><button :disabled="loading || cursors.length === 1" @click="turn(false)">上一页</button><span>第 {{ cursors.length }} 页 · 每页 20 条</span><button :disabled="loading || !!error || !data?.nextCursor" @click="turn(true)">下一页</button></footer>
+    <footer class="sync-pagination"><AButton :disabled="loading || cursors.length === 1" @click="turn(false)">上一页</AButton><span>第 {{ cursors.length }} 页 · 每页 20 条</span><AButton :disabled="loading || !!error || !data?.nextCursor" @click="turn(true)">下一页</AButton></footer>
   </div>
 </template>

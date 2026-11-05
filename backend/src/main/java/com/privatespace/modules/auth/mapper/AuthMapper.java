@@ -1,6 +1,8 @@
 package com.privatespace.modules.auth.mapper;
 
 import com.privatespace.modules.auth.entity.AccountEntity;
+import com.privatespace.modules.auth.entity.WebSessionEntity;
+import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Delete;
@@ -16,6 +18,17 @@ public interface AuthMapper {
 
     @Insert("INSERT INTO web_session (token_hash, expires_at) VALUES (#{hash}, DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 12 HOUR))")
     void session(String hash);
+
+    String SESSION_FIELDS = "id, token_hash AS tokenHash, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS createdAt, DATE_FORMAT(expires_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS expiresAt";
+
+    @Select("SELECT " + SESSION_FIELDS + " FROM web_session WHERE expires_at > UTC_TIMESTAMP(6) ORDER BY (id = #{currentId}) DESC, created_at DESC, id DESC")
+    List<WebSessionEntity> activeSessions(String currentId);
+
+    @Select("SELECT " + SESSION_FIELDS + " FROM web_session WHERE token_hash = #{hash} AND expires_at > UTC_TIMESTAMP(6)")
+    WebSessionEntity currentSession(String hash);
+
+    @Delete("DELETE FROM web_session WHERE id = #{id} AND token_hash <> #{currentHash}")
+    int revokeSession(String id, String currentHash);
 
     @Select("SELECT COUNT(*) FROM web_session WHERE token_hash = #{hash} AND expires_at > UTC_TIMESTAMP(6)")
     int validSession(String hash);

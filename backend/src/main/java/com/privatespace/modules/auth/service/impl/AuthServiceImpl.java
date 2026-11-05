@@ -5,9 +5,13 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.UUID;
 
 import com.privatespace.common.exception.ApiException;
 import com.privatespace.modules.auth.dto.CredentialsRequest;
+import com.privatespace.modules.auth.dto.WebSessionResponse;
+import com.privatespace.modules.auth.entity.WebSessionEntity;
 import com.privatespace.modules.auth.mapper.AuthMapper;
 import com.privatespace.modules.auth.service.AuthService;
 import org.springframework.beans.factory.annotation.Value;
@@ -69,6 +73,35 @@ public class AuthServiceImpl implements AuthService {
 
     public void logout(String token) {
         if (token != null) mapper.revoke(hash(token));
+    }
+
+    public List<WebSessionResponse> sessions(String currentToken) {
+        var current = requireSession(currentToken);
+        return mapper.activeSessions(current.id()).stream()
+                .map(session -> new WebSessionResponse(session.id(), session.id().equals(current.id()),
+                        session.createdAt(), session.expiresAt()))
+                .toList();
+    }
+
+    @Transactional
+    public int revokeSession(String currentToken, String sessionId) {
+        var current = requireSession(currentToken);
+        try {
+            if (!UUID.fromString(sessionId).toString().equals(sessionId)) throw new IllegalArgumentException();
+        } catch (IllegalArgumentException exception) {
+            throw new ApiException(400, "INVALID_SESSION_ID", "会话标识不正确，请刷新列表后重试。");
+        }
+        // Current-session logout must keep the workspace's existing draft protection.
+        if (current.id().equals(sessionId)) {
+            throw new ApiException(409, "CURRENT_SESSION", "当前会话请使用退出登录结束，以保留未保存内容的检查。");
+        }
+        return mapper.revokeSession(sessionId, current.tokenHash());
+    }
+
+    private WebSessionEntity requireSession(String token) {
+        var current = token != null && token.length() == 43 ? mapper.currentSession(hash(token)) : null;
+        if (current == null) throw new ApiException(401, "UNAUTHENTICATED", "当前登录已失效，请重新登录。");
+        return current;
     }
 
     private String hash(String value) {

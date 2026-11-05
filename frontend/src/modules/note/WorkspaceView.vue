@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Button as AButton, Dropdown as ADropdown, Menu as AMenu, MenuItem as AMenuItem, Input as AInput, Slider as ASlider } from 'ant-design-vue'
+import AppDialog from '../../shared/AppDialog.vue'
+
+import { defineAsyncComponent, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NotebookPen, FileText, Folder, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
   ChevronsLeft, PanelLeft, Columns2, Code2, Eye, Clock3, Star, Upload, X, ChevronRight, ListTree, Save,
-  FilePlus2, Paperclip, Menu, RotateCcw, Download, CheckCircle2, CircleAlert, Info, LoaderCircle, House } from 'lucide-vue-next'
+  FilePlus2, Paperclip, Menu, RotateCcw, Download, House } from 'lucide-vue-next'
 import { diffLines } from 'diff'
 import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type RevisionPage, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -16,13 +19,18 @@ import RecycleRestoreDialog from './RecycleRestoreDialog.vue'
 import ExportNotesDialog from './ExportNotesDialog.vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
+import AppMessage from '../../shared/AppMessage.vue'
 import HomeView from '../home/HomeView.vue'
 import SyncCenterView from '../sync/SyncCenterView.vue'
+import AccountSettingsView from '../settings/AccountSettingsView.vue'
+
+const VaultView = defineAsyncComponent(() => import('../vault/VaultView.vue'))
+const vaultView = ref<{ prepareLeave: () => Promise<boolean> }>()
 
 const props = defineProps<{ username: string }>()
-const emit = defineEmits<{ logout: [] }>()
+const emit = defineEmits<{ logout: []; sessionExpired: [] }>()
 const linkedNotePath = new URLSearchParams(window.location.search).get('note')
-const section = ref<'home' | 'notes' | 'sync'>(linkedNotePath ? 'notes' : 'home')
+const section = ref<'home' | 'notes' | 'sync' | 'settings' | 'vault'>(linkedNotePath ? 'notes' : 'home')
 const items = ref<Note[]>([])
 const current = ref<Note>()
 const text = ref('')
@@ -35,7 +43,6 @@ const opening = ref(false)
 let openSerial = 0
 let openController: AbortController | undefined
 const saveFeedback = ref<{ kind: 'saving' | 'success' | 'error' | 'info'; text: string; duration?: number }>()
-const feedbackIcon = computed(() => ({ saving: LoaderCircle, success: CheckCircle2, error: CircleAlert, info: Info })[saveFeedback.value?.kind ?? 'info'])
 const conflict = ref(false)
 const view = ref<'notes' | 'favorites' | 'recent' | 'trash'>('notes')
 const mode = ref<'split' | 'edit' | 'preview'>('split')
@@ -91,32 +98,30 @@ const importInput = ref<HTMLInputElement>()
 const directoryImport = ref(false)
 const exporting = ref(false)
 const transferMenuOpen = ref(false)
-const transferArea = ref<HTMLElement>()
-const transferTrigger = ref<HTMLButtonElement>()
-async function toggleTransferMenu() {
-  transferMenuOpen.value = !transferMenuOpen.value
-  if (transferMenuOpen.value) {
-    await nextTick()
-    transferArea.value?.querySelector<HTMLButtonElement>('.transfer-menu button')?.focus()
+let transferFrame: number | undefined
+watch(transferMenuOpen, async opened => {
+  if (transferFrame !== undefined) cancelAnimationFrame(transferFrame)
+  if (!opened) return
+  await nextTick()
+  transferFrame = requestAnimationFrame(() => {
+    if (transferMenuOpen.value) document.querySelector<HTMLElement>('.transfer-menu [role="menuitem"]')?.focus()
+  })
+})
+function transferKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape' && event.key !== 'Tab') return
+  transferMenuOpen.value = false
+  if (event.key === 'Escape') {
+    event.preventDefault(); event.stopPropagation()
+    document.querySelector<HTMLElement>('.import-area button')?.focus()
   }
 }
-function closeTransferMenu(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  event.preventDefault(); event.stopPropagation()
-  transferMenuOpen.value = false
-  transferTrigger.value?.focus()
-}
-function closeTransferMenuOutside(event: PointerEvent) {
-  if (event.target instanceof Node && !transferArea.value?.contains(event.target)) transferMenuOpen.value = false
-}
+onBeforeUnmount(() => { if (transferFrame !== undefined) cancelAnimationFrame(transferFrame) })
 function transferAction(action: 'markdown' | 'directory' | 'export') {
   transferMenuOpen.value = false
   if (action === 'markdown') importInput.value?.click()
   else if (action === 'directory') directoryImport.value = true
   else void exportNotes()
 }
-onMounted(() => document.addEventListener('pointerdown', closeTransferMenuOutside))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', closeTransferMenuOutside))
 const uploadProgress = ref<UploadProgress>()
 const exportDialog = ref(false)
 const recycleRequest = ref<Note>()
@@ -356,6 +361,7 @@ async function openNote(note: Note) {
 }
 
 async function leaveNote(stillSelected = () => true) {
+  if (section.value === 'vault' && vaultView.value && !await vaultView.value.prepareLeave()) return false
   if (!dirty.value && !pending) return true
   if (await saveNow()) return true
   persistDraft()
@@ -475,6 +481,19 @@ async function showHome() {
 async function showSync() {
   if (!await leaveNote()) return
   section.value = 'sync'
+  mobileNav.value = false
+}
+
+async function showVault() {
+  if (section.value === 'vault') return
+  if (!await leaveNote()) return
+  section.value = 'vault'
+  mobileNav.value = false
+}
+
+async function showSettings() {
+  if (!await leaveNote()) return
+  section.value = 'settings'
   mobileNav.value = false
 }
 
@@ -741,66 +760,86 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
       <div class="brand"><span class="brand-mark"><NotebookPen :size="20" /></span><strong>私有空间</strong></div>
       <p class="nav-section-label">工作空间</p>
       <nav aria-label="主要导航">
-        <button :class="{ active: section === 'home' }" :aria-current="section === 'home' ? 'page' : undefined" @click="showHome"><House :size="18" aria-hidden="true" />工作台</button>
-        <button :class="{ active: section === 'notes' && view !== 'trash' }" :aria-current="section === 'notes' && view !== 'trash' ? 'page' : undefined" @click="switchView('notes')"><FileText :size="18" />笔记</button>
-        <button disabled title="M3 开放"><Shield :size="18" />密码保险库<span class="soon">待开放</span></button>
-        <button :class="{ active: section === 'sync' }" :aria-current="section === 'sync' ? 'page' : undefined" @click="showSync"><RefreshCw :size="18" />同步中心</button>
-        <button :class="{ active: section === 'notes' && view === 'trash' }" :aria-current="section === 'notes' && view === 'trash' ? 'page' : undefined" @click="switchView('trash')"><Trash2 :size="18" />回收站</button>
+        <AButton :class="{ active: section === 'home' }" :aria-current="section === 'home' ? 'page' : undefined" @click="showHome"><House :size="18" aria-hidden="true" />工作台</AButton>
+        <AButton :class="{ active: section === 'notes' && view !== 'trash' }" :aria-current="section === 'notes' && view !== 'trash' ? 'page' : undefined" @click="switchView('notes')"><FileText :size="18" />笔记</AButton>
+        <AButton :class="{ active: section === 'vault' }" :aria-current="section === 'vault' ? 'page' : undefined" @click="showVault"><Shield :size="18" />密码保险库</AButton>
+        <AButton :class="{ active: section === 'sync' }" :aria-current="section === 'sync' ? 'page' : undefined" @click="showSync"><RefreshCw :size="18" />同步中心</AButton>
+        <AButton :class="{ active: section === 'notes' && view === 'trash' }" :aria-current="section === 'notes' && view === 'trash' ? 'page' : undefined" @click="switchView('trash')"><Trash2 :size="18" />回收站</AButton>
       </nav>
-      <div class="sidebar-bottom"><button disabled><Settings :size="18" />设置<span class="soon">待开放</span></button><div class="account"><span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span><span>{{ username }}<small>个人空间</small></span><button class="icon-button" @click="logout" aria-label="退出登录" title="退出登录"><LogOut :size="16" /></button></div></div>
+      <div class="sidebar-bottom"><AButton :class="{ active: section === 'settings' }" :aria-current="section === 'settings' ? 'page' : undefined" @click="showSettings"><Settings :size="18" />设置</AButton><div class="account"><span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span><span>{{ username }}<small>个人空间</small></span><AButton type="text" class="icon-button" @click="logout" aria-label="退出登录" title="退出登录"><LogOut :size="16" /></AButton></div></div>
     </aside>
 
     <main v-if="section === 'home'" class="home-main">
-      <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><span>工作台</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>工作台</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <HomeView :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
     </main>
 
     <main v-if="section === 'sync'" class="home-main">
-      <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><span>同步中心</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>同步中心</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <SyncCenterView />
     </main>
 
+    <main v-if="section === 'vault'" class="home-main">
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>密码保险库</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <VaultView ref="vaultView" />
+    </main>
+
+    <main v-if="section === 'settings'" class="home-main">
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>设置</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <AccountSettingsView @session-expired="emit('sessionExpired')" />
+    </main>
+
     <aside v-show="section === 'notes' && treeVisible" class="file-sidebar">
-      <div class="file-sidebar-title"><strong>{{ view === 'trash' ? '回收站' : '我的笔记' }}</strong><button class="icon-button" title="收起文件树" aria-label="收起文件树" @click="treeVisible = false"><ChevronsLeft :size="17" /></button></div>
-      <div class="search-field"><Search :size="16" /><input id="note-search" v-model="query" placeholder="搜索笔记…" aria-label="搜索笔记" /><kbd>⌘ K</kbd></div>
-      <div v-if="view !== 'trash'" class="file-actions"><button @click="openCreate('note')"><Plus :size="16" />新建笔记</button><button class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></button></div>
-      <div v-if="view !== 'trash' && !query" class="quick-filters"><button :class="{ active: view === 'favorites' }" @click="switchView('favorites')"><Star :size="14" />收藏</button><button :class="{ active: view === 'recent' }" @click="switchView('recent')"><Clock3 :size="14" />最近访问</button></div>
-      <div class="tree-heading"><span>{{ query ? '搜索结果' : view === 'trash' ? '已删除的内容' : '文件目录' }}</span><button class="icon-button" @click="refreshDirectory" :disabled="refreshingDirectory" :aria-busy="refreshingDirectory" :title="refreshingDirectory ? '正在刷新目录' : '刷新目录'" aria-label="刷新目录"><RefreshCw :size="13" :class="{ 'message-loading': refreshingDirectory }" aria-hidden="true" /></button></div>
-      <button v-if="view === 'notes' && !query" class="root-drop-target" :class="{ 'drop-target': rootDragOver, active: !treeSelection }" :aria-pressed="!treeSelection" @contextmenu="blankContext($event, '')" @keydown="blankContext($event, '')" @click="selectFolder('')" @dragover="rootOver" @dragleave="rootDragOver = false" @drop="rootDrop" title="点击切换根目录，或将文件拖到这里移回根目录">根目录 /</button>
+      <div class="file-sidebar-title"><strong>{{ view === 'trash' ? '回收站' : '我的笔记' }}</strong><AButton type="text" class="icon-button" title="收起文件树" aria-label="收起文件树" @click="treeVisible = false"><ChevronsLeft :size="17" /></AButton></div>
+      <div class="search-field"><Search :size="16" /><AInput id="note-search" v-model:value="query" placeholder="搜索笔记…" aria-label="搜索笔记" /><kbd>⌘ K</kbd></div>
+      <div v-if="view !== 'trash'" class="file-actions"><AButton @click="openCreate('note')"><Plus :size="16" />新建笔记</AButton><AButton type="text" class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></AButton></div>
+      <div v-if="view !== 'trash' && !query" class="quick-filters"><AButton :class="{ active: view === 'favorites' }" @click="switchView('favorites')"><Star :size="14" />收藏</AButton><AButton :class="{ active: view === 'recent' }" @click="switchView('recent')"><Clock3 :size="14" />最近访问</AButton></div>
+      <div class="tree-heading"><span>{{ query ? '搜索结果' : view === 'trash' ? '已删除的内容' : '文件目录' }}</span><AButton type="text" class="icon-button" @click="refreshDirectory" :disabled="refreshingDirectory" :aria-busy="refreshingDirectory" :title="refreshingDirectory ? '正在刷新目录' : '刷新目录'" aria-label="刷新目录"><RefreshCw :size="13" :class="{ 'message-loading': refreshingDirectory }" aria-hidden="true" /></AButton></div>
+      <AButton type="text" v-if="view === 'notes' && !query" class="root-drop-target" :class="{ 'drop-target': rootDragOver, active: !treeSelection }" :aria-pressed="!treeSelection" @contextmenu="blankContext($event, '')" @keydown="blankContext($event, '')" @click="selectFolder('')" @dragover="rootOver" @dragleave="rootDragOver = false" @drop="rootDrop" title="点击切换根目录，或将文件拖到这里移回根目录">根目录 /</AButton>
       <p v-if="view !== 'trash'" class="current-folder" :title="folder || '根目录 /'" role="status">新建位置：{{ folder || '根目录 /' }}</p>
       <div ref="treeScroll" class="tree-scroll" tabindex="0" aria-label="文件目录空白区域" @contextmenu="blankContext($event)" @keydown="blankContext($event)">
         <p v-if="loading" class="sidebar-empty" role="status">正在加载目录…</p>
         <template v-else-if="query || view !== 'notes'">
-          <button v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" aria-haspopup="menu" @click="view === 'trash' ? (note.type === 'folder' ? beginRecycle(note) : history(note)) : openNote(note)"><component :is="note.type === 'folder' ? Folder : FileText" :size="16" /><span>{{ note.path }}<small v-if="view === 'trash' && !note.deleted"> · 尚有待恢复子项</small></span></button>
+          <AButton type="text" v-for="note in (query || view === 'trash' ? searchResults : visibleItems)" :key="note.id" class="result-row" :data-file-path="note.path" @contextmenu="resultContext($event, note)" @keydown="resultContext($event, note)" aria-haspopup="menu" @click="view === 'trash' ? (note.type === 'folder' ? beginRecycle(note) : history(note)) : openNote(note)"><component :is="note.type === 'folder' ? Folder : FileText" :size="16" /><span>{{ note.path }}<small v-if="view === 'trash' && !note.deleted"> · 尚有待恢复子项</small></span></AButton>
           <p v-if="!(query || view === 'trash' ? searchResults : visibleItems).length" class="sidebar-empty">{{ view === 'trash' ? '回收站为空' : '暂无匹配的笔记' }}</p>
         </template>
         <template v-else><FileTree :items="activeItems" :selected="treeSelection" :reveal-path="revealPath" @open="openNote" @folder="selectFolder" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
       </div>
-      <div ref="transferArea" class="import-area" @keydown="closeTransferMenu"><button ref="transferTrigger" :aria-expanded="transferMenuOpen" aria-controls="transfer-menu" @click="toggleTransferMenu"><Upload :size="15" aria-hidden="true" />导入/导出</button><div v-if="transferMenuOpen" id="transfer-menu" class="transfer-menu" role="group" aria-label="导入导出操作"><button @click="transferAction('markdown')"><Upload :size="15" aria-hidden="true" />导入 Markdown</button><button @click="transferAction('directory')"><FolderPlus :size="15" aria-hidden="true" />批量导入目录</button><button :disabled="exporting" @click="transferAction('export')"><Download :size="15" aria-hidden="true" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button></div><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small></div>
+      <div class="import-area">
+        <ADropdown v-model:open="transferMenuOpen" :trigger="['click']" placement="topLeft">
+          <AButton :aria-expanded="transferMenuOpen" aria-haspopup="menu" @keydown="transferKey"><Upload :size="15" aria-hidden="true" />导入/导出</AButton>
+          <template #overlay><AMenu class="transfer-menu" aria-label="导入导出操作" @keydown="transferKey">
+            <AMenuItem key="markdown" @click="transferAction('markdown')"><Upload :size="15" />导入 Markdown</AMenuItem>
+            <AMenuItem key="directory" @click="transferAction('directory')"><FolderPlus :size="15" />批量导入目录</AMenuItem>
+            <AMenuItem key="export" :disabled="exporting" @click="transferAction('export')"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</AMenuItem>
+          </AMenu></template>
+        </ADropdown>
+        <small v-if="exportFeedback" role="status">{{ exportFeedback }}</small>
+      </div>
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
     <main v-show="section === 'notes'" class="note-main">
-      <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><button v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></button><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
-      <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
-      <Transition name="message-fade"><div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div></Transition>
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><AButton type="text" v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></AButton><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><AButton type="text" class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></AButton></div>
+      <AppMessage :notice="saveFeedback" test-id="save-feedback" @close="saveFeedback = undefined" />
       <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
       <p v-if="opening" class="note-loading" role="status">正在切换笔记，可继续选择其他笔记…</p>
       <template v-if="current && current.type === 'note' && !current.deleted">
         <div class="document-tab"><span><FileText :size="15" />{{ currentTitle }}<span v-if="dirty" class="unsaved-dot" title="有未提交修改" /></span></div>
-        <div class="editor-toolbar"><div class="mode-switch" aria-label="编辑模式"><button :class="{ active: mode === 'split' }" @click="mode = 'split'"><Columns2 :size="14" />分栏</button><button :class="{ active: mode === 'edit' }" @click="mode = 'edit'"><Code2 :size="14" />编辑</button><button :class="{ active: mode === 'preview' }" @click="mode = 'preview'"><Eye :size="14" />预览</button></div><label v-if="mode === 'split'" class="split-width-control" title="点击滑轨调整编辑区宽度"><span>宽度</span><input v-model.number="splitPercent" type="range" min="20" max="80" aria-label="编辑区宽度" /></label><div class="editor-actions"><button class="icon-button" @click="toggleFavorite" :title="current.favorite ? '取消收藏' : '收藏笔记'" :aria-label="current.favorite ? '取消收藏' : '收藏笔记'" :class="{ starred: current.favorite }"><Star :size="17" /></button><button class="icon-button" @click="attachmentInput?.click()" title="上传附件" aria-label="上传附件" :disabled="modalBusy"><Paperclip :size="17" /></button><button title="查看笔记历史" @click="history()"><Clock3 :size="15" /><span>历史</span></button><button class="icon-button" @click="manualSave" title="保存笔记 (Ctrl+S)" aria-label="保存笔记" :disabled="saving"><Save :size="17" /></button><button class="icon-button" @click="removeCurrent" title="删除笔记" aria-label="删除笔记"><Trash2 :size="16" /></button><button class="icon-button" @click="outlineVisible = !outlineVisible" title="显示或隐藏大纲" aria-label="显示或隐藏大纲"><ListTree :size="17" /></button></div></div>
-        <div v-if="conflict" class="conflict-bar"><span>检测到版本冲突，服务器与本机草稿均已保留。</span><button @click="showConflict">对比并处理</button><button @click="downloadDraft">下载本机草稿</button></div>
+        <div class="editor-toolbar"><div class="mode-switch" aria-label="编辑模式"><AButton :class="{ active: mode === 'split' }" @click="mode = 'split'"><Columns2 :size="14" />分栏</AButton><AButton :class="{ active: mode === 'edit' }" @click="mode = 'edit'"><Code2 :size="14" />编辑</AButton><AButton :class="{ active: mode === 'preview' }" @click="mode = 'preview'"><Eye :size="14" />预览</AButton></div><label v-if="mode === 'split'" class="split-width-control" title="点击滑轨调整编辑区宽度"><span>宽度</span><ASlider aria-label-for-handle="编辑区宽度" v-model:value="splitPercent" :min="20" :max="80" aria-label="编辑区宽度" /></label><div class="editor-actions"><AButton type="text" class="icon-button" @click="toggleFavorite" :title="current.favorite ? '取消收藏' : '收藏笔记'" :aria-label="current.favorite ? '取消收藏' : '收藏笔记'" :class="{ starred: current.favorite }"><Star :size="17" /></AButton><AButton type="text" class="icon-button" @click="attachmentInput?.click()" title="上传附件" aria-label="上传附件" :disabled="modalBusy"><Paperclip :size="17" /></AButton><AButton title="查看笔记历史" @click="history()"><Clock3 :size="15" /><span>历史</span></AButton><AButton type="text" class="icon-button" @click="manualSave" title="保存笔记 (Ctrl+S)" aria-label="保存笔记" :disabled="saving"><Save :size="17" /></AButton><AButton type="text" class="icon-button" @click="removeCurrent" title="删除笔记" aria-label="删除笔记"><Trash2 :size="16" /></AButton><AButton type="text" class="icon-button" @click="outlineVisible = !outlineVisible" title="显示或隐藏大纲" aria-label="显示或隐藏大纲"><ListTree :size="17" /></AButton></div></div>
+        <div v-if="conflict" class="conflict-bar"><span>检测到版本冲突，服务器与本机草稿均已保留。</span><AButton @click="showConflict">对比并处理</AButton><AButton @click="downloadDraft">下载本机草稿</AButton></div>
         <div class="editor-panels" :class="['mode-' + mode, { resizing }]" :style="{ '--split-ratio': splitPercent / 100 }" @dragover.prevent @drop.prevent="($event.dataTransfer?.files[0]) && upload($event.dataTransfer.files[0])" @paste.capture="($event.clipboardData?.files[0]) && ($event.preventDefault(), upload($event.clipboardData.files[0]))">
           <section v-show="mode !== 'preview'" class="source-panel" aria-label="Markdown 编辑区"><div class="panel-label">MARKDOWN</div><MarkdownEditor :key="current.id" :model-value="text" @update:model-value="edit" @save="manualSave" /></section>
           <div v-if="mode === 'split'" class="split-divider" role="separator" tabindex="0" aria-label="调整编辑区和预览区宽度" title="拖动调整宽度，双击恢复各半；方向键微调" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" :aria-valuenow="splitPercent" :aria-valuetext="`编辑区 ${splitPercent}%，预览区 ${100 - splitPercent}%`" @pointerdown="startResize" @pointermove="resizeSplit" @pointerup="endResize" @pointercancel="endResize" @lostpointercapture="endResize" @keydown="resizeKey" @dblclick="splitPercent = 50" />
           <section v-show="mode !== 'edit'" class="preview-panel" aria-label="笔记预览"><div class="panel-label">预览</div><article ref="previewArea" class="markdown-preview" @click="previewClick"><MarkdownPreview :key="current.id" :source="text" :path="current.path" :enabled="section === 'notes' && mode !== 'edit' && !opening" /></article></section>
         </div>
       </template>
-      <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><button v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</button><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>
+      <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><AButton type="primary" v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</AButton><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>
       <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ status }}</span><span v-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span></footer>
     </main>
 
-    <aside v-if="section === 'notes' && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><button v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</button><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
+    <aside v-if="section === 'notes' && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><AButton v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</AButton><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
     <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
     <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" />
@@ -810,23 +849,23 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
     <MoveNoteDialog v-if="moveRequest" v-bind="moveRequest" :items="items" @close="moveRequest = undefined" @moved="moved" />
     <ImportDirectoryDialog v-if="directoryImport" :items="items" :destination="folder" @close="directoryImport = false" @imported="refresh" />
     <input ref="attachmentInput" type="file" hidden @change="($event.target as HTMLInputElement).files?.[0] && upload(($event.target as HTMLInputElement).files![0]!)" />
-    <div v-if="modal" class="modal-backdrop">
-      <section class="modal wide-modal" role="dialog" aria-modal="true" :aria-label="modal === 'history' ? '笔记历史' : '处理冲突'">
-        <header><h2>{{ modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><button class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></button></header>
+    <AppDialog :label="modal === 'history' ? '笔记历史' : '处理冲突'" wide v-if="modal">
+      <section class="modal wide-modal"   >
+        <header><h2>{{ modal === 'history' ? '历史与恢复' : '对比并处理冲突' }}</h2><AButton type="text" class="icon-button" @click="modal = null" title="关闭对话框" aria-label="关闭对话框"><X :size="19" /></AButton></header>
         <div v-if="modal === 'history'" class="history-layout">
           <aside class="revision-pane" aria-label="历史版本列表">
             <div class="revision-list">
               <p v-if="modalBusy && !revisions.length" role="status">正在读取历史…</p>
-              <button v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" :aria-pressed="historic?.version === revision.version" :disabled="modalBusy" @click="selectRevision(revision.version)">
+              <AButton v-for="revision in revisions" :key="revision.version" :class="{ active: historic?.version === revision.version }" :aria-pressed="historic?.version === revision.version" :disabled="modalBusy" @click="selectRevision(revision.version)">
                 <strong>版本 {{ revision.version }} {{ revision.deleted ? '· 删除记录' : '' }}</strong>
                 <small>{{ displayTime(revision.createdAt) }}</small>
-              </button>
+              </AButton>
               <p v-if="!modalBusy && !revisions.length" class="field-help">暂无历史版本</p>
             </div>
             <nav class="history-pagination" aria-label="历史版本分页">
-              <button :disabled="modalBusy || historyPage === 0" @click="loadHistoryPage(historyPage - 1)">上一页</button>
+              <AButton :disabled="modalBusy || historyPage === 0" @click="loadHistoryPage(historyPage - 1)">上一页</AButton>
               <span>第 {{ historyPage + 1 }} 页</span>
-              <button :disabled="modalBusy || !historyNextCursor" @click="loadHistoryPage(historyPage + 1)">下一页</button>
+              <AButton :disabled="modalBusy || !historyNextCursor" @click="loadHistoryPage(historyPage + 1)">下一页</AButton>
             </nav>
           </aside>
           <div class="history-detail">
@@ -838,13 +877,13 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
                 <p v-if="historic.version === current?.version" class="field-help">所选版本就是服务器当前版本，无版本差异。</p>
                 <pre class="history-diff" aria-label="所选历史版本与服务器当前版本的文本差异"><template v-for="(part, index) in historyDifference" :key="index"><ins v-if="part.added" class="diff-added">{{ part.value }}</ins><del v-else-if="part.removed" class="diff-removed">{{ part.value }}</del><span v-else>{{ part.value }}</span></template></pre>
               </template>
-              <button class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</button>
+              <AButton type="primary" class="primary" @click="restore" :disabled="historic.deleted || modalBusy || (current?.type === 'folder' && historic.version !== String(Number(current.version) - 1))"><RotateCcw :size="16" />{{ current?.type === 'folder' ? '恢复整个目录' : '恢复为新版本' }}</AButton>
             </template>
             <p v-else>{{ modalBusy ? '正在读取版本内容…' : '选择一个历史版本查看内容' }}</p>
           </div>
         </div>
-        <div v-else class="conflict-detail"><p>删除线为服务器内容，新增内容为本机草稿。可关闭对话框，在编辑区完成手动合并后再提交。</p><pre><template v-for="(part, index) in difference" :key="index"><span :class="{ 'diff-added': part.added, 'diff-removed': part.removed }">{{ part.value }}</span></template></pre><footer><button @click="resolveConflict(true)">采用服务器版本</button><button class="primary" @click="resolveConflict(false)">提交当前草稿（以最新版本为基线）</button></footer></div>
+        <div v-else class="conflict-detail"><p>删除线为服务器内容，新增内容为本机草稿。可关闭对话框，在编辑区完成手动合并后再提交。</p><pre><template v-for="(part, index) in difference" :key="index"><span :class="{ 'diff-added': part.added, 'diff-removed': part.removed }">{{ part.value }}</span></template></pre><footer><AButton @click="resolveConflict(true)">采用服务器版本</AButton><AButton type="primary" class="primary" @click="resolveConflict(false)">提交当前草稿（以最新版本为基线）</AButton></footer></div>
       </section>
-    </div>
+    </AppDialog>
   </div>
 </template>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppPagination from '../../shared/AppPagination.vue'
+import { Checkbox as ACheckbox, Input as AInput, RadioGroup as ARadioGroup, Radio as ARadio } from 'ant-design-vue'
+
 import { computed, ref, watch } from 'vue'
 import { Folder } from 'lucide-vue-next'
 import type { Note } from '../../shared/api/client'
@@ -23,14 +26,14 @@ function toggle(path: string) {
 <template>
   <fieldset class="sync-scope-picker" :disabled="disabled">
     <legend>同步范围</legend>
-    <div class="sync-scope-modes"><label><input type="radio" :checked="modelValue.all" @change="emit('update:modelValue', { all: true, folders: [] })" />全部同步</label><label><input type="radio" :checked="!modelValue.all" @change="emit('update:modelValue', { all: false, folders: [] })" />选择文件夹</label></div>
+    <ARadioGroup class="sync-scope-modes" :value="modelValue.all" :disabled="disabled" @change="event => emit('update:modelValue', { all: event.target.value, folders: [] })"><ARadio :value="true">全部同步</ARadio><ARadio :value="false">选择文件夹</ARadio></ARadioGroup>
     <template v-if="!modelValue.all">
-      <input v-model="query" aria-label="搜索同步目录" placeholder="搜索目录路径" type="search" />
+      <AInput v-model:value="query" aria-label="搜索同步目录" placeholder="搜索目录路径" type="search" />
       <div class="sync-scope-folders" tabindex="0" aria-label="可选同步目录">
-        <label v-for="folder in rows" :key="folder.id" :title="inherited(folder.path) ? '已包含在选中的父目录内，先取消父目录再单选' : folder.path"><input type="checkbox" :aria-label="'同步目录：' + folder.path" :checked="covered(folder.path)" :disabled="disabled || inherited(folder.path)" @change="toggle(folder.path)" /><Folder :size="15" aria-hidden="true" /><span>{{ folder.path }}</span></label>
+        <ACheckbox v-for="folder in rows" :key="folder.id" :title="inherited(folder.path) ? '已包含在选中的父目录内，先取消父目录再单选' : folder.path" :aria-label="'同步目录：' + folder.path" :checked="covered(folder.path)" :disabled="disabled || inherited(folder.path)" @change="toggle(folder.path)"><Folder :size="15" aria-hidden="true" /><span>{{ folder.path }}</span></ACheckbox>
         <p v-if="!rows.length">没有匹配的文件夹。</p>
       </div>
-      <nav class="sync-pagination" aria-label="同步目录分页"><button type="button" :disabled="page === 0" @click="page--">上一页</button><span>{{ page + 1 }} / {{ pages }} 页 · 已选 {{ modelValue.folders.length }} 个目录</span><button type="button" :disabled="page + 1 >= pages" @click="page++">下一页</button></nav>
+      <nav class="pagination" aria-label="同步目录分页"><AppPagination :page="page + 1" :pages="pages" :disabled="disabled" @update:page="page = $event - 1" /><span>已选 {{ modelValue.folders.length }} 个目录</span></nav>
       <p v-if="!modelValue.folders.length" class="field-help">至少选择一个目录，包含其全部子目录。</p>
       <p v-else class="field-help">已选：{{ modelValue.folders.join('、') }}</p>
     </template>

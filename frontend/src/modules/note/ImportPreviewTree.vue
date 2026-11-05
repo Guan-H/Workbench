@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppPagination from '../../shared/AppPagination.vue'
+import { Button as AButton } from 'ant-design-vue'
+
 import { computed, ref, watch } from 'vue'
 import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-vue-next'
 import type { ImportPreview } from '../../shared/api/client'
@@ -26,17 +29,17 @@ function size(bytes: number) { return bytes >= 1048576 ? (bytes / 1048576).toFix
 <template>
   <ul class="import-tree">
     <li v-for="(entry, index) in visible" :key="entry.path + index" :class="{ 'import-blocked': entry.status === 'BLOCKED' }">
-      <button v-if="entry.type === 'folder'" class="import-tree-folder" :style="{ paddingLeft: `${depth * 16}px` }" :aria-expanded="expanded.has(entry.path)" :aria-label="`${expanded.has(entry.path) ? '收起' : '展开'}预检目录：${entry.path}`" @click="toggle(entry.path)">
+      <AButton type="text" v-if="entry.type === 'folder'" class="import-tree-folder" :style="{ paddingLeft: `${depth * 16}px` }" :aria-expanded="expanded.has(entry.path)" :aria-label="`${expanded.has(entry.path) ? '收起' : '展开'}预检目录：${entry.path}`" @click="toggle(entry.path)">
         <component :is="expanded.has(entry.path) ? ChevronDown : ChevronRight" :size="15" aria-hidden="true" />
         <Folder :size="17" aria-hidden="true" />
         <span><strong>{{ entry.path.split('/').at(-1) }}</strong><small>{{ entry.message }} · {{ fileCount(entry.path) }} 个文件<span v-if="problems(entry.path)" class="import-blocked"> · 包含 {{ problems(entry.path) }} 项问题</span></small></span>
-      </button>
+      </AButton>
       <div v-else class="import-tree-file" :style="{ paddingLeft: `${depth * 16 + 20}px` }">
         <FileText :size="16" aria-hidden="true" />
         <span><strong>{{ parent ? entry.path.split('/').at(-1) : entry.path }}</strong><small>{{ entry.message }} · {{ size(entry.size) }}</small></span>
       </div>
       <ImportPreviewTree v-if="entry.type === 'folder' && expanded.has(entry.path)" :entries="entries" :parent="entry.path" :depth="depth + 1" />
     </li>
-    <li v-if="pages > 1"><nav class="pagination" :aria-label="`${parent || '根目录'}预检分页`"><button :disabled="page <= 1" @click="page--">上一页</button><span>{{ page }} / {{ pages }}</span><button :disabled="page >= pages" @click="page++">下一页</button></nav></li>
+    <li v-if="pages > 1"><nav class="pagination" :aria-label="`${parent || '根目录'}预检分页`"><AppPagination :page="page" :pages="pages" :disabled="false" @update:page="page = $event" /></nav></li>
   </ul>
 </template>

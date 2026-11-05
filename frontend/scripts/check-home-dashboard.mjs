@@ -109,7 +109,8 @@ export async function checkHomeDashboard(page, request, output) {
     await page.locator(`[data-calendar-date="${displayed}-01"]`).waitFor()
   }
   assert.equal(displayed, '2027-01')
-  assert.ok((await page.locator('.home-calendar-notice').innerText()).includes('暂未收录'))
+  await page.getByRole('button', { name: '日期与假期说明', exact: true }).hover()
+  await page.getByRole('tooltip').filter({ hasText: '暂未收录' }).waitFor()
   assert.equal(await page.locator('.home-calendar-day.holiday, .home-calendar-day.makeup').count(), 0)
   await page.getByRole('button', { name: '本月', exact: true }).click()
   await page.locator(`[data-calendar-date="${current}-01"]`).waitFor()

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import AppPagination from '../../shared/AppPagination.vue'
+import { Button as AButton, Input as AInput } from 'ant-design-vue'
+import AppDialog from '../../shared/AppDialog.vue'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { X, RotateCcw, ListChecks } from 'lucide-vue-next'
 import { api, write, ApiError, type Note, type TreeItem, type RecycleCandidates, type RecyclePreview, type RecycleRequest, type RecycleResult } from '../../shared/api/client'
@@ -90,38 +94,38 @@ onMounted(async () => {
 onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (previous?.isConnected) previous.focus() })
 </script>
 <template>
-  <div class="modal-backdrop">
-    <section ref="panel" class="modal wide-modal recycle-dialog" role="dialog" aria-modal="true" aria-label="恢复回收站目录" @keydown="key">
-      <header><h2>恢复回收站目录</h2><button class="icon-button" title="关闭恢复" aria-label="关闭恢复" :disabled="busy" @click="close"><X :size="18" /></button></header>
+  <AppDialog label="恢复回收站目录" wide>
+    <section ref="panel" class="modal wide-modal recycle-dialog"    @keydown="key">
+      <header><h2>恢复回收站目录</h2><AButton type="text" class="icon-button" title="关闭恢复" aria-label="关闭恢复" :disabled="busy" @click="close"><X :size="18" /></AButton></header>
       <div class="recycle-body">
         <p>{{ candidates?.path || note.path }}</p>
         <p v-if="busy" role="status">正在读取或处理真实恢复数据，请稍候…</p>
         <p v-if="error" class="error-message" role="alert">{{ error }}</p>
         <template v-if="candidates && step === 'mode'">
           <p>选择恢复整个文件夹，或只恢复其中的文件。</p>
-          <div class="recycle-mode"><button :disabled="busy" @click="inspect(true)"><RotateCcw :size="20" />恢复整个文件夹<small>仅恢复当前删除批次的剩余项目到原位置，已经恢复的项目不会再次恢复。</small></button><button :disabled="busy || !leaves.length" @click="mode = 'files'; step = 'files'"><ListChecks :size="20" />选择文件恢复<small>展开目录，多选文件，再选择恢复位置。</small></button></div>
+          <div class="recycle-mode"><AButton :disabled="busy" @click="inspect(true)"><RotateCcw :size="20" />恢复整个文件夹<small>仅恢复当前删除批次的剩余项目到原位置，已经恢复的项目不会再次恢复。</small></AButton><AButton :disabled="busy || !leaves.length" @click="mode = 'files'; step = 'files'"><ListChecks :size="20" />选择文件恢复<small>展开目录，多选文件，再选择恢复位置。</small></AButton></div>
         </template>
         <template v-if="step === 'files'">
-          <label for="recycle-query">筛选待恢复文件</label><input id="recycle-query" v-model="query" :disabled="busy" />
-          <div class="export-selection-actions"><button :disabled="busy" @click="selected = candidates!.items.map(item => item.id)">全选文件</button><button :disabled="busy" @click="selected = []">清空选择</button></div>
+          <label for="recycle-query">筛选待恢复文件</label><AInput id="recycle-query" v-model:value="query" :disabled="busy" />
+          <div class="export-selection-actions"><AButton :disabled="busy" @click="selected = candidates!.items.map(item => item.id)">全选文件</AButton><AButton :disabled="busy" @click="selected = []">清空选择</AButton></div>
           <p>已选择 {{ fileIds.length }} 个文件</p>
           <div class="recycle-tree"><ExportFileTree :items="candidates!.items" :selected="selected" :parent="parent" :query="query" :flat="!!query" :disabled="busy" @toggle="toggle" /></div>
         </template>
         <template v-if="step === 'destination'">
           <p>已选择 {{ fileIds.length }} 个文件。恢复到哪里？</p>
-          <div class="recycle-mode"><button :disabled="busy" @click="destination = 'original'; inspect()">恢复到原目录<small>保留原路径，仅补齐所选文件需要的目录。</small></button><button :class="{ active: destination === 'directory' }" :disabled="busy" @click="destination = 'directory'">恢复到指定目录<small>文件直接放入目标目录，不保留内部层级。</small></button></div>
-          <template v-if="destination === 'directory'"><label for="recycle-target">指定目录</label><DirectoryPicker id="recycle-target" v-model="target" :items="items" :disabled="busy" title="选择恢复目标目录" /><button class="primary" :disabled="busy" @click="inspect()">预览恢复</button></template>
+          <div class="recycle-mode"><AButton :disabled="busy" @click="destination = 'original'; inspect()">恢复到原目录<small>保留原路径，仅补齐所选文件需要的目录。</small></AButton><AButton :class="{ active: destination === 'directory' }" :disabled="busy" @click="destination = 'directory'">恢复到指定目录<small>文件直接放入目标目录，不保留内部层级。</small></AButton></div>
+          <template v-if="destination === 'directory'"><label for="recycle-target">指定目录</label><DirectoryPicker id="recycle-target" v-model="target" :items="items" :disabled="busy" title="选择恢复目标目录" /><AButton type="primary" class="primary" :disabled="busy" @click="inspect()">预览恢复</AButton></template>
         </template>
         <div v-if="step === 'review' && preview" class="recycle-review" tabindex="0">
           <h3>恢复预览 · {{ preview.changes.length }} 个文件</h3>
           <ul><li v-for="change in changes" :key="change.id"><strong>{{ change.fromPath }}</strong><span>→ {{ change.toPath }}</span><small v-if="change.links.length">更新 {{ change.links.length }} 处标准相对链接</small></li></ul>
-          <nav v-if="pages > 1" class="pagination" aria-label="恢复预览分页"><button :disabled="page <= 1 || busy" @click="page--">上一页</button><span>{{ page }} / {{ pages }}</span><button :disabled="page >= pages || busy" @click="page++">下一页</button></nav>
+          <nav class="pagination" aria-label="恢复预览分页"><AppPagination :page="page" :pages="pages" :disabled="busy" @update:page="page = $event" /></nav>
           <p class="field-help">补齐或恢复 {{ preview.folders.filter(folder => folder.action !== 'REUSE').length }} 个目录。遇到同名内容会阻止整批，不会覆盖。只有选中的文件会恢复；未选中的附件仍在回收站。更改位置时会更新能可靠解析的标准相对链接。</p>
           <ul v-if="preview.warnings.length" class="move-warnings"><li v-for="(warning, index) in preview.warnings" :key="index">{{ warning }}</li></ul>
         </div>
       </div>
-      <footer><button :disabled="busy" @click="close">取消</button><button v-if="step !== 'mode' && !uncertain" :disabled="busy" @click="step = 'mode'; preview = undefined">重新选择范围</button><button v-if="step === 'files'" class="primary" :disabled="busy || !fileIds.length" @click="destination = 'original'; step = 'destination'">下一步：选择恢复位置</button><button v-if="step === 'review' && reviewed" class="primary" :disabled="busy" @click="commit">{{ uncertain ? '重试确认' : '确认恢复' }}</button></footer>
+      <footer><AButton :disabled="busy" @click="close">取消</AButton><AButton v-if="step !== 'mode' && !uncertain" :disabled="busy" @click="step = 'mode'; preview = undefined">重新选择范围</AButton><AButton type="primary" v-if="step === 'files'" class="primary" :disabled="busy || !fileIds.length" @click="destination = 'original'; step = 'destination'">下一步：选择恢复位置</AButton><AButton type="primary" v-if="step === 'review' && reviewed" class="primary" :disabled="busy" @click="commit">{{ uncertain ? '重试确认' : '确认恢复' }}</AButton></footer>
     </section>
     <ConfirmDialog v-if="closing" title="关闭恢复" message="恢复结果尚未确认，关闭后请先刷新回收站核对，避免重复发起。仍要关闭吗？" confirm-label="关闭恢复" @answer="value => { closing = false; if (value) emit('close') }" />
-  </div>
+  </AppDialog>
 </template>

@@ -37,6 +37,61 @@ try {
     throw new Error('fixture device not found')
   }
   await page.locator('[data-sync-device]').first().waitFor()
+  // Persist real devices when the isolated fixture has fewer than two pages.
+  const deviceCount = await page.evaluate(async () => {
+    const { api, write } = await import('/src/shared/api/client.ts')
+    const devices = await api('/sync-devices')
+    for (let index = devices.length; index < 13; index++) {
+      const { code } = await write('/sync-devices/pairing-code', 'POST', { name: '分页布局验收-' + index })
+      await write('/sync/pair', 'POST', { code })
+    }
+    return Math.max(devices.length, 13)
+  })
+  await page.getByRole('button', { name: '刷新设备', exact: true }).click()
+  const pagination = page.getByRole('navigation', { name: '设备列表分页', exact: true })
+  await pagination.getByText(`共 ${Math.ceil(deviceCount / 10)} 页`, { exact: false }).waitFor()
+  await page.waitForFunction(() => document.querySelectorAll('[data-sync-device]').length === 10)
+  assert.equal(await page.locator('[data-sync-device]').count(), 10)
+  for (const [width, height] of [[1440, 800], [375, 600]]) {
+    await page.setViewportSize({ width, height })
+    await pagination.scrollIntoViewIfNeeded()
+    assert.ok(await pagination.evaluate(element => {
+      const boxes = [...element.querySelectorAll('.ant-pagination > li')].map(item => item.getBoundingClientRect())
+      return boxes.every((box, index) => boxes.slice(index + 1).every(other =>
+        Math.min(box.right, other.right) - Math.max(box.left, other.left) <= 0.5 ||
+        Math.min(box.bottom, other.bottom) - Math.max(box.top, other.top) <= 0.5))
+    }), 'pagination controls do not overlap')
+    const scroll = await page.locator('.sync-devices .ant-table-body').evaluate(element => ({
+      vertical: element.scrollHeight > element.clientHeight, horizontal: element.scrollWidth > element.clientWidth, height: element.clientHeight,
+    }))
+    assert.ok(scroll.vertical && scroll.height <= Math.min(420, height / 2) + 1, 'device rows scroll inside the bounded table')
+    if (width === 375) assert.ok(scroll.horizontal, 'wide columns scroll inside the narrow table')
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    await page.screenshot({ path: directory + '/device-pagination-' + width + '.png', fullPage: true })
+  }
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await pagination.getByRole('button', { name: '下一页', exact: true }).click()
+  await pagination.getByText('第 2 页', { exact: false }).waitFor()
+  await page.waitForFunction(expected => document.querySelectorAll('[data-sync-device]').length === expected, Math.min(10, deviceCount - 10))
+  assert.equal(await page.locator('[data-sync-device]').count(), Math.min(10, deviceCount - 10))
+  await pagination.getByRole('button', { name: '上一页', exact: true }).click()
+  await pagination.getByText('第 1 页', { exact: false }).waitFor()
+  await page.waitForFunction(() => !document.querySelector('.ant-message-notice'))
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.getByRole('button', { name: '刷新设备', exact: true }).click()
+  const refreshed = page.getByRole('status').filter({ hasText: /^刷新成功$/ })
+  await refreshed.waitFor()
+  const shown = Date.now()
+  await page.waitForFunction(() => document.querySelector('.ant-message-notice.ant-message-move-up-leave-active'))
+  assert.ok(Date.now() - shown >= 1700, 'refresh result stays visible for two seconds')
+  const fade = await page.locator('.ant-message-notice.ant-message-move-up-leave-active').evaluate(element => ({ name: getComputedStyle(element).animationName, duration: getComputedStyle(element).animationDuration }))
+  assert.equal(fade.name, 'message-fade-out')
+  assert.equal(fade.duration, '0.25s')
+  await refreshed.waitFor({ state: 'hidden' })
+  await page.getByRole('button', { name: '刷新设备', exact: true }).click()
+  await refreshed.waitFor()
+  await page.getByRole('button', { name: '关闭消息', exact: true }).click()
+  await refreshed.waitFor({ state: 'hidden' })
   await open(fixture.device, fixture.name)
   await panel.locator('[data-conflict-path]').first().waitFor()
   await panel.getByLabel('最后上报的助手状态').getByText(/冲突 24/).waitFor()

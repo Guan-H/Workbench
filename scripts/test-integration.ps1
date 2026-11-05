@@ -1,7 +1,10 @@
 [CmdletBinding()]
-param([switch]$IncludeCrypto, [switch]$IncludeSync, [switch]$UsePackagedSync, [string]$FullDiskImage, [string]$ObsidianVault)
+param([switch]$IncludeCrypto, [switch]$IncludeSync, [switch]$UsePackagedSync, [switch]$OnlyAccountSessions, [string]$FullDiskImage, [string]$ObsidianVault)
 
 $ErrorActionPreference = 'Stop'
+if ($OnlyAccountSessions -and ($IncludeCrypto -or $IncludeSync -or $UsePackagedSync -or $FullDiskImage -or $ObsidianVault)) {
+    throw 'OnlyAccountSessions must be run separately from the other integration suites.'
+}
 if (($UsePackagedSync -or $FullDiskImage -or $ObsidianVault) -and -not $IncludeSync) {
     throw 'UsePackagedSync, FullDiskImage and ObsidianVault require IncludeSync.'
 }
@@ -32,8 +35,10 @@ try {
     $env:IT_DB_URL = "jdbc:mysql://127.0.0.1:$($Matches[1])/private_space_it?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
     Push-Location "$projectRoot/backend"
     try {
-        $testSelection = if ($IncludeCrypto) { '-Dit.test=RuntimeIT,NotesIT,VaultCryptoIT' } else { '-Dit.test=RuntimeIT,NotesIT' }
-        & mvn "-Dmaven.repo.local=$mavenRepository" -P integration $testSelection verify --no-transfer-progress
+        $testSelection = if ($OnlyAccountSessions) { '-Dit.test=AuthSessionsIT' } elseif ($IncludeCrypto) { '-Dit.test=RuntimeIT,NotesIT,VaultCryptoIT' } else { '-Dit.test=RuntimeIT,NotesIT' }
+        # The account suite uses compiled classes; it need not replace a locally running JAR.
+        $goals = if ($OnlyAccountSessions) { @('test', 'failsafe:integration-test', 'failsafe:verify') } else { @('verify') }
+        & mvn "-Dmaven.repo.local=$mavenRepository" -P integration $testSelection @goals --no-transfer-progress
         if ($LASTEXITCODE -ne 0) { throw 'Real MySQL/HTTP integration verification failed.' }
     } finally {
         Pop-Location

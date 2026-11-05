@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Button as AButton, Input as AInput } from 'ant-design-vue'
+
 import { ref } from 'vue'
 import { ArrowRight, LockKeyhole, NotebookPen, FolderSync, ShieldCheck } from 'lucide-vue-next'
 import { api, refreshCsrf, type AuthStatus } from '../../shared/api/client'
@@ -43,16 +45,16 @@ async function submit() {
         <span class="section-label"><LockKeyhole :size="16" />你的私人工作台</span>
         <h2>{{ initialized ? '欢迎回来' : '建立你的私有空间' }}</h2>
         <p class="form-description">{{ initialized ? '登录后，继续上次的思考与记录。' : '创建唯一的管理员账户。完成后，初始化入口将自动关闭。' }}</p>
-        <label for="username">用户名</label><input id="username" v-model="username" autocomplete="username" required maxlength="80" placeholder="输入用户名" :disabled="busy" />
-        <label for="password">登录口令</label><input id="password" v-model="password" type="password" :autocomplete="initialized ? 'current-password' : 'new-password'" :minlength="initialized ? 1 : 12" required maxlength="72" placeholder="输入登录口令" :disabled="busy" />
+        <label for="username">用户名</label><AInput id="username" v-model:value="username" autocomplete="username" required :maxlength="80" placeholder="输入用户名" :disabled="busy" />
+        <label for="password">登录口令</label><AInput id="password" v-model:value="password" type="password" :autocomplete="initialized ? 'current-password' : 'new-password'" :minlength="initialized ? 1 : 12" required :maxlength="72" placeholder="输入登录口令" :disabled="busy" />
         <template v-if="!initialized">
           <p class="field-help">至少 12 个字符。这是账户登录口令，与未来的保险库主密码分开管理。</p>
-          <label for="confirmation">确认登录口令</label><input id="confirmation" v-model="confirmation" type="password" autocomplete="new-password" required :disabled="busy" />
-          <label for="setupToken">一次性初始化凭证</label><input id="setupToken" v-model="setupToken" type="password" autocomplete="off" required :disabled="busy" />
+          <label for="confirmation">确认登录口令</label><AInput id="confirmation" v-model:value="confirmation" type="password" autocomplete="new-password" required :disabled="busy" />
+          <label for="setupToken">一次性初始化凭证</label><AInput id="setupToken" v-model:value="setupToken" type="password" autocomplete="off" required :disabled="busy" />
           <p class="field-help">本机启动时生成于项目的 deploy/setup-token.local 文件。仅用于首次建立账户。</p>
         </template>
         <p v-if="error" class="error-message" role="alert">{{ error }}</p>
-        <button class="primary auth-submit" type="submit" :disabled="busy">{{ busy ? '正在处理…' : initialized ? '进入私有空间' : '创建并进入' }}<ArrowRight :size="18" /></button>
+        <AButton type="primary" class="primary auth-submit" html-type="submit" :disabled="busy">{{ busy ? '正在处理…' : initialized ? '进入私有空间' : '创建并进入' }}<ArrowRight :size="18" /></AButton>
         <p class="login-note">首版为单用户空间，不提供公开注册。<br />当前为本机开发版本，公网二次验证将在后续安全阶段启用。</p>
       </form>
     </section>

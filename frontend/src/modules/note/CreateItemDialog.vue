@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { Button as AButton, Input as AInput } from 'ant-design-vue'
+import AppDialog from '../../shared/AppDialog.vue'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import { write, ApiError, type Note } from '../../shared/api/client'
@@ -8,7 +11,7 @@ import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 const props = defineProps<{ type: 'note' | 'folder'; destination: string; items: Note[] }>()
 const emit = defineEmits<{ close: []; created: [note: Note] }>()
 const panel = ref<HTMLElement>()
-const input = ref<HTMLInputElement>()
+function nameInput() { return panel.value?.querySelector<HTMLInputElement>('#create-name') }
 const name = ref(props.type === 'folder' ? '新建文件夹' : '新建笔记.md')
 const target = ref(props.destination)
 const error = ref('')
@@ -35,7 +38,7 @@ async function create() {
   if (busy.value) return
   if (!uncertain.value) {
     error.value = invalidName()
-    if (error.value) { input.value?.focus(); return }
+    if (error.value) { nameInput()?.focus(); return }
     submitted = { path: path.value, type: props.type, content: '' }
   }
   if (!submitted) return
@@ -55,7 +58,7 @@ function key(event: KeyboardEvent) {
   event.stopPropagation()
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') event.preventDefault()
   if (event.key === 'Escape') { event.preventDefault(); close() }
-  if (event.key === 'Enter' && event.target === input.value && !event.isComposing) { event.preventDefault(); void create() }
+  if (event.key === 'Enter' && event.target === nameInput() && !event.isComposing) { event.preventDefault(); void create() }
   if (event.key !== 'Tab') return
   const controls = [...panel.value!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')]
   if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus() }
@@ -64,17 +67,17 @@ function key(event: KeyboardEvent) {
 function unloading(event: BeforeUnloadEvent) { if (busy.value || uncertain.value) { event.preventDefault(); event.returnValue = '' } }
 onMounted(async () => {
   addEventListener('beforeunload', unloading)
-  await nextTick(); input.value?.focus(); input.value?.setSelectionRange(0, props.type === 'note' ? name.value.length - 3 : name.value.length)
+  await nextTick(); nameInput()?.focus(); nameInput()?.setSelectionRange(0, props.type === 'note' ? name.value.length - 3 : name.value.length)
 })
 onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (previous?.isConnected) previous.focus() })
 </script>
 <template>
-  <div class="modal-backdrop">
-    <section ref="panel" class="modal create-dialog" role="dialog" aria-modal="true" :aria-label="title" @keydown="key">
-      <header><h2>{{ title }}</h2><button class="icon-button" aria-label="关闭新建" title="关闭新建" :disabled="busy" @click="close"><X :size="18" /></button></header>
+  <AppDialog :label="title">
+    <section ref="panel" class="modal create-dialog"    @keydown="key">
+      <header><h2>{{ title }}</h2><AButton type="text" class="icon-button" aria-label="关闭新建" title="关闭新建" :disabled="busy" @click="close"><X :size="18" /></AButton></header>
       <div class="create-body">
         <label for="create-name">{{ type === 'folder' ? '文件夹名称' : '笔记名称' }}</label>
-        <input id="create-name" ref="input" v-model="name" :disabled="busy || uncertain" :aria-invalid="!!error" aria-describedby="create-name-help create-error" autocomplete="off" />
+        <AInput id="create-name" v-model:value="name" :disabled="busy || uncertain" :aria-invalid="!!error" aria-describedby="create-name-help create-error" autocomplete="off" />
         <p id="create-name-help" class="field-help">只填写名称；{{ type === 'note' ? '未填写 .md 后缀时自动补齐。' : '子目录位置请在下方选择。' }}</p>
         <p v-if="error" id="create-error" class="error-message" role="alert">{{ error }}</p>
         <label for="create-location">创建位置</label>
@@ -82,8 +85,8 @@ onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (prev
         <p class="field-help create-path">创建后：{{ path }}</p>
         <p v-if="busy" role="status">正在等待服务器确认…</p>
       </div>
-      <footer><button :disabled="busy" @click="close">取消</button><button class="primary" :disabled="busy" @click="create">{{ uncertain ? '重试确认' : busy ? '创建中…' : '创建' }}</button></footer>
+      <footer><AButton :disabled="busy" @click="close">取消</AButton><AButton type="primary" class="primary" :disabled="busy" @click="create">{{ uncertain ? '重试确认' : busy ? '创建中…' : '创建' }}</AButton></footer>
     </section>
     <ConfirmDialog v-if="closing" title="关闭新建" message="创建结果尚未确认，关闭后请先刷新目录核对。仍要关闭吗？" confirm-label="关闭新建" @answer="value => { closing = false; if (value) emit('close') }" />
-  </div>
+  </AppDialog>
 </template>

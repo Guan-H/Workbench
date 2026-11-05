@@ -2,10 +2,12 @@ package com.privatespace.modules.auth.controller;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.List;
 
 import com.privatespace.config.SecurityConfiguration;
 import com.privatespace.modules.auth.dto.AuthStatusResponse;
 import com.privatespace.modules.auth.dto.CredentialsRequest;
+import com.privatespace.modules.auth.dto.WebSessionResponse;
 import com.privatespace.modules.auth.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -17,6 +19,9 @@ import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -71,6 +76,18 @@ public class AuthController {
         cookie(response, "", Duration.ZERO);
         csrf.saveToken(null, request, response);
         return Map.of("loggedOut", true);
+    }
+
+    @GetMapping("/sessions")
+    public List<WebSessionResponse> sessions(
+            @CookieValue(name = SecurityConfiguration.SESSION_COOKIE, required = false) String currentToken) {
+        return service.sessions(currentToken);
+    }
+
+    @DeleteMapping("/sessions/{sessionId}")
+    public Map<String, Integer> revokeSession(@PathVariable String sessionId,
+            @CookieValue(name = SecurityConfiguration.SESSION_COOKIE, required = false) String currentToken) {
+        return Map.of("revoked", service.revokeSession(currentToken, sessionId));
     }
 
     private void cookie(HttpServletResponse response, String token, Duration duration) {

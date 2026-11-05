@@ -55,7 +55,7 @@ export async function checkSyncCenter(page, request, output) {
   assert.equal(device.status, 200)
   await page.getByRole('button', { name: '刷新设备', exact: true }).click()
   await page.getByRole('button', { name: '撤销设备 网页撤销验收', exact: true }).click()
-  const dialog = page.getByRole('alertdialog', { name: '撤销设备授权' })
+  const dialog = page.getByRole('dialog', { name: '撤销设备授权' })
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
   assert.equal((await request('/sync-devices')).body.find(item => item.id === device.id).revoked, false)
   await page.getByRole('button', { name: '撤销设备 网页撤销验收', exact: true }).click()
@@ -69,7 +69,7 @@ export async function checkSyncCenter(page, request, output) {
   await page.waitForFunction(() => document.querySelectorAll('[data-sync-device]').length === 10)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await page.waitForFunction(() => document.querySelectorAll('[data-sync-device]').length === 2)
-  assert.ok((await page.locator('.sync-pagination').innerText()).includes('2 / 2'))
+  assert.ok((await page.locator('.sync-devices .pagination').innerText()).includes('第 2 页 / 共 2 页'))
   await page.getByRole('button', { name: '上一页', exact: true }).click()
   await page.waitForFunction(() => document.querySelectorAll('[data-sync-device]').length === 10)
   for (const [width, height] of [[1440, 960], [375, 812], [812, 375]]) {

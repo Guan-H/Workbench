@@ -59,7 +59,7 @@ export async function checkSyncScope(page, request, output) {
   }
   await page.setViewportSize({ width: 1440, height: 960 })
   await dialog.getByRole('checkbox', { name: '同步目录：选择个人', exact: true }).uncheck()
-  await page.locator('.modal-backdrop').click({ position: { x: 2, y: 2 } })
+  await page.locator('.ant-modal-wrap').click({ position: { x: 2, y: 2 } })
   assert.equal(await dialog.isVisible(), true)
   await dialog.getByRole('button', { name: '保存范围', exact: true }).click()
   await dialog.waitFor({ state: 'hidden' })

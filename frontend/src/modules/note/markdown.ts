@@ -17,7 +17,8 @@ export function relativePath(base: string, target: string) {
 }
 
 export function renderMarkdown(source: string, path: string) {
-  const md = new MarkdownIt({ html: false, linkify: true, highlight(code, language) {
+  // Match editor line breaks in preview without rewriting the stored Markdown.
+  const md = new MarkdownIt({ html: false, linkify: true, breaks: true, highlight(code, language) {
     return language && hljs.getLanguage(language) ? hljs.highlight(code, { language }).value : ''
   } }).use(taskLists, { enabled: false })
   md.renderer.rules.heading_open = (tokens, index, options, _env, renderer) => {
