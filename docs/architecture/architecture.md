@@ -1132,3 +1132,13 @@ V14 给历史操作增加 operation_kind，将已有 V13 非空操作标识补�
 预览组件 8 项检查通过，新增 LF/CRLF 普通换行、空行分段、显式换行及代码块边界断言；修改前新增普通换行两项真实失败，修改后通过。Happy DOM 的既有首标签净化差异通过带标题的组件夹具隔离，未修改产品净化逻辑；无标题的用户原例由真实 Chrome 检查。类型检查和生产构建通过，既有包体积告警保留。
 
 `CHECK_MARKDOWN_LINEBREAKS=1` 配合 `./scripts/test-integration.ps1 -OnlyAccountSessions` 通过真实专项，约 34 秒，批次 `sessions-7a49ab38-5e91-4490-8ee1-32b203d701b9`。独立 MySQL、真实登录与 HTTP 创建无标题三行文本，浏览器核对文本实际处于三个不同纵向位置；再从真实编辑器修改、Ctrl+S 保存，接口核对原文完全一致，预览模式和刷新后继续保留换行，并确认空行、列表与代码块。检查脚本 `frontend/scripts/check-markdown-linebreaks.mjs` 复用独立夹具，不操作用户文档。首次浏览器脚本误把零宽 br 作为可见控件等待，改为等待节点并检查真实文本位置后通过，不将首次算作通过。日志 `data/markdown-linebreak-unit.local.log`、`data/markdown-linebreak-build.local.log`、`data/markdown-linebreak-integration.local.log`；人工查看预览截图，没有重跑整套笔记、同步或保险库回归。
+
+## 58. 当前代码提交与生产预览更新（2026-11-05）
+
+按用户要求将当前实现提交为 `1d491ba`，推送 `codex/m2-incremental-sync` 及标签 `preview-20261105-1d491ba`，从干净归档构建服务器镜像。20:21 完成网站和后端切换；发布范围包括本章此前 M2 网页/服务端、Ant Design Vue、会话管理、密码生成器、M3 基础及登录条目/加密草稿、普通 Markdown 换行修复。此前各节“生产未更新”描述为各开发批次的历史状态，本次以部署文档第 12 节为准。
+
+构建阶段旧服务在线；维护阶段仅停止 Workbench Web/后端写入，在同一窗口备份数据库、对象、配置和旧版本至 `/var/backups/workbench/preview-20261105-1d491ba`。V6→V14 完成后核对原 note_file 37、account 1、sync_device 1、note_revision 423、file_object 350、web_session 9 条数量一致，原文档元数据、账户/会话/设备投影和对象 SHA-256 一致，原账户仍已初始化。未使用用户秘密或代建生产业务数据。另有 WordPress 容器及其 8080/3306 主机映射，本次未修改；其 ID 保持不变。
+
+发布前 12 项前端单元/组件检查通过，构建和真实业务专项采用第 49–57 节已执行结果，未重跑完整回归。生产只读检查确认 HTTPS、重定向、就绪、匿名权限、Cookie、非 root Java、数据库 V14、备份校验及实际资源/CSP。开发电脑 Chrome 在真实公网页面运行已部署的加密 Worker，用虚构秘密验证非空条目、草稿及改主密码恢复，生产业务 API 写请求为 0，并查看登录页截图。这不代表生产登录后的全业务测试、异机恢复或完整安全验收。
+
+README、部署文档、M2 使用说明与人工清单已同步实际发布状态；未变更 PRD、技术选型或开发规范。旧镜像、配置和备份保留，回滚分支未触发且未演练。Windows 已安装助手未替换；M3 尚未结束，保险库继续仅限测试秘密，2FA 暂缓。
