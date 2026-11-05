@@ -263,9 +263,25 @@ async function refresh() {
       if (serial === querySerial) searchResults.value = result
     }
     problem.value = ''
+    return true
   }
-  catch (error) { problem.value = message(error) }
+  catch (error) { problem.value = message(error); return false }
   finally { loading.value = false }
+}
+
+const refreshingDirectory = ref(false)
+const refreshFeedback = ref('')
+async function refreshDirectory() {
+  if (refreshingDirectory.value) return
+  refreshingDirectory.value = true
+  refreshFeedback.value = ''
+  try {
+    // Refresh metadata only. Keep the open document, its version and any draft intact.
+    const success = await refresh()
+    refreshFeedback.value = success
+      ? `目录已刷新，当前文本已保留 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+      : '目录刷新失败，请重试。'
+  } finally { refreshingDirectory.value = false }
 }
 
 function applyNote(note: Note) {
@@ -724,7 +740,8 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
       <div class="search-field"><Search :size="16" /><input id="note-search" v-model="query" placeholder="搜索笔记…" aria-label="搜索笔记" /><kbd>⌘ K</kbd></div>
       <div v-if="view !== 'trash'" class="file-actions"><button @click="openCreate('note')"><Plus :size="16" />新建笔记</button><button class="icon-button" @click="openCreate('folder')" title="新建文件夹" aria-label="新建文件夹"><FolderPlus :size="17" /></button></div>
       <div v-if="view !== 'trash' && !query" class="quick-filters"><button :class="{ active: view === 'favorites' }" @click="switchView('favorites')"><Star :size="14" />收藏</button><button :class="{ active: view === 'recent' }" @click="switchView('recent')"><Clock3 :size="14" />最近访问</button></div>
-      <div class="tree-heading"><span>{{ query ? '搜索结果' : view === 'trash' ? '已删除的内容' : '文件目录' }}</span><button class="icon-button" @click="refresh" title="刷新目录" aria-label="刷新目录"><RefreshCw :size="13" /></button></div>
+      <div class="tree-heading"><span>{{ query ? '搜索结果' : view === 'trash' ? '已删除的内容' : '文件目录' }}</span><button class="icon-button" @click="refreshDirectory" :disabled="refreshingDirectory" :aria-busy="refreshingDirectory" :title="refreshingDirectory ? '正在刷新目录' : '刷新目录'" aria-label="刷新目录"><RefreshCw :size="13" :class="{ 'message-loading': refreshingDirectory }" aria-hidden="true" /></button></div>
+      <p v-if="refreshingDirectory || refreshFeedback" class="sidebar-empty" role="status">{{ refreshingDirectory ? '正在刷新目录…' : refreshFeedback }}</p>
       <button v-if="view === 'notes' && !query" class="root-drop-target" :class="{ 'drop-target': rootDragOver, active: !treeSelection }" :aria-pressed="!treeSelection" @contextmenu="blankContext($event, '')" @keydown="blankContext($event, '')" @click="selectFolder('')" @dragover="rootOver" @dragleave="rootDragOver = false" @drop="rootDrop" title="点击切换根目录，或将文件拖到这里移回根目录">根目录 /</button>
       <p v-if="view !== 'trash'" class="current-folder" :title="folder || '根目录 /'" role="status">新建位置：{{ folder || '根目录 /' }}</p>
       <div ref="treeScroll" class="tree-scroll" tabindex="0" aria-label="文件目录空白区域" @contextmenu="blankContext($event)" @keydown="blankContext($event)">

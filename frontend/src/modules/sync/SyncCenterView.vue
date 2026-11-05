@@ -40,9 +40,10 @@ const timer = setInterval(() => {
 
 function time(value: string | null) { return value ? timeFormat.format(new Date(value)) : '尚未联系' }
 function message(cause: unknown) { return cause instanceof Error ? cause.message : '设备操作失败，请重试。' }
-async function refresh() {
+async function refresh(showFeedback = false) {
   loading.value = true
   listError.value = ''
+  if (showFeedback) feedback.value = ''
   try {
     const result = await api<SyncDevice[]>('/sync-devices')
     if (alive) {
@@ -51,6 +52,7 @@ async function refresh() {
     }
     try { const catalog = await listNotes(); if (alive) { folders.value = catalog; folderError.value = '' } }
     catch (cause) { if (alive) folderError.value = message(cause) }
+    if (alive && showFeedback) feedback.value = `${folderError.value ? '设备已刷新，目录加载失败，请重试' : '设备和目录已刷新'} · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
   } catch (cause) { if (alive) listError.value = message(cause) }
   finally { if (alive) loading.value = false }
 }
@@ -113,7 +115,7 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); pairing.value = und
 
 <template>
   <section class="sync-content" aria-labelledby="sync-title">
-    <header class="sync-page-heading"><div><h1 id="sync-title">同步中心</h1><p>配对 Windows 助手，管理普通笔记的设备授权。</p></div><button :disabled="loading || busy" @click="refresh"><RefreshCw :size="16" aria-hidden="true" />刷新设备</button></header>
+    <header class="sync-page-heading"><div><h1 id="sync-title">同步中心</h1><p>配对 Windows 助手，管理普通笔记的设备授权。</p></div><button :disabled="loading || busy" :aria-busy="loading" @click="refresh(true)"><RefreshCw :size="16" :class="{ 'message-loading': loading }" aria-hidden="true" />{{ loading ? '正在刷新…' : '刷新设备' }}</button></header>
     <p class="sync-scope">请使用与服务器配套的助手版本。冲突记录来自助手实际成功上报；旧版或尚未上报的设备不能据此判断没有冲突。</p>
     <p v-if="problem" class="error-message" role="alert">{{ problem }}</p>
     <p v-if="listError" class="error-message" role="alert">{{ listError }}</p>
