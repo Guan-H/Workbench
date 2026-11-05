@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Copy, Monitor, RefreshCw, ShieldOff } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { CheckCircle2, Copy, Monitor, RefreshCw, ShieldOff, X } from 'lucide-vue-next'
 import { api, write, listNotes, type Note } from '../../shared/api/client'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import SyncScopePicker, { type SyncScope } from './SyncScopePicker.vue'
@@ -33,6 +33,11 @@ const rows = computed(() => devices.value.slice(page.value * pageSize, (page.val
 const seconds = computed(() => Math.max(0, Math.ceil(((pairing.value?.deadline ?? 0) - now.value) / 1000)))
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' })
 let alive = true
+let messageTimer: ReturnType<typeof setTimeout> | undefined
+watch(feedback, value => {
+  clearTimeout(messageTimer)
+  if (value) messageTimer = setTimeout(() => { feedback.value = '' }, 4000)
+})
 const timer = setInterval(() => {
   now.value = Date.now()
   if (pairing.value && now.value >= pairing.value.deadline) pairing.value = undefined
@@ -52,7 +57,7 @@ async function refresh(showFeedback = false) {
     }
     try { const catalog = await listNotes(); if (alive) { folders.value = catalog; folderError.value = '' } }
     catch (cause) { if (alive) folderError.value = message(cause) }
-    if (alive && showFeedback) feedback.value = `${folderError.value ? '设备已刷新，目录加载失败，请重试' : '设备和目录已刷新'} · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+    if (alive && showFeedback) feedback.value = folderError.value ? '设备已刷新，目录加载失败，请重试。' : '刷新成功'
   } catch (cause) { if (alive) listError.value = message(cause) }
   finally { if (alive) loading.value = false }
 }
@@ -110,7 +115,7 @@ async function saveScope() {
   finally { if (alive) busy.value = false }
 }
 onMounted(() => { void refresh() })
-onBeforeUnmount(() => { alive = false; clearInterval(timer); pairing.value = undefined })
+onBeforeUnmount(() => { alive = false; clearInterval(timer); clearTimeout(messageTimer); pairing.value = undefined })
 </script>
 
 <template>
@@ -119,7 +124,7 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); pairing.value = und
     <p class="sync-scope">请使用与服务器配套的助手版本。冲突记录来自助手实际成功上报；旧版或尚未上报的设备不能据此判断没有冲突。</p>
     <p v-if="problem" class="error-message" role="alert">{{ problem }}</p>
     <p v-if="listError" class="error-message" role="alert">{{ listError }}</p>
-    <p v-if="feedback" role="status" class="sync-feedback">{{ feedback }}</p>
+    <div v-if="feedback" role="status" class="save-feedback" aria-live="polite"><CheckCircle2 :size="18" aria-hidden="true" /><span>{{ feedback }}</span><button class="icon-button" @click="feedback = ''" title="关闭消息" aria-label="关闭消息"><X :size="15" aria-hidden="true" /></button></div>
     <section class="home-card sync-pairing" aria-labelledby="pairing-title">
       <h2 id="pairing-title">添加设备</h2>
       <p>生成配对码后，在 Windows 助手中填写服务器地址并选择同步目录。建议使用空目录；已有目录须使用支持合并预检的新版助手。配对本身不会上传或下载文件。</p>
