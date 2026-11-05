@@ -34,9 +34,14 @@ const seconds = computed(() => Math.max(0, Math.ceil(((pairing.value?.deadline ?
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' })
 let alive = true
 let messageTimer: ReturnType<typeof setTimeout> | undefined
+let messageDuration = 4000
+function notify(text: string, duration = 4000) {
+  messageDuration = duration
+  feedback.value = text
+}
 watch(feedback, value => {
   clearTimeout(messageTimer)
-  if (value) messageTimer = setTimeout(() => { feedback.value = '' }, 4000)
+  if (value) messageTimer = setTimeout(() => { feedback.value = '' }, messageDuration)
 })
 const timer = setInterval(() => {
   now.value = Date.now()
@@ -57,7 +62,7 @@ async function refresh(showFeedback = false) {
     }
     try { const catalog = await listNotes(); if (alive) { folders.value = catalog; folderError.value = '' } }
     catch (cause) { if (alive) folderError.value = message(cause) }
-    if (alive && showFeedback) feedback.value = folderError.value ? '设备已刷新，目录加载失败，请重试。' : '刷新成功'
+    if (alive && showFeedback) notify(folderError.value ? '设备已刷新，目录加载失败，请重试。' : '刷新成功', 2000)
   } catch (cause) { if (alive) listError.value = message(cause) }
   finally { if (alive) loading.value = false }
 }
@@ -75,7 +80,7 @@ async function createPairing() {
 }
 async function copyCode() {
   if (!pairing.value || seconds.value === 0) return
-  try { await navigator.clipboard.writeText(pairing.value.code); feedback.value = '配对码已复制。' }
+  try { await navigator.clipboard.writeText(pairing.value.code); notify('配对码已复制。') }
   catch { problem.value = '无法访问剪贴板，请手动选择并复制配对码。' }
 }
 async function revoke(accepted: boolean) {
@@ -85,7 +90,7 @@ async function revoke(accepted: boolean) {
   busy.value = true; problem.value = ''; feedback.value = ''
   try {
     await write('/sync-devices/' + target.id, 'DELETE')
-    if (alive) { feedback.value = '设备授权已撤销，后续同步请求将被拒绝。'; await refresh() }
+    if (alive) { notify('设备授权已撤销，后续同步请求将被拒绝。'); await refresh() }
   } catch (cause) { if (alive) problem.value = message(cause) }
   finally { if (alive) busy.value = false }
 }
@@ -110,7 +115,7 @@ async function saveScope() {
   busy.value = true; scopeError.value = ''
   try {
     await write('/sync-devices/' + editing.value.id + '/scope', 'PUT', { scope: editedScope.value, baseVersion: editing.value.scopeVersion })
-    if (alive) { editing.value = undefined; feedback.value = '同步范围已保存。助手下一次对账应用新范围，未选文件保留，重新纳入的路径不依据旧基线推断删除。'; await refresh(); previous?.focus() }
+    if (alive) { editing.value = undefined; notify('同步范围已保存。助手下一次对账应用新范围，未选文件保留，重新纳入的路径不依据旧基线推断删除。'); await refresh(); previous?.focus() }
   } catch (cause) { if (alive) scopeError.value = message(cause) }
   finally { if (alive) busy.value = false }
 }
@@ -124,7 +129,7 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); clearTimeout(messag
     <p class="sync-scope">请使用与服务器配套的助手版本。冲突记录来自助手实际成功上报；旧版或尚未上报的设备不能据此判断没有冲突。</p>
     <p v-if="problem" class="error-message" role="alert">{{ problem }}</p>
     <p v-if="listError" class="error-message" role="alert">{{ listError }}</p>
-    <div v-if="feedback" role="status" class="save-feedback" aria-live="polite"><CheckCircle2 :size="18" aria-hidden="true" /><span>{{ feedback }}</span><button class="icon-button" @click="feedback = ''" title="关闭消息" aria-label="关闭消息"><X :size="15" aria-hidden="true" /></button></div>
+    <Transition name="message-fade"><div v-if="feedback" role="status" class="save-feedback" aria-live="polite"><CheckCircle2 :size="18" aria-hidden="true" /><span>{{ feedback }}</span><button class="icon-button" @click="feedback = ''" title="关闭消息" aria-label="关闭消息"><X :size="15" aria-hidden="true" /></button></div></Transition>
     <section class="home-card sync-pairing" aria-labelledby="pairing-title">
       <h2 id="pairing-title">添加设备</h2>
       <p>生成配对码后，在 Windows 助手中填写服务器地址并选择同步目录。建议使用空目录；已有目录须使用支持合并预检的新版助手。配对本身不会上传或下载文件。</p>

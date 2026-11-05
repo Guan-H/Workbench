@@ -34,7 +34,7 @@ const saving = ref(false)
 const opening = ref(false)
 let openSerial = 0
 let openController: AbortController | undefined
-const saveFeedback = ref<{ kind: 'saving' | 'success' | 'error' | 'info'; text: string }>()
+const saveFeedback = ref<{ kind: 'saving' | 'success' | 'error' | 'info'; text: string; duration?: number }>()
 const feedbackIcon = computed(() => ({ saving: LoaderCircle, success: CheckCircle2, error: CircleAlert, info: Info })[saveFeedback.value?.kind ?? 'info'])
 const conflict = ref(false)
 const view = ref<'notes' | 'favorites' | 'recent' | 'trash'>('notes')
@@ -90,6 +90,33 @@ const attachmentInput = ref<HTMLInputElement>()
 const importInput = ref<HTMLInputElement>()
 const directoryImport = ref(false)
 const exporting = ref(false)
+const transferMenuOpen = ref(false)
+const transferArea = ref<HTMLElement>()
+const transferTrigger = ref<HTMLButtonElement>()
+async function toggleTransferMenu() {
+  transferMenuOpen.value = !transferMenuOpen.value
+  if (transferMenuOpen.value) {
+    await nextTick()
+    transferArea.value?.querySelector<HTMLButtonElement>('.transfer-menu button')?.focus()
+  }
+}
+function closeTransferMenu(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault(); event.stopPropagation()
+  transferMenuOpen.value = false
+  transferTrigger.value?.focus()
+}
+function closeTransferMenuOutside(event: PointerEvent) {
+  if (event.target instanceof Node && !transferArea.value?.contains(event.target)) transferMenuOpen.value = false
+}
+function transferAction(action: 'markdown' | 'directory' | 'export') {
+  transferMenuOpen.value = false
+  if (action === 'markdown') importInput.value?.click()
+  else if (action === 'directory') directoryImport.value = true
+  else void exportNotes()
+}
+onMounted(() => document.addEventListener('pointerdown', closeTransferMenuOutside))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', closeTransferMenuOutside))
 const uploadProgress = ref<UploadProgress>()
 const exportDialog = ref(false)
 const recycleRequest = ref<Note>()
@@ -241,7 +268,7 @@ watch(saveFeedback, value => {
   window.clearTimeout(feedbackTimer)
   if (!value || value.kind === 'saving') return
   const displayed = value
-  feedbackTimer = setTimeout(() => { if (saveFeedback.value === displayed) saveFeedback.value = undefined }, value.kind === 'error' ? 8000 : 4000)
+  feedbackTimer = setTimeout(() => { if (saveFeedback.value === displayed) saveFeedback.value = undefined }, value.duration ?? (value.kind === 'error' ? 8000 : 4000))
 })
 
 function draftKey(id: string) { return `private-space:draft:${props.username}:${id}` }
@@ -277,8 +304,8 @@ async function refreshDirectory() {
     // Refresh metadata only. Keep the open document, its version and any draft intact.
     const success = await refresh()
     saveFeedback.value = success
-      ? { kind: 'success', text: '刷新成功' }
-      : { kind: 'error', text: '刷新失败，请重试。' }
+      ? { kind: 'success', text: '刷新成功', duration: 2000 }
+      : { kind: 'error', text: '刷新失败，请重试。', duration: 2000 }
   } finally { refreshingDirectory.value = false }
 }
 
@@ -749,14 +776,14 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
         </template>
         <template v-else><FileTree :items="activeItems" :selected="treeSelection" :reveal-path="revealPath" @open="openNote" @folder="selectFolder" @context="contextMenu = $event" @move="moveDropped" /><p v-if="!items.length" class="sidebar-empty">还没有笔记，<br />从一个新的想法开始。</p></template>
       </div>
-      <div class="import-area"><button @click="importInput?.click()"><Upload :size="15" />导入 Markdown</button><button @click="directoryImport = true"><Upload :size="15" />批量导入目录</button><button :disabled="exporting" @click="exportNotes"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small><small v-if="folder">当前目录：{{ folder }} <button @click="selectFolder('')">回到根目录</button></small></div>
+      <div ref="transferArea" class="import-area" @keydown="closeTransferMenu"><button ref="transferTrigger" :aria-expanded="transferMenuOpen" aria-controls="transfer-menu" @click="toggleTransferMenu"><Upload :size="15" aria-hidden="true" />导入/导出</button><div v-if="transferMenuOpen" id="transfer-menu" class="transfer-menu" role="group" aria-label="导入导出操作"><button @click="transferAction('markdown')"><Upload :size="15" aria-hidden="true" />导入 Markdown</button><button @click="transferAction('directory')"><FolderPlus :size="15" aria-hidden="true" />批量导入目录</button><button :disabled="exporting" @click="transferAction('export')"><Download :size="15" aria-hidden="true" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</button></div><small v-if="exportFeedback" role="status">{{ exportFeedback }}</small></div>
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
     <main v-show="section === 'notes'" class="note-main">
       <header class="workspace-topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></button><button v-if="!treeVisible" class="icon-button" @click="treeVisible = true" title="展开文件树" aria-label="展开文件树"><PanelLeft :size="18" /></button><span>我的笔记</span><ChevronRight :size="13" /><strong>{{ currentTitle }}</strong></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <div v-if="problem" class="workspace-error" role="alert"><span>{{ problem }}</span><button class="icon-button" @click="problem = ''" title="关闭错误提示" aria-label="关闭错误提示"><X :size="15" /></button></div>
-      <div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div>
+      <Transition name="message-fade"><div v-if="saveFeedback" class="save-feedback" :class="'save-feedback-' + saveFeedback.kind" :role="saveFeedback.kind === 'error' ? 'alert' : 'status'" :aria-live="saveFeedback.kind === 'error' ? 'assertive' : 'polite'" aria-atomic="true" data-testid="save-feedback"><component :is="feedbackIcon" :size="18" :class="{ 'message-loading': saveFeedback.kind === 'saving' }" /><span>{{ saveFeedback.text }}</span><button class="icon-button" @click="saveFeedback = undefined" title="关闭保存消息" aria-label="关闭保存消息"><X :size="15" /></button></div></Transition>
       <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
       <p v-if="opening" class="note-loading" role="status">正在切换笔记，可继续选择其他笔记…</p>
       <template v-if="current && current.type === 'note' && !current.deleted">

@@ -88,6 +88,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
     await picker.getByRole('button', { name: '使用此目录', exact: true }).click()
   }
   const open = async (useDrop = false) => {
+    await page.getByRole('button', { name: '导入/导出', exact: true }).click()
     await page.getByRole('button', { name: '批量导入目录', exact: true }).click()
     await dialog.getByRole('button', { name: '选择目录', exact: true }).waitFor({ state: 'visible' })
     await importTarget('')
@@ -231,6 +232,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   assert.equal((await anonymous.request.get(origin + '/api/v1/note-exports')).status(), 401)
   await anonymous.close()
 
+  await page.getByRole('button', { name: '导入/导出', exact: true }).click()
   await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
   const selectionDialog = page.getByRole('dialog', { name: '导出笔记', exact: true })
   assert.equal(await selectionDialog.locator('input[type=checkbox]:checked').count(), 0, 'export opens with nothing selected')
@@ -242,6 +244,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   const selectedArchive = fileURLToPath(new URL('selected.zip', output)); await (await selectedDownload).saveAs(selectedArchive)
   const selectedNames = JSON.parse(execFileSync('python', ['-c', 'import zipfile,json,sys; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist(),ensure_ascii=True))', selectedArchive], { encoding: 'utf8' }))
   assert.deepEqual(selectedNames.sort(), ['批量目录/assets/可视图.png', '批量目录/中文, 特殊.md'].sort(), 'selected note exports only its referenced attachment')
+  await page.getByRole('button', { name: '导入/导出', exact: true }).click()
   await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
   await selectionDialog.getByRole('button', { name: '展开目录：批量目录', exact: true }).click()
   await selectionDialog.getByRole('checkbox', { name: '目录：批量目录', exact: true }).check()
@@ -256,6 +259,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
 
   // Download the actual ZIP through the UI, inspect with the standard ZIP reader and import it back.
   const downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导入/导出', exact: true }).click()
   await page.getByRole('button', { name: '导出笔记 ZIP', exact: true }).click()
   await page.getByRole('dialog', { name: '导出笔记', exact: true }).getByRole('button', { name: '全选', exact: true }).click()
   await page.getByRole('dialog', { name: '导出笔记', exact: true }).getByRole('button', { name: '确认导出', exact: true }).click()
@@ -280,6 +284,7 @@ export async function checkNoteImports(page, request, context, origin, output) {
   assert.deepEqual(await readFile(new URL('zip-expanded/批量目录/assets/可视图.png', output)), image)
   await request('/notes', 'POST', { path: 'ZIP往返', type: 'folder', content: '' })
   await page.getByRole('button', { name: '刷新目录', exact: true }).click()
+  await page.getByRole('button', { name: '导入/导出', exact: true }).click()
   await page.getByRole('button', { name: '批量导入目录', exact: true }).click()
   await importTarget('ZIP往返')
   await page.getByLabel('选择导入目录', { exact: true }).setInputFiles(fileURLToPath(new URL('zip-expanded/批量目录/', output)))

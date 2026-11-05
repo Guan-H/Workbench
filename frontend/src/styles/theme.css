@@ -208,7 +208,9 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .move-warnings { color: var(--color-warning); }
 .tree-indent { width: 13px; flex-shrink: 0; }
 .sidebar-empty { font-size: 12px; line-height: 1.9; color: var(--color-text-muted); padding: 12px 20px; }
-.import-area { margin: 12px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.import-area { position: relative; margin: 12px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.transfer-menu { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 30; padding: 5px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); box-shadow: 0 6px 20px #252a2820; max-height: 50dvh; overflow-y: auto; }
+.transfer-menu button { width: 100%; justify-content: flex-start; border: 0; font-size: 12px; }
 .import-area > button { width: 100%; font-size: 12px; background: transparent; border: 0; justify-content: flex-start; }
 .import-area small { display: block; font-size: 11px; overflow-wrap: anywhere; color: var(--color-text-muted); }
 .import-area small button { border: 0; font-size: 11px; }
@@ -222,6 +224,8 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .workspace-error { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
 .save-feedback { position: fixed; z-index: 60; top: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; width: max-content; max-width: min(520px, calc(100vw - 32px)); padding: 10px 10px 10px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-primary); box-shadow: 0 10px 32px #252a2826; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .save-feedback > span { flex: 1; }
+.message-fade-leave-active { transition: opacity 250ms ease-out; }
+.message-fade-leave-to { opacity: 0; }
 .save-feedback-error { border-color: var(--color-danger); color: var(--color-danger); }
 .save-feedback-info { color: var(--color-text-muted); }
 .message-loading { animation: message-spin 1s linear infinite; }
