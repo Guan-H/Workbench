@@ -145,6 +145,35 @@ resolve(e,sys.argv[2],sys.argv[3],"local")
         view = preview(engine, target); resolve(engine, target, view['fingerprint'], 'local')
         assert (root / target).read_bytes() == b'# case-only local edit\n'
         assert '5.MD' in [path.name for path in (root / folder).iterdir()]
+
+        # Follow the actual batch-confirmation entry, rather than invoking resolve directly.
+        source = files[6]['path']; target = folder + '/after-batch-choice.md'
+        (root / source).write_bytes(b'# chosen after batch approval\n')
+        file = moved(files[6], target)
+        moved(files[7], folder + '/ordinary-batch-rename.md')
+        engine.close(); engine = None
+        gui = tk.Tk(); gui.withdraw(); choices_app = SyncApp(gui, state)
+        try:
+            await_choice(lambda: choices_app.snapshot.get('root') is not None)
+            choices_app.once_button.invoke()
+            await_choice(lambda: choices_app.snapshot['result'].get('status') == 'REQUIRES_CONFIRMATION')
+            choices_app.preview_button.invoke(); gui.update()
+            choices_app.confirm_changes_button.invoke()
+            await_choice(lambda: choices_app.conflict_dialog and choices_app.conflict_dialog.window.winfo_exists())
+            dialog = choices_app.conflict_dialog
+            assert dialog.review['path'] == target
+            assert (root / source).read_bytes() == b'# chosen after batch approval\n' and not (root / target).exists()
+            dialog.use_local.invoke()
+            await_choice(lambda: choices_app.snapshot['result'].get('status') == 'CONFLICT_RESOLVED')
+            assert not (root / source).exists() and (root / target).read_bytes() == b'# chosen after batch approval\n'
+            actual = request('/notes/' + file['id'])
+            assert actual['path'] == target and actual['content'] == '# chosen after batch approval\n'
+            assert not (root / files[7]['path']).exists() and (root / folder / 'ordinary-batch-rename.md').is_file()
+        finally:
+            choices_app.close()
+            while not choices_app.worker.stopped.wait(.03): gui.update()
+            try: gui.after_cancel(choices_app.poll_timer); gui.destroy()
+            except tk.TclError: pass
     finally:
         if child and child.poll() is None: child.kill(); child.wait(10)
         if engine: engine.close()

@@ -285,6 +285,15 @@ class SyncWorker:
                             self.watcher = DirectoryWatcher(self.engine.fs.root)
                             self.automatic = True
                         self._cycle(command.confirmation, command.initial_confirmation)
+                        if command.confirmation and self.last_result.get('status') == 'OK' and self.last_result.get('isolatedRenameIssues'):
+                            choices = [item['path'] for item in self.last_result.get('issues', [])
+                                       if item.get('code') in ('RENAME_MODIFY_CONFLICT', 'RENAME_PATH_CONFLICT', 'RENAME_IDENTITY_UNAVAILABLE', 'LOCAL_CHANGED_BEFORE_RENAME')]
+                            if len(choices) == 1:
+                                from .conflicts import preview
+                                self._stop_watcher()
+                                self.last_result = {'status': 'CONFLICT_REVIEW', 'conflictPreview': preview(self.engine, choices[0]),
+                                                    **self.engine.status()}
+                                self._publish('ATTENTION')
                 except (SyncError, OSError, ValueError, sqlite3.Error) as error:
                     self._stop_watcher()
                     self._publish('ERROR', error.code if isinstance(error, SyncError) else 'LOCAL_IO_UNAVAILABLE', configuration_finished=isinstance(command, ProfileCommand))

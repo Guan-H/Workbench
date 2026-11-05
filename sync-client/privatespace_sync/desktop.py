@@ -64,7 +64,7 @@ PHASES = {
     'CONFIGURING': '正在停止原配置并切换，原文件与待上传内容保留…',
     'STOPPED': '助手正在退出，监听已停止',
     'WATCHING_ATTENTION': '改名冲突路径已保留，其他文件继续自动同步',
-    'READY_ATTENTION': '本轮其他文件已检查；改名冲突路径待处理，自动监听未开启',
+    'READY_ATTENTION': '改名尚未完成：选中待处理项并点击“处理选中冲突”，选择服务器或本地内容；自动监听未开启',
 }
 
 
@@ -412,7 +412,7 @@ class SyncApp:
         dialog.title('确认本批文件变更'); dialog.transient(self.window); dialog.grab_set()
         dialog.geometry('660x420'); dialog.minsize(520, 340)
         frame = ttk.Frame(dialog, padding=16); frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text=f"本轮拟变更 {len(preview['changes'])} 项。改名保留原文件 ID 和历史；删除保留回收副本。确认前核对方向和路径。", wraplength=620).pack(anchor='w', pady=(0, 12))
+        ttk.Label(frame, text=f"本轮拟变更 {len(preview['changes'])} 项。改名保留原文件 ID 和历史；删除保留回收副本。若改名文件也有内容冲突，确认批次后还需选择采用哪一份内容。", wraplength=620).pack(anchor='w', pady=(0, 12))
         page = 0
         listing = ttk.Frame(frame); listing.pack(fill='both', expand=True)
         content = tk.Text(listing, height=13, wrap='word', state='disabled')
@@ -437,7 +437,8 @@ class SyncApp:
             dialog.destroy(); self.update_controls(True, True)
             self.worker.run_cycle(confirmation=preview['fingerprint'])
         ttk.Button(controls, text='取消', command=dialog.destroy).pack(side='right')
-        ttk.Button(controls, text='确认本批变更', command=confirm).pack(side='right', padx=8)
+        self.confirm_changes_button = ttk.Button(controls, text='确认本批变更', command=confirm)
+        self.confirm_changes_button.pack(side='right', padx=8)
         dialog.bind('<Escape>', lambda _: dialog.destroy())
         render()
 
