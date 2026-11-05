@@ -100,8 +100,9 @@ class SyncWorker:
         self.commands.put(ProfileCommand(identity, name))
 
     def _publish(self, phase: str, code: str | None = None, *, configuration_finished=False):
-        if self.engine and phase in ('PAUSED', 'READY', 'WATCHING', 'ATTENTION', 'ERROR', 'STOPPED') and code not in ('NETWORK_UNAVAILABLE', 'DEVICE_UNAUTHORIZED'):
-            self._report_conflicts(phase, code, observations=phase in ('READY', 'WATCHING', 'ATTENTION'))
+        if self.engine and phase in ('PAUSED', 'READY', 'WATCHING', 'ATTENTION', 'WATCHING_ATTENTION', 'READY_ATTENTION', 'ERROR', 'STOPPED') and code not in ('NETWORK_UNAVAILABLE', 'DEVICE_UNAUTHORIZED'):
+            self._report_conflicts('WATCHING' if phase == 'WATCHING_ATTENTION' else 'ATTENTION' if phase == 'READY_ATTENTION' else phase,
+                code, observations=phase in ('READY', 'WATCHING', 'ATTENTION', 'WATCHING_ATTENTION', 'READY_ATTENTION'))
         self.events.put({'phase': phase, 'code': code, 'automatic': self.automatic,
                          'root': self.engine.config['root'] if self.engine else None,
                          'url': self.engine.config['url'] if self.engine else None,
@@ -182,6 +183,10 @@ class SyncWorker:
         elif code == 'PAUSE_REQUESTED':
             self._stop_watcher()
             self._publish('PAUSED')
+        elif result['status'] == 'OK' and result.get('isolatedRenameIssues') and not result.get('rescanRequired'):
+            self.retry = 0
+            self.next_scan = time.monotonic() + 300
+            self._publish('WATCHING_ATTENTION' if self.automatic else 'READY_ATTENTION')
         elif result['status'] != 'OK' or result.get('issues') or result.get('conflicts') or result.get('queued') or result.get('rescanRequired'):
             self._stop_watcher()
             self._publish('ATTENTION', code)

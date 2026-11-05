@@ -125,6 +125,59 @@ try:
     root_a, state_a, a = pair('A', gate.url)
     root_b, state_b, b = pair('B', backend)
     settle(a); settle(b)
+    # A real remote rename and local modification isolate only the two names.
+    isolated_folder = '改名隔离验收'
+    request('/notes', {'path': isolated_folder, 'type': 'folder', 'content': ''})
+    isolated_notes = [request('/notes', {'path': f'{isolated_folder}/{index}.md', 'type': 'note', 'content': '# base\n'}) for index in range(12)]
+    isolated_root, isolated_state = output / 'root-isolated', output / 'state-isolated'
+    isolated_code = request('/sync-devices/pairing-code', {'name': 'rename-isolation', 'scope': {'all': False, 'folders': [isolated_folder]}})['code']
+    configure(backend, isolated_root, isolated_state, isolated_code)
+    isolated = Engine(isolated_state, stable_seconds=.01, delete_grace=0)
+    try:
+        settle(isolated)
+        old_path = isolated_notes[0]['path']; new_path = f'{isolated_folder}/renamed.md'
+        (isolated_root / old_path).write_bytes(b'# local edit must survive\n')
+        move = {'targetPath': new_path, 'baseVersion': isolated_notes[0]['version']}
+        plan = request('/notes/' + isolated_notes[0]['id'] + '/move-preview', move)
+        request('/notes/' + isolated_notes[0]['id'] + '/move', {**move, 'fingerprint': plan['fingerprint']})
+        other = isolated_notes[1]
+        request('/notes/' + other['id'], {'path': other['path'], 'type': 'note', 'baseVersion': other['version'], 'content': '# unrelated download\n'}, method='PUT')
+        fresh = isolated_root / isolated_folder / 'upload.md'; fresh.write_bytes(b'# unrelated upload\n')
+        result = isolated.cycle()
+        assert result['status'] == 'OK' and result['isolatedRenameIssues'], result
+        assert any(item['code'] == 'RENAME_MODIFY_CONFLICT' for item in result['issues'])
+        assert (isolated_root / old_path).read_bytes() == b'# local edit must survive\n' and not (isolated_root / new_path).exists()
+        assert (isolated_root / other['path']).read_bytes() == b'# unrelated download\n'
+        assert note_at(isolated, f'{isolated_folder}/upload.md')['sha256'] == digest(fresh.read_bytes())
+        assert not any(item['path'] == old_path for item in isolated.snapshot().values())
+    finally:
+        isolated.close()
+    import tkinter as tk
+    import time
+    from privatespace_sync.desktop import SyncApp
+    window = tk.Tk(); window.withdraw(); application = SyncApp(window, isolated_state)
+    def wait_for(predicate):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            window.update()
+            if predicate(): return
+            time.sleep(.03)
+        raise AssertionError('isolated rename GUI did not converge')
+    try:
+        wait_for(lambda: application.snapshot.get('root') is not None)
+        application.start_button.invoke()
+        wait_for(lambda: application.phase == 'WATCHING_ATTENTION')
+        assert application.worker.automatic
+        watched = isolated_root / isolated_folder / 'still-watching.md'; watched.write_bytes(b'# watcher continues\n')
+        wait_for(lambda: any(item['path'] == f'{isolated_folder}/still-watching.md' for item in request('/notes?query=still-watching')['items']))
+        assert (isolated_root / old_path).read_bytes() == b'# local edit must survive\n'
+        assert not (isolated_root / new_path).exists()
+    finally:
+        application.close()
+        while not application.worker.stopped.wait(.03): window.update()
+        try: window.after_cancel(application.poll_timer); window.destroy()
+        except tk.TclError: pass
+    checks.append('remote rename plus local edit keeps both names isolated and exact local bytes intact; unrelated upload/download and actual Tk automatic watcher continue without resurrecting the old server path')
     mid_source, mid_target = f'{folder}/保留11.md', f'{folder}/本轮中途改名.md'
     mid = note_at(a, mid_source)
     def rename_between_real_views():

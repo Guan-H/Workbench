@@ -44,6 +44,10 @@ ERRORS = {
     'PARENT_DIRECTORY_UNAVAILABLE': '原有文件的父目录缺失，已停止该范围操作，避免误传删除。',
     'RENAME_SERVER_UPGRADE_REQUIRED': '此服务器尚未支持保留文件身份的改名；已暂停，未新增或删除文件。请先升级服务端。',
     'RENAME_REQUIRES_RECONCILIATION': '改名遇到路径、版本或本地内容冲突，双方文件保留，请核对待处理项。',
+    'RENAME_MODIFY_CONFLICT': '服务器已改名，本地旧文件也有改动；该文件已保留，需人工核对。',
+    'RENAME_PATH_CONFLICT': '改名后的目标位置已有文件，未覆盖该文件。',
+    'RENAME_IDENTITY_UNAVAILABLE': '无法确认本地旧文件身份，未自动移动该文件。',
+    'RENAME_OUTSIDE_EXPLICIT_SCOPE': '改名前后路径不都在所选目录内，未自动迁移。',
     'LOCAL_CHANGED_BEFORE_RENAME': '改名预检后本地文件又发生变化，未执行旧预览，请核对文件后重试。',
     'SYNC_CURSOR_EXPIRED': '同步记录已过期，已暂停；本地文件和队列保留，需要重新对账，不会自动删除或复活旧文件。',
     'SERVER_ROLLBACK_RECONCILIATION_REQUIRED': '服务器版本游标回退，已暂停；请保留本地文件和队列并核对服务器恢复情况。',
@@ -59,6 +63,8 @@ PHASES = {
     'OFFLINE': '连接中断，等待重试', 'ATTENTION': '有待处理项，自动同步已暂停', 'ERROR': '操作失败，已暂停',
     'CONFIGURING': '正在停止原配置并切换，原文件与待上传内容保留…',
     'STOPPED': '助手正在退出，监听已停止',
+    'WATCHING_ATTENTION': '改名冲突路径已保留，其他文件继续自动同步',
+    'READY_ATTENTION': '本轮其他文件已检查；改名冲突路径待处理，自动监听未开启',
 }
 
 
@@ -312,7 +318,9 @@ class SyncApp:
                     self.summary.set(self.summary.get() + f" 本机保留 {result['reconciliationArchives']} 批对账归档，旧任务不自动重放。")
                 if result.get('conflictReportCode'):
                     self.summary.set(self.summary.get() + ' 网页冲突状态未更新，元数据任务保留，下一次同步重试。[' + result['conflictReportCode'] + ']')
-                self.items = [(item.get('path', ''), item.get('code', '')) for item in result.get('issues', [])]
+                self.items = [(item.get('path', ''), (ERRORS[item['code']] + ' [' + item['code'] + ']')
+                              if item.get('code', '').startswith('RENAME_') and item['code'] in ERRORS else item.get('code', ''))
+                              for item in result.get('issues', [])]
                 self.items += [(item['path'], '冲突：' + item['reason']) for item in result.get('conflicts', [])]
                 self.items += [(item['path'], self.change_description(item)) for item in (result.get('deletionPreview') or {}).get('changes', [])]
                 self.items += [(item['path'], self.merge_description(item)) for item in (result.get('initialMergePreview') or {}).get('changes', [])]

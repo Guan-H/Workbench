@@ -48,6 +48,8 @@ class Renames:
         entries = []
         for row in list(self.db.execute('SELECT * FROM local_rename ORDER BY id')):
             entry = json.loads(row['intent'])
+            # A held move owns both names; neither may fall through to upload/delete.
+            blocked.update((entry['source'], entry['target']))
             latest = remote.get(row['id'])
             if not latest or latest['deleted']:
                 issues.append({'path': entry['target'], 'code': 'RENAME_REQUIRES_RECONCILIATION'}); continue

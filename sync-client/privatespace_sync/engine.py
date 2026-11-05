@@ -291,8 +291,6 @@ class Engine:
             issues.extend(rename_issues)
             if outcome:
                 return {**outcome, 'issues': issues, **self.status()}
-            if rename_issues:
-                return {'status': 'PAUSED', 'code': 'RENAME_REQUIRES_RECONCILIATION', 'issues': issues, **self.status()}
             blocked.update(rename_blocked)
             if relocated:
                 identities = {}
@@ -526,6 +524,7 @@ class Engine:
                 initial.validate_remote(self.snapshot(checkpoint))
                 initial.finish()
             return {"status": "PAUSED" if write_failure else "REQUIRES_CONFIRMATION" if pending_delete else "OK", "code": write_failure, "issues": issues,
+                    'isolatedRenameIssues': bool(rename_issues) and len(issues) == len(rename_issues),
                     "deletionPreview": pending_delete, "rescanRequired": rescan, **self.status()}
         except (SyncError, OSError, sqlite3.Error) as error:
             return {"status": "PAUSED", "code": error.code if isinstance(error, SyncError) else "LOCAL_IO_UNAVAILABLE",
