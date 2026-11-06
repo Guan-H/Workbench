@@ -645,6 +645,11 @@ textarea {
 .vault-entry-list.ant-card, .vault-entry-detail.ant-card { min-width: 0; min-height: 0; border: 1px solid var(--color-border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
 .vault-entry-list > .ant-card-head, .vault-entry-detail > .ant-card-head { padding: 0 20px; min-height: 68px; flex-shrink: 0; border-bottom-color: var(--color-border); }
 .vault-entry-list > .ant-card-head { padding-inline: 16px; }
+.vault-entry-list .ant-card-head-wrapper { flex-wrap: wrap; gap: 0 10px; padding-bottom: 12px; }
+.vault-entry-list .ant-card-extra { margin-inline-start: 0; }
+.vault-entry-list .ant-card-head-title { flex: 1 0 100%; padding: 12px 0 8px; }
+.vault-entry-list .ant-card-extra { width: 100%; }
+.vault-new-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .vault-entry-list .ant-card-head-title, .vault-entry-detail .ant-card-head-title { padding: 16px 0; }
 .vault-panel-title { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .vault-panel-title .ant-tag { font-size: 11px; line-height: 18px; margin: 0; background: var(--color-sidebar); }
@@ -712,9 +717,6 @@ textarea {
 .vault-entry-empty .ant-empty-image { height: auto; margin-bottom: 18px; }
 .vault-empty-icon { height: 84px; width: 84px; display: grid; place-items: center; background: var(--color-background); color: var(--color-primary); border: 1px solid var(--color-border); border-radius: 24px; }
 .vault-entry-empty .ant-empty-description { font-size: 13px; }
-.vault-draft-recovery { margin-bottom: 12px; flex-shrink: 0; }
-.vault-draft-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 120px; overflow: auto; }
-.vault-draft-list .ant-btn { white-space: normal; height: auto; min-height: 28px; }
 .vault-conflict { margin: 12px 20px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; max-height: 220px; overflow: auto; }
 .vault-conflict .ant-btn { margin: 8px 8px 0 0; white-space: normal; height: auto; }
 .vault-conflict summary { cursor: pointer; padding: 12px 0; }
@@ -740,7 +742,7 @@ textarea {
   .vault-unlocked-toolbar { align-items: flex-start; flex-direction: column; gap: 14px; }
   .vault-lock-actions { width: 100%; justify-content: flex-end; }
   .vault-entry-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .vault-categories .ant-menu-item { min-width: 0; flex: 1; }
+  .vault-categories .ant-menu-item { min-width: 140px; flex: 1 1 calc((100% - 8px) / 2); height: 44px; line-height: 44px; }
   .vault-categories .ant-menu-item .ant-menu-item-icon { display: none; }
   .vault-menu-label { gap: 4px; }
   .vault-entry-rows { max-height: 230px; }

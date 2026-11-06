@@ -57,6 +57,22 @@ class AuthSessionsIT {
 
         String legacyId;
         boolean checkMaster = "1".equals(System.getenv("CHECK_VAULT_MASTER"));
+        boolean checkSecureNotes = "1".equals(System.getenv("CHECK_VAULT_SECURE_NOTES"));
+        if ("1".equals(System.getenv("CHECK_VAULT_DRAFT_BOX")) && !checkSecureNotes) {
+            throw new IllegalStateException("Draft-box checks require the genuine secure-note flow");
+        }
+        if ("1".equals(System.getenv("CHECK_VAULT_CUSTOM_AVATARS")) && !"1".equals(System.getenv("CHECK_VAULT_AVATARS"))) {
+            throw new IllegalStateException("Custom-avatar checks require the real avatar flow");
+        }
+        if ("1".equals(System.getenv("CHECK_VAULT_AVATARS")) && !checkSecureNotes) {
+            throw new IllegalStateException("Avatar checks require the genuine secure-note flow");
+        }
+        if ("1".equals(System.getenv("CHECK_VAULT_TRASH")) && !checkSecureNotes) {
+            throw new IllegalStateException("Trash checks require the genuine secure-note flow");
+        }
+        if (checkSecureNotes && (!"1".equals(System.getenv("CHECK_VAULT_FOUNDATION")) || checkMaster)) {
+            throw new IllegalStateException("Secure-note checks use the foundation flow separately from master-password checks");
+        }
         if (checkMaster && !"1".equals(System.getenv("CHECK_VAULT_FOUNDATION"))) {
             throw new IllegalStateException("Master-password checks require the real vault foundation flow");
         }
@@ -81,6 +97,20 @@ class AuthSessionsIT {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM web_session WHERE id = ?", Integer.class, report.get("revokedId").asText())).isZero();
             // Fault injection expires one genuine session using the persisted server clock.
             jdbc.update("UPDATE web_session SET expires_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR) WHERE id = ?", report.get("expiredId").asText());
+        }
+        if (checkSecureNotes) {
+            try (var context = start()) {
+                browser(context, "secure-notes");
+                var report = new ObjectMapper().readTree(Files.readString(output().resolve("vault-secure-note-report.json")));
+                long version = Long.parseLong(report.get("version").asText());
+                assertThat(jdbc.queryForObject("SELECT version FROM vault_snapshot", Long.class)).isEqualTo(version);
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM vault_snapshot_history", Long.class)).isEqualTo(version);
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM note_file", Long.class)).isZero();
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM file_object", Long.class)).isZero();
+                assertThat(jdbc.queryForObject("SELECT envelope FROM vault_snapshot", String.class)).doesNotContain("M3_SECURE_", "M3_FAKE_MASTER", "data:image/png;base64,", "M3_CUSTOM_AVATAR_ORIGINAL");
+                assertThat(jdbc.queryForList("SELECT envelope FROM vault_snapshot_history", String.class))
+                        .allSatisfy(envelope -> assertThat(envelope).doesNotContain("M3_SECURE_", "M3_FAKE_MASTER", "data:image/png;base64,", "M3_CUSTOM_AVATAR_ORIGINAL"));
+            }
         }
         if (checkMaster) {
             try (var context = start()) {
@@ -107,6 +137,7 @@ class AuthSessionsIT {
         // Recreate the real application context again so a changed wrapper must survive restart.
         try (var context = start()) {
             browser(context, "restore");
+            if (checkSecureNotes) browser(context, "secure-notes-restore");
             assertThat(jdbc.queryForObject("SELECT id FROM web_session WHERE token_hash = ?", String.class, hash(legacyToken))).isEqualTo(legacyId);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM web_session WHERE expires_at > UTC_TIMESTAMP(6)", Integer.class)).isEqualTo(12);
         }
@@ -159,7 +190,7 @@ class AuthSessionsIT {
         Files.createDirectories(output());
         Path log = output().resolve(phase + ".log");
         int port = ((ServletWebServerApplicationContext) context).getWebServer().getPort();
-        String script = "master".equals(phase) ? "scripts/run-vault-master-password.mjs"
+        String script = phase.startsWith("secure-notes") ? "scripts/run-vault-secure-notes.mjs" : "master".equals(phase) ? "scripts/run-vault-master-password.mjs"
                 : "entries".equals(phase) ? "scripts/run-vault-entries.mjs" : "scripts/check-account-sessions.mjs";
         var builder = new ProcessBuilder("node", script, phase)
                 .directory(Path.of("../frontend").toFile()).redirectErrorStream(true).redirectOutput(log.toFile());

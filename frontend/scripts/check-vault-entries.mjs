@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { finalMaster } from './check-vault-master-password.mjs'
 import { checkVaultLayout } from './check-vault-layout.mjs'
+import { recoverFirstDraft } from './vault-draft-box-helpers.mjs'
 
 export const entriesMaster = finalMaster + '_entries'
 const name = 'M3_ENTRY_FAKE_LOGIN'
@@ -27,7 +28,7 @@ export async function checkVaultEntries(page, output) {
   }
   async function vault(target = page) { await nav(target).getByRole('button', { name: '密码保险库', exact: true }).click(); await locked(target).waitFor() }
   async function stored(target = page) { await target.locator('.vault-entry-detail [role=status]').filter({ hasText: '草稿已加密暂存' }).waitFor() }
-  async function recover(target = page) { await target.getByRole('button', { name: /恢复草稿/ }).first().click() }
+  async function recover(target = page) { await recoverFirstDraft(target) }
   async function select(target = page, title = name) { await target.locator('.vault-entry-row').filter({ hasText: title }).click() }
   async function edit(target = page) { await select(target); await target.getByRole('button', { name: '编辑条目', exact: true }).click() }
   async function save(target = page) { await target.getByRole('button', { name: '保存条目', exact: true }).click(); await editor(target).waitFor({ state: 'detached' }) }

@@ -30,7 +30,7 @@ const openedEntries = ref<VaultEntry[]>([])
 const entriesView = ref<InstanceType<typeof VaultEntriesView>>()
 const entryState = ref({ editing: false, working: false })
 const leaveConfirmation = ref<{ answer: (accepted: boolean) => void }>()
-let locking: Promise<void> | undefined
+let locking: Promise<boolean> | undefined
 let serial = 0
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined
 let lastActivity = 0
@@ -48,16 +48,17 @@ function forceLock(reason = '') {
 }
 async function lock(reason = '保险库已锁定。') {
   if (locking) return locking
-  if (phase.value !== 'unlocked') { forceLock(reason); return }
+  if (phase.value !== 'unlocked') { forceLock(reason); return true }
   serial++
   const flushing = entriesView.value?.flushDraft() ?? Promise.resolve(true)
   phase.value = 'locking'; openedEntries.value = []; changeOpen.value = false; forgetPasswords(); busy.value = true
   const task = (async () => {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const stored = await Promise.race([flushing, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 1500) })])
+      const stored = await Promise.race([flushing, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 1500) })]).catch(() => false)
       forceLock(reason)
       if (!stored) problem.value = '已锁定，但最新草稿未能确认暂存，可能丢失最新输入；上次成功加密的草稿仍保留。'
+      return stored
     } finally { clearTimeout(timer); locking = undefined }
   })()
   locking = task
@@ -223,7 +224,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   openedEntries.value = []; leaveConfirmation.value?.answer(false)
 })
-defineExpose({ prepareLeave })
+defineExpose({ prepareLeave, lock })
 </script>
 
 <template>
@@ -231,7 +232,7 @@ defineExpose({ prepareLeave })
     <header class="vault-page-heading">
       <div class="vault-page-title"><span class="vault-title-icon"><ShieldCheck :size="23" :stroke-width="1.6" aria-hidden="true" /></span><div><h1 id="vault-title">密码保险库</h1><p>集中管理你的登录账号与密码</p></div></div>
       <div class="vault-heading-actions">
-        <ATooltip :trigger="['hover', 'focus', 'click']" title="安全审查和加密备份恢复尚未完成，请只使用测试主密码和测试内容。安全笔记、删除恢复及备份仍待后续交付。"><ATag color="gold" class="vault-test-tag" tabindex="0"><Info :size="13" aria-hidden="true" />仅限测试内容</ATag></ATooltip>
+        <ATooltip :trigger="['hover', 'focus', 'click']" title="安全审查和加密备份恢复尚未完成，请只使用测试主密码和测试内容。历史版本浏览、到期清理及加密备份仍待后续交付。"><ATag color="gold" class="vault-test-tag" tabindex="0"><Info :size="13" aria-hidden="true" />仅限测试内容</ATag></ATooltip>
         <ATooltip title="重新读取会锁定保险库，编辑中的内容先加密暂存"><AButton :disabled="busy" @click="load"><RefreshCw :size="15" aria-hidden="true" />重新读取保险库</AButton></ATooltip>
       </div>
     </header>
@@ -251,7 +252,7 @@ defineExpose({ prepareLeave })
       <p class="vault-access-footnote"><LockKeyhole :size="13" aria-hidden="true" />主密码和解密密钥不会发送到服务器</p>
     </ACard>
     <ACard v-else-if="phase === 'locked'" class="vault-access-card" :bordered="false" aria-labelledby="unlock-vault-title">
-      <div class="vault-access-heading"><span class="vault-access-icon"><LockKeyhole :size="30" :stroke-width="1.5" aria-hidden="true" /></span><h2 id="unlock-vault-title">保险库已锁定</h2><p>输入主密码，继续访问你的登录条目。</p></div>
+      <div class="vault-access-heading"><span class="vault-access-icon"><LockKeyhole :size="30" :stroke-width="1.5" aria-hidden="true" /></span><h2 id="unlock-vault-title">保险库已锁定</h2><p>输入主密码，继续访问登录账号与安全笔记。</p></div>
       <div v-if="pendingChange" class="vault-pending-change" role="status"><AAlert type="info" show-icon message="正在核对主密码修改结果，解密状态已清除。" /><AButton block :loading="busy" @click="retryMasterChange">重试确认主密码修改</AButton></div>
       <AForm v-else :model="{ password }" layout="vertical" @finish="unlock"><AFormItem label="保险库主密码" html-for="vault-unlock"><AInput id="vault-unlock" v-model:value="password" type="password" size="large" autocomplete="off" :disabled="busy" placeholder="输入保险库主密码" /></AFormItem><AButton type="primary" html-type="submit" size="large" block :loading="busy" :disabled="!password"><KeyRound :size="17" aria-hidden="true" />解锁保险库</AButton></AForm>
       <p class="vault-access-footnote"><ShieldCheck :size="14" aria-hidden="true" />闲置 5 分钟、刷新或离开后自动锁定</p>

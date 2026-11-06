@@ -25,7 +25,7 @@ import SyncCenterView from '../sync/SyncCenterView.vue'
 import AccountSettingsView from '../settings/AccountSettingsView.vue'
 
 const VaultView = defineAsyncComponent(() => import('../vault/VaultView.vue'))
-const vaultView = ref<{ prepareLeave: () => Promise<boolean> }>()
+const vaultView = ref<{ prepareLeave: () => Promise<boolean>; lock: (reason?: string) => Promise<boolean> }>()
 
 const props = defineProps<{ username: string }>()
 const emit = defineEmits<{ logout: []; sessionExpired: [] }>()
@@ -262,6 +262,7 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined
 let querySerial = 0
 let draftStored = true
+let sessionEnded = false
 let previousFocus: HTMLElement | null = null
 watch(modal, async (value, previous) => {
   if (value && !previous) previousFocus = document.activeElement as HTMLElement
@@ -370,6 +371,7 @@ async function leaveNote(stillSelected = () => true) {
 }
 
 async function saveNow(): Promise<boolean> {
+  if (sessionEnded) return false
   if (savePromise) return savePromise
   if (!current.value || current.value.deleted || current.value.type !== 'note') return true
   if (conflict.value) return false
@@ -378,13 +380,14 @@ async function saveNow(): Promise<boolean> {
     saving.value = true
     problem.value = ''
     try {
-      while ((dirty.value || pending) && current.value) {
+      while (!sessionEnded && (dirty.value || pending) && current.value) {
         const attempt: Pending = pending ?? { id: current.value.id, path: current.value.path, content: text.value,
           baseVersion: current.value.version, operation: crypto.randomUUID() }
         pending = attempt
         persistDraft()
         status.value = '正在保存…'
         const saved = await write<Note>(`/notes/${attempt.id}`, 'PUT', { path: attempt.path, type: 'note', content: attempt.content, baseVersion: attempt.baseVersion }, attempt.operation, AbortSignal.timeout(30_000))
+        if (sessionEnded) return false
         current.value = saved
         savedText.value = attempt.content
         pending = undefined
@@ -395,6 +398,7 @@ async function saveNow(): Promise<boolean> {
       status.value = '服务器已保存'
       return true
     } catch (error) {
+      if (sessionEnded) return false
       if (error instanceof ApiError && error.status === 409) {
         conflict.value = true
         status.value = '存在冲突，双方版本已保留'
@@ -694,6 +698,16 @@ async function logout() {
   emit('logout')
 }
 
+async function prepareSessionExpiry(): Promise<boolean> {
+  sessionEnded = true
+  window.clearTimeout(timer)
+  ++openSerial; openController?.abort()
+  persistDraft()
+  const vaultStored = await (vaultView.value?.lock('') ?? Promise.resolve(true))
+  return draftStored && vaultStored
+}
+defineExpose({ prepareSessionExpiry })
+
 function message(error: unknown) {
   if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) return '保存等待超过 30 秒，服务器结果尚未确认。草稿和本次操作已保留，请重试确认。'
   if (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) return '连接中断，请检查网络和后端服务后重试；尚未收到服务器成功确认。'
@@ -842,7 +856,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
     <aside v-if="section === 'notes' && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><AButton v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</AButton><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
     <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
-    <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" />
+    <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" @secure-note="createRequest = undefined; showVault()" />
     <ExportNotesDialog v-if="exportDialog" :items="items" @close="exportDialog = false" @exported="exported" />
     <RecycleRestoreDialog v-if="recycleRequest" :note="recycleRequest" :items="items" @close="recycleRequest = undefined" @restored="recovered" />
     <FileContextMenu v-if="contextMenu" v-bind="contextMenu" :trash="view === 'trash'" @close="contextMenu = undefined" @action="fileAction" />

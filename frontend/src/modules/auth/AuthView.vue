@@ -5,7 +5,7 @@ import { ref } from 'vue'
 import { ArrowRight, LockKeyhole, NotebookPen, FolderSync, ShieldCheck } from 'lucide-vue-next'
 import { api, refreshCsrf, type AuthStatus } from '../../shared/api/client'
 
-const props = defineProps<{ initialized: boolean }>()
+const props = defineProps<{ initialized: boolean; notice?: string }>()
 const emit = defineEmits<{ authenticated: [status: AuthStatus] }>()
 const username = ref('')
 const password = ref('')
@@ -45,6 +45,7 @@ async function submit() {
         <span class="section-label"><LockKeyhole :size="16" />你的私人工作台</span>
         <h2>{{ initialized ? '欢迎回来' : '建立你的私有空间' }}</h2>
         <p class="form-description">{{ initialized ? '登录后，继续上次的思考与记录。' : '创建唯一的管理员账户。完成后，初始化入口将自动关闭。' }}</p>
+        <p v-if="notice" class="field-help" role="status">{{ notice }}</p>
         <label for="username">用户名</label><AInput id="username" v-model:value="username" autocomplete="username" required :maxlength="80" placeholder="输入用户名" :disabled="busy" />
         <label for="password">登录口令</label><AInput id="password" v-model:value="password" type="password" :autocomplete="initialized ? 'current-password' : 'new-password'" :minlength="initialized ? 1 : 12" required :maxlength="72" placeholder="输入登录口令" :disabled="busy" />
         <template v-if="!initialized">

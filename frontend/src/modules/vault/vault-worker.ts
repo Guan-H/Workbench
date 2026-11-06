@@ -1,14 +1,15 @@
 import sodium from 'libsodium-wrappers-sumo'
 import { createVault, unlockVault, parseEnvelope, rewrapVault, readContent, sealContent, sealDraft, openDraft, type VaultEnvelope, type EncryptedDraft } from './envelope'
-import type { VaultDraft, VaultEntry } from './entries'
+import { summarizeDraft, type VaultDraft, type VaultDraftSummary, type VaultEntry } from './entries'
 
 export type VaultCommand = { kind: 'create'; password: string } | { kind: 'unlock'; password: string; envelope: unknown; id: string }
-  | { kind: 'seal'; content: unknown } | { kind: 'draft'; draft: unknown } | { kind: 'open-draft'; envelope: unknown }
+  | { kind: 'seal'; content: unknown } | { kind: 'draft'; draft: unknown } | { kind: 'open-draft' | 'describe-draft'; envelope: unknown }
   | { kind: 'adopt' | 'inspect'; envelope: unknown }
   | { kind: 'rewrap'; currentPassword: string; newPassword: string } | { kind: 'lock' }
 export type VaultReply = { kind: 'created' | 'rewrapped' | 'sealed'; envelope: VaultEnvelope }
   | { kind: 'unlocked' | 'adopted' | 'inspected'; entries: VaultEntry[] }
   | { kind: 'draft'; envelope: EncryptedDraft } | { kind: 'opened-draft'; draft: VaultDraft } | { kind: 'locked' } | { kind: 'error' }
+  | { kind: 'draft-summary'; summary: VaultDraftSummary }
 let key: Uint8Array | undefined
 let envelope: VaultEnvelope | undefined
 let busy = false
@@ -26,9 +27,11 @@ self.onmessage = async (event: MessageEvent<VaultCommand>) => {
       if (!key || !envelope) throw new Error('VAULT_LOCKED')
       if (command.kind === 'seal') self.postMessage({ kind: 'sealed', envelope: sealContent(envelope, key, command.content) } satisfies VaultReply)
       else if (command.kind === 'draft') self.postMessage({ kind: 'draft', envelope: sealDraft(envelope, key, command.draft) } satisfies VaultReply)
-      else if (command.kind === 'open-draft') {
+      else if (command.kind === 'open-draft' || command.kind === 'describe-draft') {
         const draft = await openDraft(command.envelope, envelope, key)
-        if (expected === generation) self.postMessage({ kind: 'opened-draft', draft } satisfies VaultReply)
+        if (expected === generation) self.postMessage(command.kind === 'describe-draft'
+          ? { kind: 'draft-summary', summary: summarizeDraft(draft) } satisfies VaultReply
+          : { kind: 'opened-draft', draft } satisfies VaultReply)
       } else {
         const next = await parseEnvelope(command.envelope)
         if (next.vaultId !== envelope.vaultId || next.keyId !== envelope.keyId) throw new Error('VAULT_IDENTITY_MISMATCH')

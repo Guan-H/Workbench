@@ -8,6 +8,7 @@ import { checkCalendarInteractions } from './check-calendar-interactions.mjs'
 import { checkPasswordGenerator } from './check-password-generator.mjs'
 import { checkVaultFoundation } from './check-vault-foundation.mjs'
 import { checkMarkdownLinebreaks } from './check-markdown-linebreaks.mjs'
+import { prepareSessionExpiryCheck } from './check-session-expiry.mjs'
 
 const phase = process.argv[2]
 const backend = process.env.SESSIONS_BACKEND
@@ -76,6 +77,7 @@ try {
       await loginPage.getByRole('heading', { name: '工作台', exact: true }).waitFor()
     }
     await login(other); await login(third)
+    const checkExpiry = process.env.CHECK_SESSION_EXPIRY === '1' ? await prepareSessionExpiryCheck(other.pages()[0], password, output) : undefined
     const otherId = (await (await other.request.get(origin + '/api/v1/auth/sessions')).json()).find(session => session.current).id
     const thirdId = (await (await third.request.get(origin + '/api/v1/auth/sessions')).json()).find(session => session.current).id
     await page.getByRole('button', { name: '刷新会话', exact: true }).click(); await count(3)
@@ -89,6 +91,10 @@ try {
     assert.equal((await other.request.get(origin + '/api/v1/notes')).status(), 200)
     await revoke.click(); await dialog.getByRole('button', { name: '确认撤销', exact: true }).click(); await count(2)
     assert.equal((await other.request.get(origin + '/api/v1/notes')).status(), 401)
+    if (checkExpiry) await checkExpiry().catch(async error => {
+      await other.pages()[0].screenshot({ path: output + '/session-expiry-failure.png', fullPage: true }).catch(() => {})
+      throw error
+    })
     assert.equal((await third.request.get(origin + '/api/v1/notes')).status(), 200)
     assert.deepEqual(await request('/auth/sessions/' + otherId, 'DELETE'), { status: 200, body: { revoked: 0 } })
     const forbidden = await page.evaluate(async id => (await fetch('/api/v1/auth/sessions/' + id, { method: 'DELETE' })).status, thirdId)

@@ -1,3 +1,5 @@
+import { reportUnauthorized, sessionGeneration } from './session'
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public operationId?: string) { super(message) }
 }
@@ -10,7 +12,8 @@ export async function refreshCsrf(signal?: AbortSignal | null) {
   csrfToken = (await response.json() as { token: string }).token
 }
 
-export async function api<T>(path: string, options: RequestInit = {}, retryCsrf = true): Promise<T> {
+/** Shared authenticated transport for JSON requests and binary exports. */
+export async function apiResponse(path: string, options: RequestInit = {}, retryCsrf = true, generation = sessionGeneration()): Promise<Response> {
   const headers = new Headers(options.headers)
   const writing = options.method && options.method !== 'GET'
   // Another tab or a rejected request can invalidate the cookie-backed token.
@@ -20,13 +23,18 @@ export async function api<T>(path: string, options: RequestInit = {}, retryCsrf 
   if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const response = await fetch(`/api/v1${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' })
   if (!response.ok) {
+    if (response.status === 401 && !['/auth/login', '/auth/initialize', '/auth/status', '/auth/csrf'].includes(path.split('?')[0] ?? path)) reportUnauthorized(generation)
     const error = await response.json().catch(() => ({})) as { code?: string; title?: string; operationId?: string }
     // A rejected CSRF request has not reached the business handler. Retry once
     // with a fresh token, retaining the original idempotency key and payload.
-    if (writing && retryCsrf && response.status === 403 && error.code === 'FORBIDDEN') return api<T>(path, options, false)
+    if (writing && retryCsrf && response.status === 403 && error.code === 'FORBIDDEN') return apiResponse(path, options, false, generation)
     throw new ApiError(response.status, error.code ?? 'REQUEST_FAILED', error.title ?? '请求失败，请稍后重试。', error.operationId)
   }
-  return await response.json() as T
+  return response
+}
+
+export async function api<T>(path: string, options: RequestInit = {}, retryCsrf = true): Promise<T> {
+  return await (await apiResponse(path, options, retryCsrf)).json() as T
 }
 
 export function write<T>(path: string, method: string, body?: unknown, operation: string = crypto.randomUUID(), signal?: AbortSignal): Promise<T> {
@@ -37,7 +45,7 @@ export interface UploadProgress { loaded: number; total: number | null; transfer
 
 /** Reports real request-body bytes for the complete batch; upload completion is not server confirmation. */
 export async function uploadRequest<T>(path: string, body: FormData | string, progress: (value: UploadProgress) => void,
-  headers: Record<string, string> = {}, retryCsrf = true): Promise<T> {
+  headers: Record<string, string> = {}, retryCsrf = true, generation = sessionGeneration()): Promise<T> {
   progress({ loaded: 0, total: null, transferred: false })
   await refreshCsrf()
   try {
@@ -56,6 +64,7 @@ export async function uploadRequest<T>(path: string, body: FormData | string, pr
       xhr.onerror = () => reject(new TypeError('Failed to fetch'))
       xhr.onabort = () => reject(new TypeError('Upload connection aborted'))
       xhr.onload = () => {
+        if (xhr.status === 401) reportUnauthorized(generation)
         let result: { code?: string; title?: string; operationId?: string }
         try { result = JSON.parse(xhr.responseText) }
         catch { reject(new ApiError(xhr.status, 'INVALID_RESPONSE', '服务器响应无法确认，请保留内容后重试。')); return }
@@ -65,7 +74,7 @@ export async function uploadRequest<T>(path: string, body: FormData | string, pr
       xhr.send(body)
     })
   } catch (cause) {
-    if (retryCsrf && cause instanceof ApiError && cause.status === 403 && cause.code === 'FORBIDDEN') return uploadRequest(path, body, progress, headers, false)
+    if (retryCsrf && cause instanceof ApiError && cause.status === 403 && cause.code === 'FORBIDDEN') return uploadRequest(path, body, progress, headers, false, generation)
     throw cause
   }
 }

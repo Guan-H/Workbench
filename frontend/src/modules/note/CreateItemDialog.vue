@@ -9,7 +9,7 @@ import DirectoryPicker from './DirectoryPicker.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 
 const props = defineProps<{ type: 'note' | 'folder'; destination: string; items: Note[] }>()
-const emit = defineEmits<{ close: []; created: [note: Note] }>()
+const emit = defineEmits<{ close: []; created: [note: Note]; secureNote: [] }>()
 const panel = ref<HTMLElement>()
 function nameInput() { return panel.value?.querySelector<HTMLInputElement>('#create-name') }
 const name = ref(props.type === 'folder' ? '新建文件夹' : '新建笔记.md')
@@ -83,6 +83,7 @@ onBeforeUnmount(() => { removeEventListener('beforeunload', unloading); if (prev
         <label for="create-location">创建位置</label>
         <DirectoryPicker id="create-location" v-model="target" :items="items" :disabled="busy || uncertain" title="选择创建位置" />
         <p class="field-help create-path">创建后：{{ path }}</p>
+        <p v-if="type === 'note'" class="field-help">普通笔记会以明文保存在服务器及同步目录。<AButton type="link" size="small" :disabled="busy || uncertain" @click="emit('secureNote')">前往保险库新建安全笔记</AButton></p>
         <p v-if="busy" role="status">正在等待服务器确认…</p>
       </div>
       <footer><AButton :disabled="busy" @click="close">取消</AButton><AButton type="primary" class="primary" :disabled="busy" @click="create">{{ uncertain ? '重试确认' : busy ? '创建中…' : '创建' }}</AButton></footer>

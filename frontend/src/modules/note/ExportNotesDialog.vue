@@ -5,7 +5,7 @@ import AppDialog from '../../shared/AppDialog.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { X } from 'lucide-vue-next'
 import ExportFileTree from './ExportFileTree.vue'
-import type { Note, TreeItem } from '../../shared/api/client'
+import { apiResponse, type Note, type TreeItem } from '../../shared/api/client'
 const props = defineProps<{ items: Note[] }>()
 const emit = defineEmits<{ close: []; exported: [] }>()
 const panel = ref<HTMLElement>()
@@ -29,8 +29,7 @@ async function download() {
   if (!selected.value.length || busy.value) return
   busy.value = true; error.value = ''
   try {
-    const response = await fetch('/api/v1/note-exports', { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': (await (await fetch('/api/v1/auth/csrf')).json()).token }, body: JSON.stringify({ all: false, ids: selected.value }) })
-    if (!response.ok) { const problem = await response.json().catch(() => ({})); throw new Error(problem.title ?? '导出失败，请重试。') }
+    const response = await apiResponse('/note-exports', { method: 'POST', body: JSON.stringify({ all: false, ids: selected.value }) })
     const url = URL.createObjectURL(await response.blob())
     const link = document.createElement('a'); link.href = url; link.download = 'private-space-notes.zip'; link.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)

@@ -1,0 +1,30 @@
+// Stable identifiers belong inside the encrypted entry; labels are only local UI metadata.
+export const entryIcons = [
+  { id: 'x', label: 'X', aliases: 'twitter 推特', asset: 'x', color: '#111111' },
+  { id: 'youtube', label: 'YouTube', aliases: '油管', asset: 'youtube', color: '#e62117' },
+  { id: 'bilibili', label: '哔哩哔哩', aliases: 'bilibili B站', asset: 'bilibili', color: '#d84e83' },
+  { id: 'weibo', label: '微博', aliases: 'sina weibo 新浪', asset: 'sinaweibo', color: '#df1b25' },
+  { id: 'douyin', label: '抖音', aliases: 'douyin', asset: 'tiktok', color: '#111111' },
+  { id: 'tiktok', label: 'TikTok', aliases: '国际版抖音', asset: 'tiktok', color: '#111111' },
+  { id: 'google', label: 'Google', aliases: '谷歌 Gmail', asset: 'google', color: '#3576d3' },
+  { id: 'chatgpt', label: 'ChatGPT', aliases: 'OpenAI GPT 聊天人工智能', asset: 'openai', color: '#000000' },
+  { id: 'wechat', label: '微信', aliases: 'wechat weixin', asset: 'wechat', color: '#079d39' },
+  { id: 'qq', label: 'QQ', aliases: '腾讯', asset: 'qq', color: '#111111' },
+  { id: 'zhihu', label: '知乎', aliases: 'zhihu', asset: 'zhihu', color: '#1768e9' },
+  { id: 'xiaohongshu', label: '小红书', aliases: 'rednote xiaohongshu', asset: 'xiaohongshu', color: '#e52843' },
+  { id: 'github', label: 'GitHub', aliases: '代码 托管', asset: 'github', color: '#24292f' },
+  { id: 'apple', label: 'Apple', aliases: '苹果 iCloud', asset: 'apple', color: '#111111' },
+  { id: 'facebook', label: 'Facebook', aliases: '脸书', asset: 'facebook', color: '#0866ff' },
+  { id: 'instagram', label: 'Instagram', aliases: 'ins', asset: 'instagram', color: '#c13584' },
+  { id: 'telegram', label: 'Telegram', aliases: '电报', asset: 'telegram', color: '#168bc2' },
+  { id: 'discord', label: 'Discord', aliases: '社区 聊天', asset: 'discord', color: '#5865f2' },
+  { id: 'reddit', label: 'Reddit', aliases: '红迪', asset: 'reddit', color: '#dd3d00' },
+  { id: 'steam', label: 'Steam', aliases: '游戏', asset: 'steam', color: '#174568' },
+  { id: 'gitlab', label: 'GitLab', aliases: '代码 托管', asset: 'gitlab', color: '#d64b20' },
+  { id: 'gemini', label: 'Gemini', aliases: '谷歌双子座 AI', asset: 'googlegemini', color: '#3576d3' },
+  { id: 'claude', label: 'Claude', aliases: 'Anthropic 克劳德 AI', asset: 'claude', color: '#bd6346' },
+  { id: 'deepseek', label: 'DeepSeek', aliases: '深度求索 深度探索 AI', asset: 'deepseek', color: '#4d6bfe' },
+  { id: 'perplexity', label: 'Perplexity', aliases: 'AI 搜索', asset: 'perplexity', color: '#168181' },
+] as const
+export type EntryIconId = typeof entryIcons[number]['id']
+export function isEntryIconId(value: unknown): value is EntryIconId { return entryIcons.some(icon => icon.id === value) }

@@ -1,0 +1,126 @@
+{
+  "repository": "https://github.com/simple-icons/simple-icons",
+  "icons": [
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "693e68863eceb8dc9f72e2acd386ab9c20a10858dab2c076212f7084cb7a32fe",
+      "name": "x"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "5038808acbbc4e6edda16cbeb1cc6dec80e4e4ee4e227e039c41229fa222aa8c",
+      "name": "youtube"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "0b31005ccf765a9d37be2c42f1d36e44572ccadb088250626d9905ae5d4f3d21",
+      "name": "bilibili"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "44facf47c6bfa06c312c28acda6aa2ed404ef7f68c2897c8f33ad51b6ba94059",
+      "name": "sinaweibo"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "6f54ac8d325faacea8935bdc44cbed60206a6b408641799e5fea1cba7c1a0af7",
+      "name": "tiktok"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "74b48b3d315337ce79cb644933b5f975e19996f564fcc4138ed67d45674c43ca",
+      "name": "wechat"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "3c94e923013fe13a5194c84d9a44e2d62225a7ea3537f3ad95a3cb72fdae1383",
+      "name": "qq"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "3c8d91d4f30d220a8655f17aa4e119f5be8c0d66f5fcf939aecaed8699c628ce",
+      "name": "zhihu"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "847cacc807f5c236031a7477381daa67fd829d89f3f80c16a547ff2efe050794",
+      "name": "xiaohongshu"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb",
+      "name": "github"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "d8cf9fb2d5e234e03254f1d6400d8cc8160c309b010d031a64f37084b5a21d01",
+      "name": "google"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "2a1509dccd25e6d2bc7a11a8e52941077e1a48555e192ce638699b9f083c2a7c",
+      "name": "apple"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "b06d18d844ed621b89faffb1a33440cc0ec4f1ffea9f36191f50db19a47c59a6",
+      "name": "facebook"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "f53af2d1fc5292ba1433b5c1faf50005ce6a997fa302d1816989929f379a59dc",
+      "name": "instagram"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "147fd8f8923e7e5f463fe98c0eb9913bead6b2ae59935728cda141002ec8a7c9",
+      "name": "telegram"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "1d364b72c9eaf1fe37d17ca88cd8fb541308dc0f3b09e2ab3b824f380b3493d5",
+      "name": "discord"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "00e5008d56567543cf956561e61d5bf9bf629f520c7488a4d9a00164c29dd8ba",
+      "name": "reddit"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "5eef8f31106b81956ed908490bcf8c73abe476aa58bb9041acdf70b0d42ebcae",
+      "name": "steam"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "c7c39058bd1b6f9f40334383bd5136bb8c5ba5e6a24200f2d1f18365e2526e28",
+      "name": "gitlab"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "2d6fda79eb18ddccca35b799eeb3cece0dfabc22520ce3b10abd25668df9fa93",
+      "name": "claude"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "a6228d8846040401e941a39ed17459785e8324dbb7b870ce84233c9b3e9863a0",
+      "name": "googlegemini"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "7a55a0a7391d116eba7d32807d6838478f9209f6034612941e74fbb14934e2ef",
+      "name": "deepseek"
+    },
+    {
+      "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4",
+      "sha256": "57220c29378ce5e615e7244d2fdfcf5a44fad40dad81a99f2e0e4260c726ca74",
+      "name": "perplexity"
+    },
+    {
+      "revision": "6dcfdc2f58f6150d7b097b5cab158d27413f6366",
+      "sha256": "2b4a04ddc2395b20d168694d3850ce2050a702c4a0cdeb4d8b31b9a970481a8c",
+      "name": "openai"
+    }
+  ],
+  "revision": "e451c581fccb01b56f47e1a77292bdd1fd95b1a4"
+}
