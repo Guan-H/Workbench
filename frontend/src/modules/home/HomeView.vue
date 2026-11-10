@@ -7,6 +7,7 @@ import dayjs, { type Dayjs } from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import type { Note } from '../../shared/api/client'
 import { loadCalendar, moveMonth, type CalendarDay, type HomeCalendar } from './calendar'
+import DailyEnglishCard from '../english/DailyEnglishCard.vue'
 
 const props = defineProps<{ items: Note[]; loading: boolean; error: string }>()
 const emit = defineEmits<{ notes: []; favorites: []; open: [note: Note]; refresh: [] }>()
@@ -125,6 +126,8 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
           <p v-else class="home-list-message" role="status">正在读取日期与节假日…</p>
         </section>
 
+        <div class="home-side">
+        <DailyEnglishCard />
         <section class="home-card home-documents" aria-label="文档速览">
           <header class="home-document-heading">
             <div class="home-document-tabs" role="tablist" aria-label="文档列表类型">
@@ -149,6 +152,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
             <p v-else class="home-list-message">{{ documentTab === 'recent' ? '还没有笔记，可从左侧笔记页面开始记录。' : '还没有收藏，可在笔记页面收藏常用文档。' }}</p>
           </div>
         </section>
+        </div>
       </div>
     </div>
   </section>

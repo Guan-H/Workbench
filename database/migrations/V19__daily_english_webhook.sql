@@ -1,0 +1,19 @@
+CREATE TABLE english_webhook_state (
+ id INT PRIMARY KEY, revision BIGINT NOT NULL DEFAULT 0, token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+ enabled BOOLEAN NOT NULL DEFAULT FALSE, minute BIGINT NOT NULL DEFAULT 0, requests INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB;
+INSERT INTO english_webhook_state(id) VALUES(1);
+CREATE TABLE english_batch (
+ id BIGINT AUTO_INCREMENT PRIMARY KEY,
+ request_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+ request_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ learning_date DATE NOT NULL, payload MEDIUMTEXT NOT NULL,
+ received_at DATETIME(6) NOT NULL DEFAULT (UTC_TIMESTAMP(6)),
+ KEY english_batch_date(learning_date,id)
+) ENGINE=InnoDB;
+CREATE TABLE english_webhook_log (
+ id BIGINT AUTO_INCREMENT PRIMARY KEY,
+ request_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
+ status VARCHAR(16) NOT NULL, code VARCHAR(80) NOT NULL,
+ received_at DATETIME(6) NOT NULL DEFAULT (UTC_TIMESTAMP(6))
+) ENGINE=InnoDB;

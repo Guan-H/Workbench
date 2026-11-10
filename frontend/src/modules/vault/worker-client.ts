@@ -18,7 +18,8 @@ export class VaultWorker {
         if (event.data.kind === 'error') { this.lock(); reject(new Error('VAULT_REJECTED')) }
         else resolve(event.data)
       }
-      try { worker.postMessage(command) }
+      // Commands contain JSON values; Vue snapshots may carry proxies that structured clone rejects.
+      try { worker.postMessage(JSON.parse(JSON.stringify(command))) }
       catch {
         clearTimeout(timer); this.pending = undefined
         reject(new Error('VAULT_MESSAGE_FAILED'))

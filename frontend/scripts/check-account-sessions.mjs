@@ -110,6 +110,9 @@ try {
     const headers = { Authorization: 'Bearer ' + device.body.token }
     assert.equal((await anonymous.request.get(origin + '/api/v1/auth/sessions', { headers })).status(), 401)
     assert.equal((await anonymous.request.get(origin + '/api/v1/vault', { headers })).status(), 401)
+    for (const route of ['history', 'history/1', 'retention', 'recovery']) {
+      assert.equal((await anonymous.request.get(origin + '/api/v1/vault/' + route, { headers })).status(), 401)
+    }
     const syncCsrf = await (await anonymous.request.get(origin + '/api/v1/auth/csrf')).json()
     assert.equal((await anonymous.request.put(origin + '/api/v1/vault/master-password', {
       headers: { ...headers, Origin: origin, 'X-CSRF-TOKEN': syncCsrf.token, 'Idempotency-Key': crypto.randomUUID() },

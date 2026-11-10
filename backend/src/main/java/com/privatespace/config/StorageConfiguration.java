@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({StorageProperties.class, RetentionProperties.class})
+@EnableConfigurationProperties({StorageProperties.class, RetentionProperties.class, VaultRetentionProperties.class, OfficeProperties.class})
 @EnableScheduling
 public class StorageConfiguration {
 }

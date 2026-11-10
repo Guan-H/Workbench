@@ -8,6 +8,7 @@ import com.privatespace.modules.file.entity.FileObjectEntity;
 public interface FileObjectService {
     FileObjectEntity write(byte[] content);
     byte[] read(String id);
+    void lease(String id, String leaseId, Instant expires);
     boolean deleteIfUnreferenced(String id);
     int deletePhysicalOrphans(Instant cutoff);
 }

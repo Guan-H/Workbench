@@ -54,6 +54,8 @@ public class NoteServiceImpl implements NoteService {
         return result;
     }
 
+    public NoteResponse metadata(String id) { return response(required(id), null); }
+
     public NoteResponse read(String id, boolean track) {
         var note = required(id);
         if (track && !note.deleted()) mapper.opened(note.id());
@@ -234,6 +236,63 @@ public class NoteServiceImpl implements NoteService {
         mapper.create(new NoteFileEntity(id, safe, "attachment", 1, object.id(), null, false, false, null, null, object.size(), object.sha256()));
         publish(id);
         return remember(operation, "upload", input, read(id, false));
+    }
+
+    @Transactional
+    public Map.Entry<NoteResponse, Boolean> publishOffice(String id, String path, String version, byte[] bytes, String operation, String conflictPath) {
+        mapper.lock();
+        var current = mapper.find(id);
+        boolean conflict = current == null || current.deleted() || !current.type().equals("attachment")
+                || !current.path().equals(path) || !Long.toString(current.version()).equals(version);
+        // Branch before throwing: a caught transactional exception would mark the shared transaction rollback-only.
+        var result = conflict ? upload(conflictPath, bytes, operation) : replaceAttachment(id, path, version, bytes, operation);
+        return Map.entry(result, conflict);
+    }
+
+    @Transactional
+    public NoteResponse convertedCopy(String id, String version, String target, byte[] bytes, String operation) {
+        mapper.lock();
+        var source = required(id); expected(source, version);
+        if (source.deleted() || source.path().equals(target)) throw new ApiException(409, "VERSION_CONFLICT", "源文件状态变化或目标与原文件相同，未另存。");
+        return upload(target, bytes, operation);
+    }
+
+    @Transactional
+    public String pinVersion(String id, String version, String leaseId) {
+        mapper.lock();
+        var current = required(id); expected(current, version);
+        if (current.deleted() || current.objectId() == null) throw new ApiException(404, "NOT_FOUND", "文件已删除或不可读取。");
+        objects.lease(current.objectId(), leaseId, java.time.Instant.now().plusSeconds(43200));
+        return current.objectId();
+    }
+
+    public byte[] versionBytes(String id, String version) {
+        var current = required(id);
+        if (current.deleted()) throw new ApiException(404, "NOT_FOUND", "文件已删除。");
+        var revision = mapper.revision(id, Long.parseLong(version));
+        if (revision == null || revision.deleted() || revision.objectId() == null) throw new ApiException(404, "NOT_FOUND", "文件版本不存在。");
+        return objects.read(revision.objectId());
+    }
+
+    /** Binary publication uses the same notebook lock, revision and change log as Markdown and sync. */
+    @Transactional
+    public NoteResponse replaceAttachment(String id, String path, String baseVersion, byte[] bytes, String operation) {
+        mapper.lock();
+        var input = List.of(path, baseVersion, digest(bytes));
+        var previous = previous(operation, "file-save:" + id, input);
+        if (previous != null) return previous;
+        var current = required(id);
+        expected(current, baseVersion);
+        if (current.deleted() || !"attachment".equals(current.type()) || !current.path().equals(path)) {
+            throw new ApiException(409, "VERSION_CONFLICT", "文件路径、类型或状态已变化，本次未覆盖。");
+        }
+        if (bytes.length > 50 * 1024 * 1024) throw new ApiException(413, "FILE_TOO_LARGE", "文件最大 50 MiB。");
+        if (!digest(bytes).equals(current.sha256())) {
+            var object = objects.write(bytes);
+            mapper.update(id, current.version() + 1, object.id(), null, object.size(), object.sha256(), false);
+            publish(id);
+        }
+        return remember(operation, "file-save:" + id, input, read(id, false));
     }
 
     public byte[] download(String path) {

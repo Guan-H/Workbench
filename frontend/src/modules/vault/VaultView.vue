@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, Card as ACard, Checkbox as ACheckbox, Form as AForm, FormItem as AFormItem, Input as AInput, Spin as ASpin, Tag as ATag, Tooltip as ATooltip } from 'ant-design-vue'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Info, KeyRound, LockKeyhole, RefreshCw, ShieldCheck } from 'lucide-vue-next'
 import { api, ApiError } from '../../shared/api/client'
 import AppMessage, { type Notice } from '../../shared/AppMessage.vue'
@@ -11,6 +11,23 @@ import VaultEntriesView from './VaultEntriesView.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import type { SavedVault } from './types'
 import type { VaultEntry } from './entries'
+import VaultBackupDialog from './VaultBackupDialog.vue'
+import VaultRecoveryDialog from './VaultRecoveryDialog.vue'
+import { readRecoveryRequest } from './recovery-store'
+import { readRestore } from './restore-store'
+import VaultHistoryDialog from './VaultHistoryDialog.vue'
+import { expiredTrash, type RestoreSource, type VaultRetentionPolicy } from './retention'
+
+const props = defineProps<{ username: string }>()
+const backupOpen = ref(false)
+const recoveryOpen = ref(false)
+const recoveryMode = ref<'setup' | 'reset' | 'pending'>('setup')
+const recoveryPending = ref(false)
+const restorePending = ref(false)
+const pendingSource = ref<'history' | 'cleanup'>()
+const historyOpen = ref(false)
+const backupSource = ref<RestoreSource>()
+const retentionPolicy = ref<VaultRetentionPolicy>()
 
 type VaultStatus = SavedVault | { initialized: false }
 type Phase = 'loading' | 'new' | 'locked' | 'locking' | 'unlocked' | 'unavailable'
@@ -27,6 +44,7 @@ const pending = ref<{ envelope: VaultEnvelope; operation: string }>()
 const changeOpen = ref(false)
 const pendingChange = ref<{ envelope: VaultEnvelope; operation: string; baseVersion: string }>()
 const openedEntries = ref<VaultEntry[]>([])
+const expiredCount = computed(() => retentionPolicy.value?.enabled ? expiredTrash(openedEntries.value, retentionPolicy.value.trashCutoff).length : 0)
 const entriesView = ref<InstanceType<typeof VaultEntriesView>>()
 const entryState = ref({ editing: false, working: false })
 const leaveConfirmation = ref<{ answer: (accepted: boolean) => void }>()
@@ -41,6 +59,7 @@ function notify(text: string) {
 }
 function forgetPasswords() { password.value = ''; confirmation.value = '' }
 function forceLock(reason = '') {
+  recoveryOpen.value = false; backupOpen.value = false; historyOpen.value = false; backupSource.value = undefined
   serial++; worker.lock(); forgetPasswords(); busy.value = false; changeOpen.value = false
   openedEntries.value = []; entryState.value = { editing: false, working: false }
   if (saved.value) phase.value = 'locked'
@@ -51,6 +70,7 @@ async function lock(reason = '保险库已锁定。') {
   if (phase.value !== 'unlocked') { forceLock(reason); return true }
   serial++
   const flushing = entriesView.value?.flushDraft() ?? Promise.resolve(true)
+  recoveryOpen.value = false; backupOpen.value = false; historyOpen.value = false; backupSource.value = undefined
   phase.value = 'locking'; openedEntries.value = []; changeOpen.value = false; forgetPasswords(); busy.value = true
   const task = (async () => {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -79,6 +99,7 @@ function entriesStored(snapshot: SavedVault, entries: VaultEntry[]) { saved.valu
 async function load() {
   if (phase.value === 'unlocked' && !await prepareLeave()) return
   const expected = ++serial
+  recoveryOpen.value = false; backupOpen.value = false; historyOpen.value = false; backupSource.value = undefined
   worker.lock(); forgetPasswords(); changeOpen.value = false; busy.value = true; problem.value = ''; phase.value = 'loading'
   try {
     const result = await api<VaultStatus>('/vault', { signal: AbortSignal.timeout(30000) })
@@ -89,6 +110,11 @@ async function load() {
       pendingChange.value = undefined
     }
     else { saved.value = undefined; phase.value = 'new' }
+    try {
+      recoveryPending.value = !!await readRecoveryRequest(props.username)
+      const request = await readRestore(props.username); restorePending.value = !!request; pendingSource.value = request?.source
+    }
+    catch { if (expected === serial) problem.value = '本机待确认恢复暂时无法读取，请检查浏览器存储；不要清除浏览器数据。' }
   } catch (cause) {
     if (expected === serial) { phase.value = 'unavailable'; problem.value = cause instanceof Error ? cause.message : '读取保险库失败，请重试。' }
   } finally { if (expected === serial) busy.value = false }
@@ -128,17 +154,22 @@ async function create() {
   } finally { if (expected === serial) { busy.value = false; forgetPasswords() } }
 }
 async function unlock() {
-  if (!saved.value || busy.value || pendingChange.value || phase.value !== 'locked' || !password.value) return
+  if (!saved.value || busy.value || pendingChange.value || recoveryPending.value || phase.value !== 'locked' || !password.value) return
   const expected = ++serial
   busy.value = true; problem.value = ''
   const secret = password.value
   forgetPasswords()
   try {
     // Re-read before unlocking so another tab's persisted metadata is never silently replaced.
-    const latest = await api<VaultStatus>('/vault', { signal: AbortSignal.timeout(30000) })
+    const [latest, policy] = await Promise.all([
+      api<VaultStatus>('/vault', { signal: AbortSignal.timeout(30000) }),
+      api<VaultRetentionPolicy>('/vault/retention', { signal: AbortSignal.timeout(30000) }),
+    ])
     if (expected !== serial) return
     if (!latest.initialized) throw new Error('VAULT_MISSING')
     saved.value = latest
+    if (!Number.isFinite(Date.parse(policy.trashCutoff)) || !Number.isInteger(policy.recycleDays) || policy.recycleDays < 1) throw new Error('VAULT_RETENTION_UNAVAILABLE')
+    retentionPolicy.value = policy
     const result = await worker.request({ kind: 'unlock', password: secret, envelope: latest.envelope, id: latest.vaultId })
     if (expected !== serial) return
     if (result.kind !== 'unlocked') throw new Error('VAULT_REJECTED')
@@ -200,8 +231,25 @@ async function retryMasterChange() {
   busy.value = true; problem.value = ''
   await submitMasterChange(expected)
 }
-function activity() { if (phase.value === 'unlocked') lastActivity = Date.now() }
-function checkIdle() { if (phase.value === 'unlocked' && Date.now() - lastActivity >= 300000) lock('闲置超过 5 分钟，保险库已自动锁定。') }
+function activity() { if (phase.value === 'unlocked' || backupOpen.value || historyOpen.value || recoveryOpen.value) lastActivity = Date.now() }
+function checkIdle() { if ((phase.value === 'unlocked' || backupOpen.value || historyOpen.value || recoveryOpen.value) && Date.now() - lastActivity >= 300000) lock('闲置超过 5 分钟，保险库已自动锁定。') }
+function openRecovery(mode: 'setup' | 'reset' | 'pending') { recoveryMode.value = mode; recoveryOpen.value = true; lastActivity = Date.now() }
+async function closeRecovery() {
+  recoveryOpen.value = false
+  try { recoveryPending.value = !!await readRecoveryRequest(props.username) }
+  catch { recoveryPending.value = true; problem.value = '待确认恢复操作读取失败，请保留浏览器数据并重新核对。' }
+  if (recoveryPending.value) forceLock('恢复操作结果待确认，请先核对原请求。')
+}
+async function recoveryCompleted(message: string) { forceLock(''); await load(); notify(message) }
+function openBackup() { backupSource.value = undefined; backupOpen.value = true; lastActivity = Date.now() }
+function restoreHistory(version: SavedVault) { historyOpen.value = false; backupSource.value = { kind: 'history', version: version.version, envelope: version.envelope }; backupOpen.value = true; lastActivity = Date.now() }
+function cleanTrash() { if (!retentionPolicy.value) return; backupSource.value = { kind: 'cleanup', cutoff: retentionPolicy.value.trashCutoff }; backupOpen.value = true; lastActivity = Date.now() }
+async function restoredBackup(action: 'backup' | 'history' | 'cleanup') { forceLock(''); await load(); notify(action === 'cleanup' ? '过期条目清理已由服务器确认，请重新解锁核对。历史、备份和草稿没有随之删除。' : '恢复已由服务器确认，请使用目标保险库的主密码重新解锁核对。') }
+async function closeBackup() {
+  backupOpen.value = false
+  backupSource.value = undefined
+  try { const request = await readRestore(props.username); restorePending.value = !!request; pendingSource.value = request?.source } catch { problem.value = '待确认恢复状态读取失败，请保留浏览器数据并重新核对。' }
+}
 function leavingPage() { forceLock('') }
 function beforeUnload(event: BeforeUnloadEvent) { if (entriesView.value?.hasUnsafeDraft()) { event.preventDefault(); event.returnValue = '' } }
 function shortcut(event: KeyboardEvent) {
@@ -232,21 +280,25 @@ defineExpose({ prepareLeave, lock })
     <header class="vault-page-heading">
       <div class="vault-page-title"><span class="vault-title-icon"><ShieldCheck :size="23" :stroke-width="1.6" aria-hidden="true" /></span><div><h1 id="vault-title">密码保险库</h1><p>集中管理你的登录账号与密码</p></div></div>
       <div class="vault-heading-actions">
-        <ATooltip :trigger="['hover', 'focus', 'click']" title="安全审查和加密备份恢复尚未完成，请只使用测试主密码和测试内容。历史版本浏览、到期清理及加密备份仍待后续交付。"><ATag color="gold" class="vault-test-tag" tabindex="0"><Info :size="13" aria-hidden="true" />仅限测试内容</ATag></ATooltip>
+        <AButton :disabled="busy || recoveryPending || entryState.editing || entryState.working || !!pending || !!pendingChange || !['new', 'locked', 'unlocked'].includes(phase)" @click="openBackup">{{ restorePending ? pendingSource === 'cleanup' ? '清理结果待确认' : '恢复结果待确认' : '备份与恢复' }}</AButton>
+        <AButton v-if="phase === 'unlocked'" :disabled="busy || entryState.editing || entryState.working || restorePending || recoveryPending" @click="historyOpen = true">历史版本</AButton>
+        <ATooltip :trigger="['hover', 'focus', 'click']" title="备份、历史、清理专项及开发侧实现自查已完成，此前交付范围已获人工确认；本轮恢复密钥功能待人工确认。2FA 仍暂缓，不代表原 PRD 的完整安全上线门槛通过，请只使用测试内容。"><ATag color="gold" class="vault-test-tag" tabindex="0"><Info :size="13" aria-hidden="true" />仅限测试内容</ATag></ATooltip>
         <ATooltip title="重新读取会锁定保险库，编辑中的内容先加密暂存"><AButton :disabled="busy" @click="load"><RefreshCw :size="15" aria-hidden="true" />重新读取保险库</AButton></ATooltip>
       </div>
     </header>
+    <AAlert v-if="recoveryPending" type="warning" show-icon message="恢复密钥操作结果待确认"><template #action><AButton :disabled="busy" @click="openRecovery('pending')">核对恢复操作</AButton></template></AAlert>
     <AppMessage :notice="feedback" @close="feedback = undefined" />
     <AAlert v-if="problem" :message="problem" type="error" show-icon role="alert" class="vault-inline-alert" />
+    <AAlert v-if="phase === 'unlocked' && expiredCount" type="warning" show-icon :message="`保险库有 ${expiredCount} 项回收站条目已超过 ${retentionPolicy?.recycleDays} 天，确认前不会自动清理。`"><template #action><AButton :disabled="busy || entryState.editing || entryState.working || restorePending || recoveryPending" @click="cleanTrash">预检过期条目</AButton></template></AAlert>
     <div v-if="phase === 'loading' || phase === 'locking'" class="vault-loading"><ASpin /><p role="status">{{ phase === 'loading' ? '正在读取保险库…' : '正在加密暂存草稿并锁定…' }}</p></div>
     <AAlert v-else-if="phase === 'unavailable'" type="warning" show-icon message="保险库暂时无法读取"><template #action><AButton :disabled="busy" @click="load">重试读取保险库</AButton></template></AAlert>
     <ACard v-else-if="phase === 'new'" class="vault-access-card" :bordered="false" aria-labelledby="create-vault-title">
       <div class="vault-access-heading"><span class="vault-access-icon"><ShieldCheck :size="30" :stroke-width="1.5" aria-hidden="true" /></span><h2 id="create-vault-title">创建保险库</h2><p>设置独立主密码，开启你的加密空间。</p></div>
-      <AAlert type="info" show-icon message="主密码与账户登录口令分别管理。忘记主密码后，服务器无法找回。" class="vault-access-notice" />
+      <AAlert type="info" show-icon message="主密码与账户登录口令分别管理。创建后可启用离线恢复密钥；服务器不能找回主密码。" class="vault-access-notice" />
       <AForm :model="{ password, confirmation, acknowledged }" layout="vertical" @finish="create">
         <AFormItem label="保险库主密码" html-for="vault-master" extra="至少 12 个字符，UTF-8 编码不超过 1024 字节。"><AInput id="vault-master" v-model:value="password" type="password" size="large" autocomplete="new-password" :disabled="busy || !!pending" placeholder="设置独立的主密码" /></AFormItem>
         <AFormItem label="再次输入主密码" html-for="vault-confirmation"><AInput id="vault-confirmation" v-model:value="confirmation" type="password" size="large" autocomplete="new-password" :disabled="busy || !!pending" placeholder="再次输入，确认无误" /></AFormItem>
-        <AFormItem><ACheckbox v-model:checked="acknowledged" :disabled="busy || !!pending">我已了解忘记主密码将无法找回，并且当前只使用测试内容。</ACheckbox></AFormItem>
+        <AFormItem><ACheckbox v-model:checked="acknowledged" :disabled="busy || !!pending">我已了解没有可用恢复密钥或备份时无法找回内容，并且当前只使用测试内容。</ACheckbox></AFormItem>
         <AButton html-type="submit" type="primary" size="large" block :loading="busy" :disabled="!pending && (!acknowledged || !password || !confirmation)">{{ pending ? '重试确认创建' : '创建加密保险库' }}</AButton>
       </AForm>
       <p class="vault-access-footnote"><LockKeyhole :size="13" aria-hidden="true" />主密码和解密密钥不会发送到服务器</p>
@@ -254,18 +306,22 @@ defineExpose({ prepareLeave, lock })
     <ACard v-else-if="phase === 'locked'" class="vault-access-card" :bordered="false" aria-labelledby="unlock-vault-title">
       <div class="vault-access-heading"><span class="vault-access-icon"><LockKeyhole :size="30" :stroke-width="1.5" aria-hidden="true" /></span><h2 id="unlock-vault-title">保险库已锁定</h2><p>输入主密码，继续访问登录账号与安全笔记。</p></div>
       <div v-if="pendingChange" class="vault-pending-change" role="status"><AAlert type="info" show-icon message="正在核对主密码修改结果，解密状态已清除。" /><AButton block :loading="busy" @click="retryMasterChange">重试确认主密码修改</AButton></div>
-      <AForm v-else :model="{ password }" layout="vertical" @finish="unlock"><AFormItem label="保险库主密码" html-for="vault-unlock"><AInput id="vault-unlock" v-model:value="password" type="password" size="large" autocomplete="off" :disabled="busy" placeholder="输入保险库主密码" /></AFormItem><AButton type="primary" html-type="submit" size="large" block :loading="busy" :disabled="!password"><KeyRound :size="17" aria-hidden="true" />解锁保险库</AButton></AForm>
+      <AForm v-else-if="!recoveryPending" :model="{ password }" layout="vertical" @finish="unlock"><AFormItem label="保险库主密码" html-for="vault-unlock"><AInput id="vault-unlock" v-model:value="password" type="password" size="large" autocomplete="off" :disabled="busy" placeholder="输入保险库主密码" /></AFormItem><AButton type="primary" html-type="submit" size="large" block :loading="busy" :disabled="!password"><KeyRound :size="17" aria-hidden="true" />解锁保险库</AButton></AForm>
       <p class="vault-access-footnote"><ShieldCheck :size="14" aria-hidden="true" />闲置 5 分钟、刷新或离开后自动锁定</p>
       <p class="vault-access-secondary">主密码与你的账户登录口令相互独立</p>
+      <AButton v-if="!pendingChange && !recoveryPending" type="link" :disabled="busy || restorePending" @click="openRecovery('reset')">忘记主密码？使用恢复密钥</AButton>
     </ACard>
     <section v-else-if="phase === 'unlocked'" class="vault-opened" aria-labelledby="unlocked-vault-title">
       <div class="vault-unlocked-toolbar">
         <div class="vault-status-summary"><h2 id="unlocked-vault-title"><span class="vault-status-dot" />保险库已解锁</h2><span class="vault-status-separator" /><span>无操作 5 分钟后锁定</span><ATooltip :title="`当前服务器版本 ${saved?.version}`"><span class="vault-version">v{{ saved?.version }}</span></ATooltip></div>
-        <div class="vault-lock-actions"><ATooltip :title="entryState.editing ? '先保存或关闭当前编辑，再修改主密码' : '修改保险库解锁主密码'"><span><AButton type="text" :disabled="busy || entryState.editing || entryState.working" @click="changeOpen = true"><KeyRound :size="15" aria-hidden="true" />修改主密码</AButton></span></ATooltip><AButton @click="lock()"><LockKeyhole :size="15" aria-hidden="true" />立即锁定</AButton></div>
+        <div class="vault-lock-actions"><AButton type="text" :disabled="busy || entryState.editing || entryState.working || restorePending || recoveryPending" @click="openRecovery('setup')">设置恢复密钥</AButton><ATooltip :title="entryState.editing ? '先保存或关闭当前编辑，再修改主密码' : '修改保险库解锁主密码'"><span><AButton type="text" :disabled="busy || entryState.editing || entryState.working" @click="changeOpen = true"><KeyRound :size="15" aria-hidden="true" />修改主密码</AButton></span></ATooltip><AButton @click="lock()"><LockKeyhole :size="15" aria-hidden="true" />立即锁定</AButton></div>
       </div>
       <VaultEntriesView v-if="saved" ref="entriesView" :worker="worker" :snapshot="saved" :entries="openedEntries" @stored="entriesStored" @notice="notify" @fatal="encryptionFailure" @reload="load" @state="entryState = $event" />
     </section>
+    <VaultRecoveryDialog v-if="recoveryOpen && saved" :username="username" :mode="recoveryMode" :snapshot="saved" :worker="phase === 'unlocked' ? worker : undefined" @close="closeRecovery" @completed="recoveryCompleted" @fatal="encryptionFailure" @notice="notify" />
     <ChangeMasterPasswordDialog v-if="changeOpen && phase === 'unlocked'" :busy="busy" @close="changeOpen = false" @submit="changeMaster" />
+    <VaultHistoryDialog v-if="historyOpen && phase === 'unlocked' && saved" :snapshot="saved" :worker="worker" :policy="retentionPolicy" @close="historyOpen = false" @restore="restoreHistory" @fatal="encryptionFailure" @notice="notify" />
+    <VaultBackupDialog v-if="backupOpen" :username="username" :snapshot="saved" :source="backupSource" :worker="phase === 'unlocked' ? worker : undefined" @close="closeBackup" @restored="restoredBackup" @notice="notify" @fatal="encryptionFailure" />
     <ConfirmDialog v-if="leaveConfirmation" message="最新草稿尚未确认加密暂存，继续离开可能丢失最新输入。是否仍要离开？" confirm-label="仍要离开" @answer="leaveConfirmation.answer" />
   </section>
 </template>

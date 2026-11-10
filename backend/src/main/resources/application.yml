@@ -46,6 +46,18 @@ management:
       path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}
 
 private-space:
+  office:
+    enabled: ${PRIVATE_SPACE_OFFICE_ENABLED:false}
+    server-url: ${PRIVATE_SPACE_OFFICE_SERVER_URL:http://127.0.0.1:8082}
+    browser-url: ${PRIVATE_SPACE_OFFICE_BROWSER_URL:http://127.0.0.1:8082}
+    callback-base-url: ${PRIVATE_SPACE_OFFICE_CALLBACK_BASE_URL:http://host.docker.internal:8080}
+    jwt-secret: ${PRIVATE_SPACE_OFFICE_JWT_SECRET:}
+  vault-retention:
+    enabled: ${PRIVATE_SPACE_VAULT_RETENTION_ENABLED:true}
+    history-days: ${PRIVATE_SPACE_VAULT_HISTORY_RETENTION_DAYS:30}
+    recycle-days: ${PRIVATE_SPACE_VAULT_RECYCLE_RETENTION_DAYS:30}
+    cleanup-interval: ${PRIVATE_SPACE_VAULT_RETENTION_CLEANUP_INTERVAL:PT6H}
+    cleanup-initial-delay: ${PRIVATE_SPACE_VAULT_RETENTION_CLEANUP_INITIAL_DELAY:PT1M}
   retention:
     enabled: ${PRIVATE_SPACE_RETENTION_ENABLED:true}
     history-days: ${PRIVATE_SPACE_HISTORY_RETENTION_DAYS:30}

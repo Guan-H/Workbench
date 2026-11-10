@@ -25,10 +25,12 @@
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
 	@html path / /index.html
 	header @html Cache-Control "no-store"
-	# Only the cryptography Worker may compile WebAssembly; keep eval disabled on pages.
+	# Trusted crypto/PDF Workers may compile WebAssembly; keep eval disabled on pages.
 	@vaultWorker path /assets/vault-worker-*.js
 	header @vaultWorker Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'none'; object-src 'none'; base-uri 'none'"
-	@standardResponse not path /assets/vault-worker-*.js
+	@pdfWorker path /assets/pdf.worker.min-*.mjs
+	header @pdfWorker Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; object-src 'none'; base-uri 'none'"
+	@standardResponse not path /assets/vault-worker-*.js /assets/pdf.worker.min-*.mjs
 	header @standardResponse Content-Security-Policy "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
 
 	header {

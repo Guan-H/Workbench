@@ -10,6 +10,7 @@ public interface AuthService {
     void initialize(CredentialsRequest request);
     String login(CredentialsRequest request, String remoteAddress);
     boolean valid(String token);
+    boolean validSessionHash(String hash);
     void logout(String token);
     List<WebSessionResponse> sessions(String currentToken);
     /** Repeated revocation is harmless; the caller's own session uses the normal logout flow. */

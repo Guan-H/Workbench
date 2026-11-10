@@ -2,11 +2,11 @@
 import { Menu as AMenu, MenuItem as AMenuItem } from 'ant-design-vue'
 
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { FolderInput, Pencil, Trash2, RotateCcw, FilePlus2, FolderPlus } from 'lucide-vue-next'
+import { FolderInput, Pencil, Trash2, RotateCcw, FilePlus2, FolderPlus, BookOpen } from 'lucide-vue-next'
 import type { Note } from '../../shared/api/client'
 
 const props = withDefaults(defineProps<{ note?: Note; destination?: string; x: number; y: number; anchor: HTMLElement; trash?: boolean }>(), { trash: false, destination: '' })
-const emit = defineEmits<{ close: []; action: [action: 'rename' | 'move' | 'delete' | 'restore' | 'new-note' | 'new-folder'] }>()
+const emit = defineEmits<{ close: []; action: [action: 'rename' | 'move' | 'delete' | 'restore' | 'new-note' | 'new-folder' | 'copy-novel'] }>()
 const menu = ref<HTMLElement>()
 const left = ref(Math.max(8, Math.min(props.x, window.innerWidth - 200)))
 const top = ref(Math.max(8, props.y))
@@ -48,6 +48,7 @@ onBeforeUnmount(() => { window.removeEventListener('pointerdown', outside); wind
         <AMenuItem key="new-folder" @click="emit('action', 'new-folder')"><FolderPlus :size="16" />{{ note ? '在此新建文件夹' : '新建文件夹' }}</AMenuItem>
       </template>
       <template v-if="note">
+        <AMenuItem key="copy-novel" v-if="note.type!=='folder' && /\.(txt|epub|md)$/i.test(note.path)" @click="emit('action','copy-novel')"><BookOpen :size="16" />复制到书架</AMenuItem>
         <AMenuItem key="rename" @click="emit('action', 'rename')"><Pencil :size="16" />重命名</AMenuItem>
         <AMenuItem key="move" @click="emit('action', 'move')"><FolderInput :size="16" />移动到…</AMenuItem>
         <AMenuItem key="delete" danger class="danger-action" @click="emit('action', 'delete')"><Trash2 :size="16" />删除</AMenuItem>

@@ -10,6 +10,7 @@ public interface NoteService {
     Map<String, Object> list(boolean deleted, String cursor, String query);
     Map<String, Object> list(boolean deleted, String cursor, String query, boolean includeGroups);
     NoteResponse read(String id, boolean track);
+    NoteResponse metadata(String id);
     NoteResponse create(WriteNoteRequest request, String operation);
     NoteResponse save(String id, WriteNoteRequest request, String operation);
     NoteResponse delete(String id, String baseVersion, String operation);
@@ -21,6 +22,11 @@ public interface NoteService {
     void favorite(String id, boolean favorite);
     NoteResponse upload(String path, byte[] bytes, String operation);
     byte[] download(String path);
+    byte[] versionBytes(String id, String version);
+    String pinVersion(String id, String version, String leaseId);
+    java.util.Map.Entry<NoteResponse, Boolean> publishOffice(String id, String path, String version, byte[] bytes, String operation, String conflictPath);
+    NoteResponse convertedCopy(String id, String version, String target, byte[] bytes, String operation);
+    NoteResponse replaceAttachment(String id, String path, String baseVersion, byte[] bytes, String operation);
     Map<String, Object> syncSnapshot();
     Map<String, Object> syncSnapshot(java.util.List<String> folders);
     /** Builds metadata under the notebook lock for the paged protocol; does not impose the legacy 5000-item limit. */

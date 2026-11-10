@@ -7,6 +7,7 @@ import AppMessage, { type Notice } from '../../shared/AppMessage.vue'
 import AppPagination from '../../shared/AppPagination.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import PasswordGenerator from '../vault/PasswordGenerator.vue'
+import EnglishWebhookSettings from '../english/EnglishWebhookSettings.vue'
 
 interface LoginSession { id: string; current: boolean; createdAt: string; expiresAt: string }
 const emit = defineEmits<{ sessionExpired: [] }>()
@@ -96,6 +97,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(feedbackTimer) })
         <AppPagination v-model:page="page" :pages="pages" :total="sessions.length" :page-size="pageSize" :disabled="loading || revoking" />
       </nav>
     </section>
+    <EnglishWebhookSettings />
     <PasswordGenerator />
     <ConfirmDialog v-if="target" title="撤销登录会话" :message="`确定撤销 ${time(target.createdAt)} 建立的会话吗？该会话下次访问私有内容时需要重新登录。`" confirm-label="确认撤销" @answer="revoke" />
   </section>

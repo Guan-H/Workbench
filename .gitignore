@@ -31,5 +31,8 @@ data/
 logs/
 
 # OS
+# Generated PDF.js font/cmap assets copied from the locked dependency
+frontend/public/pdfjs/
+
 .DS_Store
 Thumbs.db

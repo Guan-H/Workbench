@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import DocumentWorkspace from '../document/DocumentWorkspace.vue'
 import { Button as AButton, Dropdown as ADropdown, Menu as AMenu, MenuItem as AMenuItem, Input as AInput, Slider as ASlider } from 'ant-design-vue'
 import AppDialog from '../../shared/AppDialog.vue'
 
 import { defineAsyncComponent, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NotebookPen, FileText, Folder, FolderPlus, Plus, Search, Shield, RefreshCw, Trash2, Settings, LogOut,
   ChevronsLeft, PanelLeft, Columns2, Code2, Eye, Clock3, Star, Upload, X, ChevronRight, ListTree, Save,
-  FilePlus2, Paperclip, Menu, RotateCcw, Download, House } from 'lucide-vue-next'
+  FilePlus2, Paperclip, Menu, RotateCcw, Download, House, BookOpen } from 'lucide-vue-next'
 import { diffLines } from 'diff'
 import { api, write, uploadRequest, type UploadProgress, listNotes, ApiError, type Note, type Revision, type RevisionPage, type DeletePreview, type RecycleCandidates, type RecycleRequest, type RecyclePreview, type RecycleResult } from '../../shared/api/client'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -25,12 +26,17 @@ import SyncCenterView from '../sync/SyncCenterView.vue'
 import AccountSettingsView from '../settings/AccountSettingsView.vue'
 
 const VaultView = defineAsyncComponent(() => import('../vault/VaultView.vue'))
+const ReadingView = defineAsyncComponent(() => import('../reader/ReadingView.vue'))
+const readingView = ref<{ prepareLeave: () => Promise<boolean> }>()
+const requestedBook = ref<Note>()
+const AddToNovelDialog = defineAsyncComponent(()=>import('../reader/AddToNovelDialog.vue'))
+const novelCopy = ref<Note>()
 const vaultView = ref<{ prepareLeave: () => Promise<boolean>; lock: (reason?: string) => Promise<boolean> }>()
 
 const props = defineProps<{ username: string }>()
 const emit = defineEmits<{ logout: []; sessionExpired: [] }>()
 const linkedNotePath = new URLSearchParams(window.location.search).get('note')
-const section = ref<'home' | 'notes' | 'sync' | 'settings' | 'vault'>(linkedNotePath ? 'notes' : 'home')
+const section = ref<'home' | 'notes' | 'reading' | 'sync' | 'settings' | 'vault'>(linkedNotePath ? 'notes' : 'home')
 const items = ref<Note[]>([])
 const current = ref<Note>()
 const text = ref('')
@@ -93,6 +99,9 @@ const historyPage = ref(0)
 const historyCursors = ref([''])
 const historyNextCursor = ref<string | null>(null)
 const serverCopy = ref<Note>()
+const activeDocument = ref<Note>()
+const documentView = ref<{ save: () => Promise<boolean>; prepareLeave: () => Promise<boolean>; hasUnsaved: () => boolean; persistDraft: () => boolean }>()
+const documentInput = ref<HTMLInputElement>()
 const attachmentInput = ref<HTMLInputElement>()
 const importInput = ref<HTMLInputElement>()
 const directoryImport = ref(false)
@@ -132,13 +141,18 @@ function confirmAction(message: string, title = '确认操作', confirmLabel = '
     confirmation.value = { message, title, confirmLabel, answer: value => { confirmation.value = undefined; resolve(value) } }
   })
 }
-async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore' | 'new-note' | 'new-folder') {
+async function fileAction(action: 'rename' | 'move' | 'delete' | 'restore' | 'new-note' | 'new-folder' | 'copy-novel') {
   const note = contextMenu.value?.note
   const destination = note?.type === 'folder' ? note.path : contextMenu.value?.destination ?? ''
   contextMenu.value?.anchor.focus()
   contextMenu.value = undefined
   if (action === 'new-note' || action === 'new-folder') { await openCreate(action === 'new-note' ? 'note' : 'folder', destination); return }
   if (!note) return
+  if(action==='copy-novel') {
+    if(note.id===current.value?.id && !await saveNow())return
+    if(note.id===activeDocument.value?.id && documentView.value && !await documentView.value.save())return
+    novelCopy.value=note;return
+  }
   if (action === 'restore') { await beginRecycle(note); return }
   if (action === 'delete') await removeNote(note)
   else await beginMove(note, action)
@@ -251,7 +265,7 @@ const visibleItems = computed(() => {
     .sort((a, b) => (b.lastOpenedAt ?? '').localeCompare(a.lastOpenedAt ?? '')).slice(0, 20)
   return active
 })
-const currentTitle = computed(() => current.value?.path.split('/').at(-1) ?? '我的笔记')
+const currentTitle = computed(() => (activeDocument.value ?? current.value)?.path.split('/').at(-1) ?? '我的笔记')
 const difference = computed(() => diffLines(serverCopy.value?.content ?? historic.value?.content ?? '', text.value))
 const historyDifference = computed(() => diffLines(historic.value?.content ?? '', savedText.value))
 type Pending = { id: string; path: string; content: string; baseVersion: string; operation: string }
@@ -338,11 +352,39 @@ function applyNote(note: Note) {
   } catch { problem.value = '无法读取本机草稿，请保留当前内容后重试。' }
 }
 
+async function documentStored(file: Note) { activeDocument.value = file; await refresh() }
+async function documentCreated(file: Note) { activeDocument.value = undefined; await refresh(); await openNote(file) }
+async function importDocument(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) return
+  const file = event.target.files?.[0]; event.target.value = ''
+  if (!file || !await leaveNote()) return
+  if (!await confirmAction(`将“${file.name}”上传到当前目录？同名文件不会覆盖。`, '上传文档', '确认上传')) return
+  try {
+    const data = new FormData(); data.append('path', folder.value ? `${folder.value}/${file.name}` : file.name); data.append('file', file)
+    const saved = await uploadRequest<Note>('/files', data, value => { uploadProgress.value = value }, { 'Idempotency-Key': crypto.randomUUID() })
+    uploadProgress.value = undefined; await refresh(); await openNote(saved)
+  } catch (cause) { uploadProgress.value = undefined; problem.value = message(cause) }
+}
 async function openNote(note: Note) {
   const serial = ++openSerial
   openController?.abort()
   opening.value = false
-  if (note.type === 'attachment') { treeSelection.value = note.id; window.open(`/api/v1/files/content?path=${encodeURIComponent(note.path)}`, '_blank', 'noopener,noreferrer'); return }
+  if (note.type === 'attachment') {
+    if (!/\.(txt|epub|pdf|docx?|xlsx?)$/i.test(note.path)) { treeSelection.value = note.id; window.open(`/api/v1/files/content?path=${encodeURIComponent(note.path)}`, '_blank', 'noopener,noreferrer'); return }
+    if (/\.epub$/i.test(note.path)) { await showReading(note); return }
+    if (!await leaveNote(() => serial === openSerial) || serial !== openSerial) return
+    try {
+      const loaded = await api<Note>(`/notes/${note.id}`)
+      if (serial !== openSerial) return
+        if (activeDocument.value?.id === loaded.id) {
+          activeDocument.value = undefined
+          await nextTick()
+          if (serial !== openSerial) return
+        }
+      activeDocument.value = loaded; treeSelection.value = loaded.id; mobileNav.value = false
+    } catch (cause) { problem.value = message(cause) }
+    return
+  }
   if (note.type === 'folder') { selectFolder(note.path); return }
   if (note.id === current.value?.id) { treeSelection.value = note.id; return }
   const controller = openController = new AbortController()
@@ -354,7 +396,7 @@ async function openNote(note: Note) {
     problem.value = ''
     const loaded = await api<Note>(`/notes/${note.id}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) })
     if (serial !== openSerial || !await leaveNote(() => serial === openSerial) || serial !== openSerial) return
-    applyNote(loaded); mobileNav.value = false
+    activeDocument.value = undefined; applyNote(loaded); mobileNav.value = false
   } catch (error) {
     if (serial === openSerial) problem.value = error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')
       ? '笔记读取超时，请重试或选择其他笔记。当前内容和草稿已保留。' : message(error)
@@ -362,6 +404,8 @@ async function openNote(note: Note) {
 }
 
 async function leaveNote(stillSelected = () => true) {
+  if (section.value === 'reading' && readingView.value && !await readingView.value.prepareLeave()) return false
+  if (activeDocument.value && documentView.value && !await documentView.value.prepareLeave()) return false
   if (section.value === 'vault' && vaultView.value && !await vaultView.value.prepareLeave()) return false
   if (!dirty.value && !pending) return true
   if (await saveNow()) return true
@@ -488,6 +532,15 @@ async function showSync() {
   mobileNav.value = false
 }
 
+async function showReading(file?: Note) {
+  if (!await leaveNote()) return
+  requestedBook.value = file
+  section.value = 'reading'
+  mobileNav.value = false
+  if (!file) await refresh()
+}
+async function bookUploaded(_file: Note) { await refresh() }
+
 async function showVault() {
   if (section.value === 'vault') return
   if (!await leaveNote()) return
@@ -603,6 +656,7 @@ async function removeNote(note: Note) {
     await write(`/notes/${target.id}?baseVersion=${target.version}&fingerprint=${plan.fingerprint}`, 'DELETE')
     for (const item of plan.targets) localStorage.removeItem(draftKey(item.id))
     if (plan.targets.some(item => item.id === treeSelection.value)) treeSelection.value = ''
+    if (plan.targets.some(item => item.id === activeDocument.value?.id)) activeDocument.value = undefined
     if (plan.targets.some(item => item.id === current.value?.id)) {
       current.value = undefined
       text.value = ''; savedText.value = ''; status.value = '已移入回收站'
@@ -703,8 +757,9 @@ async function prepareSessionExpiry(): Promise<boolean> {
   window.clearTimeout(timer)
   ++openSerial; openController?.abort()
   persistDraft()
+  const documentStored = documentView.value?.persistDraft() ?? true
   const vaultStored = await (vaultView.value?.lock('') ?? Promise.resolve(true))
-  return draftStored && vaultStored
+  return draftStored && vaultStored && documentStored
 }
 defineExpose({ prepareSessionExpiry })
 
@@ -714,7 +769,7 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请重试。'
 }
 function displayTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '—' }
-function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || pending) { persistDraft(); event.preventDefault(); event.returnValue = '' } }
+function beforeUnload(event: BeforeUnloadEvent) { if (documentView.value?.hasUnsaved()) { documentView.value.persistDraft(); event.preventDefault(); event.returnValue = '' } if (dirty.value || pending) { persistDraft(); event.preventDefault(); event.returnValue = '' } }
 function shortcut(event: KeyboardEvent) {
   if (createRequest.value || moveRequest.value || contextMenu.value || directoryImport.value || exportDialog.value || confirmation.value || recycleRequest.value || restoring.value) return
   if (modal.value && event.key === 'Tab') {
@@ -726,6 +781,8 @@ function shortcut(event: KeyboardEvent) {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     if (event.defaultPrevented) return
+    if (section.value === 'reading') { event.preventDefault(); void readingView.value?.prepareLeave(); return }
+    if (activeDocument.value) { event.preventDefault(); void documentView.value?.save(); return }
     event.preventDefault()
     if (!event.repeat && !modal.value) void manualSave()
   }
@@ -776,6 +833,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
       <nav aria-label="主要导航">
         <AButton :class="{ active: section === 'home' }" :aria-current="section === 'home' ? 'page' : undefined" @click="showHome"><House :size="18" aria-hidden="true" />工作台</AButton>
         <AButton :class="{ active: section === 'notes' && view !== 'trash' }" :aria-current="section === 'notes' && view !== 'trash' ? 'page' : undefined" @click="switchView('notes')"><FileText :size="18" />笔记</AButton>
+        <AButton :class="{ active: section === 'reading' }" :aria-current="section === 'reading' ? 'page' : undefined" @click="showReading()"><BookOpen :size="18" />阅读</AButton>
         <AButton :class="{ active: section === 'vault' }" :aria-current="section === 'vault' ? 'page' : undefined" @click="showVault"><Shield :size="18" />密码保险库</AButton>
         <AButton :class="{ active: section === 'sync' }" :aria-current="section === 'sync' ? 'page' : undefined" @click="showSync"><RefreshCw :size="18" />同步中心</AButton>
         <AButton :class="{ active: section === 'notes' && view === 'trash' }" :aria-current="section === 'notes' && view === 'trash' ? 'page' : undefined" @click="switchView('trash')"><Trash2 :size="18" />回收站</AButton>
@@ -788,6 +846,11 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
       <HomeView :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
     </main>
 
+    <main v-if="section === 'reading'" class="home-main">
+      <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>阅读</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
+      <ReadingView ref="readingView" :username="username" :requested-file="requestedBook" @uploaded="bookUploaded" />
+    </main>
+
     <main v-if="section === 'sync'" class="home-main">
       <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>同步中心</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
       <SyncCenterView />
@@ -795,7 +858,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
 
     <main v-if="section === 'vault'" class="home-main">
       <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>密码保险库</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
-      <VaultView ref="vaultView" />
+      <VaultView ref="vaultView" :username="props.username" />
     </main>
 
     <main v-if="section === 'settings'" class="home-main">
@@ -823,6 +886,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
         <ADropdown v-model:open="transferMenuOpen" :trigger="['click']" placement="topLeft">
           <AButton :aria-expanded="transferMenuOpen" aria-haspopup="menu" @keydown="transferKey"><Upload :size="15" aria-hidden="true" />导入/导出</AButton>
           <template #overlay><AMenu class="transfer-menu" aria-label="导入导出操作" @keydown="transferKey">
+            <AMenuItem key="document" @click="documentInput?.click()"><Upload :size="15" />上传文档（TXT / EPUB / PDF / Office）</AMenuItem>
             <AMenuItem key="markdown" @click="transferAction('markdown')"><Upload :size="15" />导入 Markdown</AMenuItem>
             <AMenuItem key="directory" @click="transferAction('directory')"><FolderPlus :size="15" />批量导入目录</AMenuItem>
             <AMenuItem key="export" :disabled="exporting" @click="transferAction('export')"><Download :size="15" />{{ exporting ? '正在生成 ZIP…' : '导出笔记 ZIP' }}</AMenuItem>
@@ -830,6 +894,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
         </ADropdown>
         <small v-if="exportFeedback" role="status">{{ exportFeedback }}</small>
       </div>
+      <input ref="documentInput" type="file" accept=".txt,.epub,.pdf,.doc,.docx,.xls,.xlsx" hidden @change="importDocument" />
       <input ref="importInput" type="file" accept=".md" hidden @change="imported" />
     </aside>
 
@@ -839,7 +904,8 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
       <AppMessage :notice="saveFeedback" test-id="save-feedback" @close="saveFeedback = undefined" />
       <UploadProgressBar v-if="uploadProgress" :progress="uploadProgress" label="文件上传" />
       <p v-if="opening" class="note-loading" role="status">正在切换笔记，可继续选择其他笔记…</p>
-      <template v-if="current && current.type === 'note' && !current.deleted">
+      <DocumentWorkspace v-if="activeDocument" ref="documentView" :key="activeDocument.id" :file="activeDocument" :username="username" @stored="documentStored" @created="documentCreated" />
+      <template v-else-if="current && current.type === 'note' && !current.deleted">
         <div class="document-tab"><span><FileText :size="15" />{{ currentTitle }}<span v-if="dirty" class="unsaved-dot" title="有未提交修改" /></span></div>
         <div class="editor-toolbar"><div class="mode-switch" aria-label="编辑模式"><AButton :class="{ active: mode === 'split' }" @click="mode = 'split'"><Columns2 :size="14" />分栏</AButton><AButton :class="{ active: mode === 'edit' }" @click="mode = 'edit'"><Code2 :size="14" />编辑</AButton><AButton :class="{ active: mode === 'preview' }" @click="mode = 'preview'"><Eye :size="14" />预览</AButton></div><label v-if="mode === 'split'" class="split-width-control" title="点击滑轨调整编辑区宽度"><span>宽度</span><ASlider aria-label-for-handle="编辑区宽度" v-model:value="splitPercent" :min="20" :max="80" aria-label="编辑区宽度" /></label><div class="editor-actions"><AButton type="text" class="icon-button" @click="toggleFavorite" :title="current.favorite ? '取消收藏' : '收藏笔记'" :aria-label="current.favorite ? '取消收藏' : '收藏笔记'" :class="{ starred: current.favorite }"><Star :size="17" /></AButton><AButton type="text" class="icon-button" @click="attachmentInput?.click()" title="上传附件" aria-label="上传附件" :disabled="modalBusy"><Paperclip :size="17" /></AButton><AButton title="查看笔记历史" @click="history()"><Clock3 :size="15" /><span>历史</span></AButton><AButton type="text" class="icon-button" @click="manualSave" title="保存笔记 (Ctrl+S)" aria-label="保存笔记" :disabled="saving"><Save :size="17" /></AButton><AButton type="text" class="icon-button" @click="removeCurrent" title="删除笔记" aria-label="删除笔记"><Trash2 :size="16" /></AButton><AButton type="text" class="icon-button" @click="outlineVisible = !outlineVisible" title="显示或隐藏大纲" aria-label="显示或隐藏大纲"><ListTree :size="17" /></AButton></div></div>
         <div v-if="conflict" class="conflict-bar"><span>检测到版本冲突，服务器与本机草稿均已保留。</span><AButton @click="showConflict">对比并处理</AButton><AButton @click="downloadDraft">下载本机草稿</AButton></div>
@@ -850,16 +916,17 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
         </div>
       </template>
       <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><AButton type="primary" v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</AButton><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>
-      <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ status }}</span><span v-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span></footer>
+      <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ activeDocument ? '文件已打开，保存状态见上方' : status }}</span><span v-if="activeDocument">{{ activeDocument.size.toLocaleString() }} 字节 · {{ activeDocument.path.split('.').at(-1)?.toUpperCase() }}</span><span v-else-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span></footer>
     </main>
 
-    <aside v-if="section === 'notes' && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><AButton v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</AButton><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
+    <aside v-if="section === 'notes' && !activeDocument && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><AButton v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</AButton><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>
 
     <ConfirmDialog v-if="confirmation" :title="confirmation.title" :message="confirmation.message" :confirm-label="confirmation.confirmLabel" @answer="confirmation.answer" />
     <CreateItemDialog v-if="createRequest" v-bind="createRequest" :items="items" @close="createRequest = undefined" @created="created" @secure-note="createRequest = undefined; showVault()" />
     <ExportNotesDialog v-if="exportDialog" :items="items" @close="exportDialog = false" @exported="exported" />
     <RecycleRestoreDialog v-if="recycleRequest" :note="recycleRequest" :items="items" @close="recycleRequest = undefined" @restored="recovered" />
     <FileContextMenu v-if="contextMenu" v-bind="contextMenu" :trash="view === 'trash'" @close="contextMenu = undefined" @action="fileAction" />
+    <AddToNovelDialog v-if="novelCopy" :file="novelCopy" @close="novelCopy=undefined" @added="novelCopy=undefined;saveFeedback={kind:'success',text:'已加入书籍，正文与源文件保持关联。',duration:2000}" />
     <MoveNoteDialog v-if="moveRequest" v-bind="moveRequest" :items="items" @close="moveRequest = undefined" @moved="moved" />
     <ImportDirectoryDialog v-if="directoryImport" :items="items" :destination="folder" @close="directoryImport = false" @imported="refresh" />
     <input ref="attachmentInput" type="file" hidden @change="($event.target as HTMLInputElement).files?.[0] && upload(($event.target as HTMLInputElement).files![0]!)" />

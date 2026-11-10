@@ -14,7 +14,24 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/files")
 public class FileController {
     private final NoteService notes;
-    public FileController(NoteService notes) { this.notes = notes; }
+    private final com.privatespace.modules.file.service.TextFileService texts;
+    public FileController(NoteService notes, com.privatespace.modules.file.service.TextFileService texts) { this.notes = notes; this.texts = texts; }
+
+    @GetMapping("/{id}/content")
+    public ResponseEntity<byte[]> versionContent(@PathVariable String id, @RequestParam String version) {
+        return ResponseEntity.ok().header("Content-Type", "application/octet-stream").header("Cache-Control", "no-store")
+                .header("X-Content-Type-Options", "nosniff").header("Content-Disposition", "attachment")
+                .header("Content-Security-Policy", "default-src 'none'; sandbox").body(notes.versionBytes(id, version));
+    }
+
+    @GetMapping("/{id}/text")
+    public ResponseEntity<java.util.Map<String, Object>> text(@PathVariable String id, @RequestParam(defaultValue = "auto") String encoding) {
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(texts.read(id, encoding));
+    }
+
+    @PutMapping("/{id}/text")
+    public NoteResponse saveText(@PathVariable String id, @jakarta.validation.Valid @RequestBody com.privatespace.modules.file.dto.TextFileRequest request,
+            @RequestHeader("Idempotency-Key") String operation) { return texts.save(id, request, operation); }
 
     @PostMapping
     public NoteResponse upload(@RequestParam String path, @RequestParam MultipartFile file,

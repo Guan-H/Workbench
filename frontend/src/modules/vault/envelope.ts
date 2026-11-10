@@ -1,66 +1,22 @@
 import sodium from 'libsodium-wrappers-sumo'
 import { parseContent, parseDraft, type VaultContent, type VaultDraft } from './entries'
 
-export interface VaultEnvelope {
-  format: 'private-space-vault'
-  version: 1
-  purpose: 'vault'
-  vaultId: string
-  keyId: string
-  kdf: { algorithm: 'argon2id13'; ops: 3; memory: 67108864; salt: string }
-  wrappedKey: { nonce: string; ciphertext: string }
-  payload: { id: string; nonce: string; ciphertext: string }
-}
-export type EncryptedDraft = Omit<VaultEnvelope, 'purpose'> & { purpose: 'draft' }
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-const maxPayload = 1024 * 1024
+import { parseEnvelope, maxPayload, type VaultEnvelope, type EncryptedDraft, type BackupEnvelope, type Envelope } from './envelope-format'
+export { parseEnvelope, type VaultEnvelope, type EncryptedDraft, type BackupEnvelope } from './envelope-format'
+type EnvelopeFields = Omit<VaultEnvelope, 'purpose'> & { purpose: Envelope['purpose'] }
 const encoder = new TextEncoder()
 const b64 = (value: Uint8Array) => sodium.to_base64(value, sodium.base64_variants.URLSAFE_NO_PADDING)
 const bytes = (value: string) => sodium.from_base64(value, sodium.base64_variants.URLSAFE_NO_PADDING)
 function invalid(): never { throw new Error('VAULT_AUTHENTICATION_FAILED') }
-function object(value: unknown, keys: string[]): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join(',') !== [...keys].sort().join(',')) invalid()
-  return Object.fromEntries(Object.entries(value))
-}
-function id(value: unknown): string {
-  if (typeof value !== 'string' || !uuid.test(value)) invalid()
-  return value
-}
-function encoded(value: unknown, min: number, max = min): string {
-  if (typeof value !== 'string' || value.length > Math.ceil(max * 4 / 3)) invalid()
-  const decoded = bytes(value)
-  if (decoded.length < min || decoded.length > max || b64(decoded) !== value) invalid()
-  return value
-}
-
-/** Parse all untrusted metadata before any password-derived allocation. */
-export function parseEnvelope(input: unknown, purpose?: 'vault'): Promise<VaultEnvelope>
-export function parseEnvelope(input: unknown, purpose: 'draft'): Promise<EncryptedDraft>
-export async function parseEnvelope(input: unknown, purpose: 'vault' | 'draft' = 'vault'): Promise<VaultEnvelope | EncryptedDraft> {
-  await sodium.ready
-  const value = object(input, ['format', 'version', 'purpose', 'vaultId', 'keyId', 'kdf', 'wrappedKey', 'payload'])
-  if (value.format !== 'private-space-vault' || value.version !== 1 || value.purpose !== purpose) invalid()
-  const kdf = object(value.kdf, ['algorithm', 'ops', 'memory', 'salt'])
-  if (kdf.algorithm !== 'argon2id13' || kdf.ops !== 3 || kdf.memory !== 67108864) invalid()
-  const wrapped = object(value.wrappedKey, ['nonce', 'ciphertext'])
-  const payload = object(value.payload, ['id', 'nonce', 'ciphertext'])
-  return {
-    format: 'private-space-vault', version: 1, purpose, vaultId: id(value.vaultId), keyId: id(value.keyId),
-    kdf: { algorithm: 'argon2id13', ops: 3, memory: 67108864, salt: encoded(kdf.salt, 16) },
-    wrappedKey: { nonce: encoded(wrapped.nonce, 24), ciphertext: encoded(wrapped.ciphertext, 48) },
-    payload: { id: id(payload.id), nonce: encoded(payload.nonce, 24), ciphertext: encoded(payload.ciphertext, 16, maxPayload + 16) },
-  }
-}
-function keyContext(envelope: VaultEnvelope) {
+function keyContext(envelope: EnvelopeFields) {
   return JSON.stringify(['private-space-vault', 1, 'key', 'xchacha20poly1305-ietf', envelope.purpose,
     envelope.vaultId, envelope.keyId, envelope.kdf.algorithm, envelope.kdf.ops, envelope.kdf.memory, envelope.kdf.salt])
 }
-function payloadContext(envelope: VaultEnvelope | EncryptedDraft) {
+function payloadContext(envelope: EnvelopeFields) {
   return JSON.stringify(['private-space-vault', 1, 'payload', 'xchacha20poly1305-ietf', envelope.purpose,
     envelope.vaultId, envelope.keyId, envelope.payload.id])
 }
-function derive(password: string, envelope: VaultEnvelope): Uint8Array {
+function derive(password: string, envelope: EnvelopeFields): Uint8Array {
   const input = encoder.encode(password)
   try {
     if (!input.length || input.length > 1024) invalid()
@@ -69,18 +25,19 @@ function derive(password: string, envelope: VaultEnvelope): Uint8Array {
   } finally { sodium.memzero(input) }
 }
 
-export async function createVault(password: string): Promise<{ envelope: VaultEnvelope; key: Uint8Array }> {
+async function createEncrypted<P extends 'vault' | 'backup'>(password: string, purpose: P, content: VaultContent): Promise<{ envelope: Omit<VaultEnvelope, 'purpose'> & { purpose: P }; key: Uint8Array }> {
   await sodium.ready
   if ([...password].length < 12 || encoder.encode(password).length > 1024) invalid()
-  const envelope: VaultEnvelope = {
-    format: 'private-space-vault', version: 1, purpose: 'vault', vaultId: crypto.randomUUID(), keyId: crypto.randomUUID(),
+  const envelope: Omit<VaultEnvelope, 'purpose'> & { purpose: P } = {
+    format: 'private-space-vault', version: 1, purpose, vaultId: crypto.randomUUID(), keyId: crypto.randomUUID(),
     kdf: { algorithm: 'argon2id13', ops: 3, memory: 67108864, salt: b64(sodium.randombytes_buf(16)) },
     wrappedKey: { nonce: '', ciphertext: '' }, payload: { id: crypto.randomUUID(), nonce: '', ciphertext: '' },
   }
+  const plaintext = encoder.encode(JSON.stringify(parseContent(content)))
   const key = sodium.crypto_aead_xchacha20poly1305_ietf_keygen()
-  const plaintext = encoder.encode(JSON.stringify({ format: 'private-space-vault-content', version: 1, entries: [] }))
   let kek: Uint8Array | undefined
   try {
+    if (plaintext.length > maxPayload) invalid()
     kek = derive(password, envelope)
     const nonce = sodium.randombytes_buf(24)
     const wrappedNonce = sodium.randombytes_buf(24)
@@ -93,10 +50,32 @@ export async function createVault(password: string): Promise<{ envelope: VaultEn
   finally { if (kek) sodium.memzero(kek); sodium.memzero(plaintext) }
 }
 
+export function createVault(password: string): Promise<{ envelope: VaultEnvelope; key: Uint8Array }> {
+  return createEncrypted(password, 'vault', { format: 'private-space-vault-content', version: 1, entries: [] })
+}
+
+/** A backup gets its own random identities, data key and password wrapper. */
+export async function createBackup(password: string, content: VaultContent): Promise<BackupEnvelope> {
+  const result = await createEncrypted(password, 'backup', content)
+  try { return result.envelope } finally { sodium.memzero(result.key) }
+}
+
+export async function openBackup(input: unknown, password: string): Promise<VaultContent> {
+  const envelope = await parseEnvelope(input, 'backup')
+  await sodium.ready
+  const kek = derive(password, envelope)
+  let key: Uint8Array | undefined
+  try {
+    key = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, bytes(envelope.wrappedKey.ciphertext), keyContext(envelope), bytes(envelope.wrappedKey.nonce), kek)
+    return parseContent(readPayload(envelope, key))
+  } finally { sodium.memzero(kek); if (key) sodium.memzero(key) }
+}
+
 /** Only the Worker holds the returned key. Decoded content is validated separately before display. */
 export async function unlockVault(input: unknown, password: string, expectedId: string): Promise<Uint8Array> {
   const envelope = await parseEnvelope(input)
   if (envelope.vaultId !== expectedId) invalid()
+  await sodium.ready
   const kek = derive(password, envelope)
   let key: Uint8Array | undefined
   let plaintext: Uint8Array | undefined
@@ -109,7 +88,7 @@ export async function unlockVault(input: unknown, password: string, expectedId: 
   finally { sodium.memzero(kek); if (plaintext) sodium.memzero(plaintext) }
 }
 
-function readPayload(envelope: VaultEnvelope | EncryptedDraft, key: Uint8Array): unknown {
+function readPayload(envelope: Envelope, key: Uint8Array): unknown {
   const plaintext = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, bytes(envelope.payload.ciphertext), payloadContext(envelope), bytes(envelope.payload.nonce), key)
   try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext)) }
   finally { sodium.memzero(plaintext) }
@@ -146,19 +125,25 @@ export async function rewrapVault(envelope: VaultEnvelope, key: Uint8Array, curr
   if ([...newPassword].length < 12 || encoder.encode(newPassword).length > 1024 || currentPassword === newPassword) invalid()
   let oldKek: Uint8Array | undefined
   let confirmedKey: Uint8Array | undefined
-  let newKek: Uint8Array | undefined
   try {
     oldKek = derive(currentPassword, envelope)
     confirmedKey = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, bytes(envelope.wrappedKey.ciphertext), keyContext(envelope), bytes(envelope.wrappedKey.nonce), oldKek)
     if (!sodium.memcmp(confirmedKey, key)) invalid()
-    const changed: VaultEnvelope = { ...envelope, kdf: { ...envelope.kdf, salt: b64(sodium.randombytes_buf(16)) } }
-    newKek = derive(newPassword, changed)
-    const nonce = sodium.randombytes_buf(24)
-    changed.wrappedKey = { nonce: b64(nonce), ciphertext: b64(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(key, keyContext(changed), null, nonce, newKek)) }
-    return changed
+    return wrapDataKey(envelope, key, newPassword)
   } finally {
     if (oldKek) sodium.memzero(oldKek)
     if (confirmedKey) sodium.memzero(confirmedKey)
-    if (newKek) sodium.memzero(newKek)
   }
+}
+
+/** Rewrap a previously authenticated data key without changing payload, identities, or history. */
+export function wrapDataKey(envelope: VaultEnvelope, key: Uint8Array, newPassword: string): VaultEnvelope {
+  if ([...newPassword].length < 12 || encoder.encode(newPassword).length > 1024) invalid()
+  const changed: VaultEnvelope = { ...envelope, kdf: { ...envelope.kdf, salt: b64(sodium.randombytes_buf(16)) } }
+  const kek = derive(newPassword, changed)
+  try {
+    const nonce = sodium.randombytes_buf(24)
+    changed.wrappedKey = { nonce: b64(nonce), ciphertext: b64(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(key, keyContext(changed), null, nonce, kek)) }
+    return changed
+  } finally { sodium.memzero(kek) }
 }

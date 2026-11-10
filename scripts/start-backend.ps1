@@ -1,7 +1,16 @@
 [CmdletBinding()]
-param()
+param([string]$LanAddress = '')
 
 $ErrorActionPreference = 'Stop'
+if ($LanAddress) {
+    $parsedAddress = $null
+    if (-not [Net.IPAddress]::TryParse($LanAddress, [ref]$parsedAddress) -or
+            $parsedAddress.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'LanAddress must be the IPv4 address of this computer.'
+    }
+    $origins = if ($env:PRIVATE_SPACE_ALLOWED_ORIGINS) { $env:PRIVATE_SPACE_ALLOWED_ORIGINS.Split(',') } else { @('http://127.0.0.1:5173', 'http://localhost:5173') }
+    $env:PRIVATE_SPACE_ALLOWED_ORIGINS = (@($origins) + "http://${LanAddress}:5173" | Select-Object -Unique) -join ','
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $projectRoot 'deploy/.env'
 if (-not (Test-Path -LiteralPath $envPath)) {
@@ -29,6 +38,13 @@ if (-not (Test-Path -LiteralPath $setupPath)) {
     [IO.File]::WriteAllText($setupPath, $setupCredential, [Text.UTF8Encoding]::new($false))
 }
 $env:PRIVATE_SPACE_SETUP_TOKEN = [IO.File]::ReadAllText($setupPath).Trim()
+$officePath = Join-Path $projectRoot 'deploy/office.local'
+if (Test-Path -LiteralPath $officePath) {
+    foreach ($officeLine in Get-Content -LiteralPath $officePath) {
+        if ($officeLine -match '^ONLYOFFICE_JWT_SECRET=(.+)$') { $env:PRIVATE_SPACE_OFFICE_JWT_SECRET = $Matches[1] }
+    }
+    $env:PRIVATE_SPACE_OFFICE_ENABLED = 'true'
+}
 Write-Host 'If this is the first run, open deploy/setup-token.local and enter that one-time credential in the initialization page.'
 $mavenRepository = Join-Path $projectRoot '.m2-cache/repository'
 

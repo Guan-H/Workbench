@@ -48,6 +48,45 @@ public class SecurityConfiguration {
         return repository;
     }
 
+    // Each machine endpoint owns an isolated credential scope; web cookies never grant hook access.
+    @Bean
+    @Order(-2)
+    SecurityFilterChain englishHook(HttpSecurity http,
+            com.privatespace.modules.english.service.EnglishService english, ObjectMapper json) throws Exception {
+        http.securityMatcher("/api/v1/hooks/**")
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable()).requestCache(cache -> cache.disable())
+                .formLogin(form -> form.disable()).httpBasic(basic -> basic.disable()).logout(logout -> logout.disable())
+                .authorizeHttpRequests(request -> request
+                        .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/hooks/english").hasRole("ENGLISH_HOOK")
+                        .anyRequest().denyAll())
+                .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> problem(response, json, 401, "WEBHOOK_UNAUTHORIZED", "推送凭证无效或入口已停用。")))
+                .addFilterBefore(new OncePerRequestFilter() {
+                    @Override
+                    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+                            throws ServletException, IOException {
+                        String header = request.getHeader("Authorization");
+                        if (header != null && header.startsWith("Bearer ") && english.authenticate(header.substring(7))) {
+                            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                                    "english-hook", null, List.of(new SimpleGrantedAuthority("ROLE_ENGLISH_HOOK"))));
+                        }
+                        chain.doFilter(request, response);
+                    }
+                }, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    @Order(-1)
+    SecurityFilterChain officeBridge(HttpSecurity http) throws Exception {
+        http.securityMatcher("/api/v1/office-bridge/**")
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable()).requestCache(cache -> cache.disable())
+                .formLogin(form -> form.disable()).httpBasic(basic -> basic.disable()).logout(logout -> logout.disable())
+                .authorizeHttpRequests(request -> request.anyRequest().permitAll());
+        return http.build();
+    }
+
     @Bean
     @Order(0)
     SecurityFilterChain syncSecurity(HttpSecurity http, SyncDeviceService devices, ObjectMapper json) throws Exception {

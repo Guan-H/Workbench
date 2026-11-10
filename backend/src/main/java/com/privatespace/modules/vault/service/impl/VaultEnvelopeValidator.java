@@ -36,6 +36,20 @@ public class VaultEnvelopeValidator {
         return id;
     }
 
+    public String validateRecovery(JsonNode recovery, JsonNode envelope) {
+        fields(recovery, Set.of("format", "version", "vaultId", "keyId", "id", "nonce", "ciphertext"));
+        require("private-space-vault-recovery".equals(recovery.path("format").asText())
+                && recovery.path("version").isInt() && recovery.path("version").asInt() == 1
+                && recovery.path("vaultId").equals(envelope.path("vaultId"))
+                && recovery.path("keyId").equals(envelope.path("keyId")));
+        uuid(recovery.path("vaultId"));
+        uuid(recovery.path("keyId"));
+        String id = uuid(recovery.path("id"));
+        encoded(recovery.path("nonce"), 24, 24);
+        encoded(recovery.path("ciphertext"), 48, 48);
+        return id;
+    }
+
     private void fields(JsonNode node, Set<String> names) {
         require(node != null && node.isObject() && node.size() == names.size());
         for (String name : names) require(node.has(name));

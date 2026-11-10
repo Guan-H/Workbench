@@ -67,6 +67,8 @@ public class AuthServiceImpl implements AuthService {
         return token;
     }
 
+    public boolean validSessionHash(String hash) { return hash != null && hash.matches("[0-9a-f]{64}") && mapper.validSession(hash) > 0; }
+
     public boolean valid(String token) {
         return token != null && token.length() == 43 && mapper.validSession(hash(token)) > 0;
     }

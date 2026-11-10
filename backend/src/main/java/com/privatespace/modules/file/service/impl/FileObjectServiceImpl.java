@@ -62,6 +62,8 @@ public class FileObjectServiceImpl implements FileObjectService {
         }
     }
 
+    public void lease(String id, String leaseId, Instant expires) { mapper.lease(leaseId, id, java.time.LocalDateTime.ofInstant(expires, java.time.ZoneOffset.UTC)); }
+
     public byte[] read(String id) {
         FileObjectEntity object = mapper.find(UUID.fromString(id).toString());
         if (object == null) throw new ApiException(503, "OBJECT_UNAVAILABLE", "文件对象不存在，请检查备份与存储卷。");
