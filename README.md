@@ -2,6 +2,8 @@
 
 部署在个人服务器上的单用户私人工作台。首版目标包含 Markdown 笔记与附件、Windows 本地双向同步，以及浏览器端加密的密码保险库。
 
+Agent 执行部署请先阅读 [部署执行指南](docs/DEPLOYMENT-AGENT.md)；实际环境与发布结果见 [部署记录](docs/DEPLOYMENT.md)。指南本身不代表已执行生产部署。
+
 Web 界面已按用户确认迁移至 Ant Design Vue 4.2.6，Markdown 编辑器与预览保留；主题仍为浅色与墨绿。运行命令不变，拉取后在 `frontend/` 执行 `npm ci` 同步锁定依赖。本批类型检查、生产构建与 6 项组件/单元测试通过，真实网页/后端/MySQL 联调及同步状态专项通过；桌面和窄屏截图已检查。验证范围与仍有的包体积告警见 [架构文档第 49 节](docs/architecture/architecture.md#49-ant-design-vue-4x-界面迁移2026-11-05)。已随 11 月 5 日预览版发布。
 
 M0 已完成并由用户确认验收关闭（2026-10-28）：加密候选、文件兼容与 Windows 同步原型均完成限定范围验证；Obsidian 由用户实际编辑确认，修改文件已通过真实接口回传并核对字节。M1 已由用户于 2026-11-02 确认验收关闭。2026-11-05 用户整体确认 M2 人工验收无问题，当前候选交付范围验收关闭；后续目录能力继续单列，未代填逐项人工结果。2026-11-06 11:45 将提交 `f1ed6a9` 以 `preview-20261106-f1ed6a9` 发布至 `https://sy.ggh.cool`，数据库保持 V14，发布前一致性备份、全库记录与附件摘要对比、公网只读及实际加密 Worker 检查通过。Windows 助手不随网站自动更新；本次仍为公网预览，保险库仅限测试秘密。权威需求见 `docs/prd/PRD.md`，架构和验证记录见 `docs/architecture/architecture.md`，实际部署状态见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
