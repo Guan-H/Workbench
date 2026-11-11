@@ -46,6 +46,47 @@ export type WordGameOperation =
   | { kind: 'answer'; id: string; gameId: string; body: { baseRevision: string; wordId: number; meaningId: number } }
   | { kind: 'spelling'; id: string; gameId: string; body: { baseRevision: string; wordId: number; spelling: string } }
 
+export type WordAnswerOperation = Exclude<WordGameOperation, { kind: 'create' }>
+
+// Match the server's String.strip / equalsIgnoreCase, including simple Unicode casing.
+function spellingKey(value: string) {
+  const stripped = value.replace(/^[\u0009-\u000d\u001c-\u0020\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u1680\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]+$/gu, '')
+  return Array.from(stripped, character => {
+    const upper = character.toUpperCase()
+    const simple = Array.from(upper).length === 1 ? upper : character
+    return simple === '\u0130' ? 'i' : simple.toLowerCase()
+  }).join('')
+}
+
+/** Immediate feedback from the real round; the server still validates every queued attempt. */
+export function projectWordAnswer(game: WordGame, operation: WordAnswerOperation, vocabulary: Word[], elapsedSeconds: number): WordGame {
+  const wordId = operation.body.wordId
+  const meaningId = operation.kind === 'spelling' ? wordId : operation.body.meaningId
+  const target = game.words.find(item => item.id === wordId)
+  if (!target || game.completed || game.matched.includes(wordId) || game.matched.includes(meaningId)) throw new Error('练习状态已变化，请核对进度。')
+  const correct = operation.kind === 'spelling' ? spellingKey(target.label) === spellingKey(operation.body.spelling) : wordId === meaningId
+  const matched = correct ? [...game.matched, wordId] : [...game.matched]
+  const mistakes = [...game.mistakes]
+  if (!correct) for (const id of new Set([wordId, meaningId])) {
+    const word = game.words.find(item => item.id === id)
+    const meaning = game.meanings.find(item => item.id === id)
+    if (word && meaning && !mistakes.some(item => item.word === word.label)) mistakes.push(vocabulary.find(item => item.word === word.label)
+      ?? { word: word.label, meaning: meaning.label, phonetic: null, example: null })
+  }
+  const streak = correct ? game.streak + 1 : 0
+  const common = { ...game, revision: String(BigInt(game.revision) + 1n), matched, mistakes, attempts: game.attempts + 1,
+    streak, bestStreak: Math.max(game.bestStreak, streak), elapsedSeconds, feedback: { wordId, meaningId, correct } }
+  const completed = matched.length === game.words.length
+  if (game.mode === 'matching') return { ...common, mode: 'matching', completed, spellingPrompt: null }
+  if (completed) return { ...common, mode: 'spelling', completed: true, spellingPrompt: null }
+  const next = game.words.find(item => !matched.includes(item.id))!
+  const source = vocabulary.find(item => item.word === next.label)
+  const escaped = next.label.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return { ...common, mode: 'spelling', completed: false, spellingPrompt: { wordId: next.id,
+    meaning: game.meanings.find(item => item.id === next.id)!.label,
+    example: source?.example?.replace(new RegExp(escaped, 'giu'), '____') ?? null } }
+}
+
 /** getRandomValues also works on the existing LAN HTTP development entry. */
 export function wordGameOperationId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16))

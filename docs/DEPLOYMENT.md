@@ -6,6 +6,12 @@ Agent 执行新部署或升级时使用 [部署执行指南](DEPLOYMENT-AGENT.md
 
 ## 1. 当前状态
 
+2026-11-11 09:47（北京时间）已将 `main` 提交 `bf8ba065cffad07bbe05e8d630adf3e576e7b626` 发布为 `preview-20261111-bf8ba06`，前后端同步更新，数据库由 V14 升至 V20。新增恢复密钥、TXT/PDF 工作区、独立书籍阅读、每日文章及配对/拼写挑战和原生朗读入口。ONLYOFFICE 未部署，Word/Excel 在线编辑未上线；Windows 助手未更新。停写备份、既有表全部记录和附件摘要核对、公网只读及真实 Chrome 加密 Worker 检查通过，详情见第 15 节。登录后的生产业务和实际英文发声仍需用户体验确认。
+
+### 11 月 9–10 日发布前记录（历史）
+
+以下段落保留当时的开发与发布边界，其中“尚未发布”和 V14 状态已由本次发布记录覆盖。
+
 2026-11-10 本地新增每日英语 Webhook，V19 新建独立接收配置、英语批次和接收记录表。前后端需要配套发布；不增加服务，不更改笔记/保险库内容。当前仍未发布 V15–V19，生产数据库保持下面记录的 V14。接口和凭证使用说明见 [每日英语推送](WEBHOOK-ENGLISH.md)。生产必须经现有 HTTPS 入口调用。
 
 2026-11-10 后续独立小说目录改为 V18：新增分类、同源文件引用和幂等收据，支持笔记右键加入 TXT/EPUB/Markdown、自动检查源文件修改。不是复制正文或新增服务；上线需配套前后端与 V18。已有实际阅读过的有效 TXT/EPUB 在升级时加入小说根目录，其他笔记不自动加入，旧进度保留；删除小说分类/入口不删除源文件。本轮仍只做本地开发，生产尚未执行 V15–V18。
@@ -24,18 +30,18 @@ Agent 执行新部署或升级时使用 [部署执行指南](DEPLOYMENT-AGENT.md
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 部署状态 | 2026-11-09 15:53（北京时间）完成升级；MySQL/后端健康，公网就绪接口返回 `200 {"status":"UP"}`，Chrome 登录页与已部署加密 Worker 检查通过 |
+| 部署状态 | 2026-11-11 09:47（北京时间）完成升级；版本 `preview-20261111-bf8ba06`，数据库 V20，MySQL/后端健康，公网就绪接口返回 `200 {"status":"UP"}`，Chrome 登录页与已部署加密 Worker 检查通过 |
 | 发布性质 | 公网预览版；普通文档可用，保险库仅限测试秘密 |
 | 域名 | `sy.ggh.cool` |
 | DNS 检查 | 2026-10-30 查询到 A 记录 `119.91.26.81` |
 | 服务器系统 | Ubuntu 26.04 LTS，x86_64，4 vCPU，3.6 GiB 内存，2 GiB Swap |
-| 服务器磁盘 | 根分区 ext4 约 59 GiB；本次构建前可用约 43 GiB |
+| 服务器磁盘 | 根分区 ext4 约 59 GiB；2026-11-11 构建前可用约 41 GiB |
 | 主机端口检查 | Workbench 映射 `80`、`443/tcp` 和 `443/udp`，自身 MySQL 3306 与后端 8080 不映射主机。另有 WordPress 容器映射主机 8080、3306，本次未修改；云安全组是否允许访问尚未核实 |
 | HTTP/HTTPS 检查 | `http://sy.ggh.cool` 返回 308 到 HTTPS；`https://sy.ggh.cool` 返回 200，证书有效并由 Caddy 自动维护 |
 | SSH 入口 | `ubuntu@sy.ggh.cool:22`，临时 ED25519 部署密钥已授权；`ubuntu` 具备非交互 sudo |
 | 反向代理 | Workbench 自带固定摘要的 Caddy 2 Alpine 镜像，负责 TLS、前端静态文件、安全响应头和 `/api/*` 反向代理 |
 | 旧服务处理 | 用户在部署前自行清理旧 Caddy/Vaultwarden 容器、镜像和数据卷；旧主目录配置文件及孤立网络未由本次部署删除 |
-| 容器环境 | Docker 29.1.3，Docker Compose 2.40.3，部署目录 `/opt/workbench`，Docker 根目录 `/var/lib/docker` |
+| 容器环境 | Docker 29.1.3，Docker Compose 2.40.3，使用独立发布目录；当前配置目录从运行容器 Compose 标签读取，见第 7 节。Docker 根目录 `/var/lib/docker` |
 | 主机防火墙 | UFW 当前 inactive；云平台安全组状态尚未核实 |
 
 ## 2. 本次发布范围
@@ -55,6 +61,8 @@ Agent 执行新部署或升级时使用 [部署执行指南](DEPLOYMENT-AGENT.md
 
 2026-11-06 已发布保险库安全笔记、条目删除恢复、平台及自定义头像、本机草稿箱和登录失效返回登录页。本次不修改 M2 助手或生产数据库结构，保险库仍只用于测试内容。
 
+2026-11-11 已发布保险库恢复密钥、TXT 编辑、PDF 目录/缩略图和查找等只读预览、独立书籍目录与进度、每日文章接收、配对/拼写挑战及设备原生朗读。每日文章入口默认停用，生产尚无批次；需要用户启用 Webhook 并由外部推送方发送内容，不会自动搬运开发测试批次。ONLYOFFICE 没有生产接入，Office 在线编辑仍不属于上线范围。
+
 以下内容不属于本次已交付范围：
 
 - TOTP 2FA 与正式账户恢复；
@@ -70,10 +78,10 @@ Agent 执行新部署或升级时使用 [部署执行指南](DEPLOYMENT-AGENT.md
 - 后端：Java 17 + Spring Boot，以非 root `privatespace` 用户运行；入口仅以 root 读取 Docker 文件型 secret，随后立即降权启动 Java。
 - 数据库：固定摘要的 MySQL 8.4，位于 Docker 内部网络，不映射主机端口。
 - 数据对象：生产对象使用 `workbench_file_objects` 持久化卷，数据库使用 `workbench_mysql_data` 持久化卷。
-- 数据结构：首次从空库执行 V1–V5；2026-11-02 升级至 V6；2026-11-05 从 V6 升级至 V14，新增同步增量/状态记录、网页会话标识和保险库密文版本表，原有数据核对通过。
+- 数据结构：首次从空库执行 V1–V5；2026-11-02 升级至 V6；2026-11-05 从 V6 升级至 V14；2026-11-11 从 V14 升至 V20，新增恢复密钥、Office 会话、阅读与书籍目录、每日文章和练习表。既有业务表的全部行与附件摘要核对通过。
 - 健康检查：`/api/system/health/readiness` 检查真实数据库、文件卷和磁盘状态；后端就绪前 Caddy 不启动。
-- 秘密：数据库密码、root 密码和一次性初始化凭证保存在 `/opt/workbench/deploy/production/secrets/`，权限为 `600`，不在镜像或 Git 中。
-- 当前镜像版本：`preview-20261109-m3-83d39ccc`，由已验收工作区快照构建，基础提交为 `aedd09f20ab7f3c2e36df4b80630bfb70e7ccb5b`；本次没有新增 Git 提交/标签或推送。源码归档 SHA-256 和逐文件清单见第 14 节，旧 `preview-20261106-f1ed6a9` 镜像、配置和源码保留用于回滚。
+- 秘密：数据库密码、root 密码和一次性初始化凭证位于当前发布配置目录的 `secrets/`，目录 `700`、文件 `600`，不在镜像或 Git 中。升级复制既有配置，没有重置凭证。
+- 当前镜像版本：`preview-20261111-bf8ba06`，由 `main` 完整提交 `bf8ba065cffad07bbe05e8d630adf3e576e7b626` 的 Git 归档构建；摘要和镜像 ID 见第 15 节。旧镜像、源码和配置保留；已发生 V14→V20 迁移，不能只换回旧镜像就视为安全回滚，恢复流程见部署指南。
 
 ## 4. 已部署的公网预览架构
 
@@ -121,19 +129,24 @@ Internet
 
 ## 7. 运维与首次初始化
 
-生产配置目录：
+生产配置使用独立发布目录；先从当前后端的 Compose 标签取得真实配置位置，不能继续在旧源码目录执行升级。以下命令在已授权服务器执行，保持原 project 名 `workbench`：
 
 ```bash
-cd /opt/workbench/deploy/production
-sudo docker compose ps
-sudo docker compose logs --tail=200 backend web mysql
-sudo docker compose up -d --wait --wait-timeout 240
+PROD_DIR="$(sudo docker inspect workbench-backend-1 --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
+test -n "$PROD_DIR"
+sudo test -f "$PROD_DIR/.env"
+dc() {
+  sudo docker compose -p workbench --project-directory "$PROD_DIR" \
+    --env-file "$PROD_DIR/.env" -f "$PROD_DIR/compose.yml" "$@"
+}
+dc ps
+dc logs --tail=200 backend web mysql
 ```
 
-当前生产已初始化，升级后匿名状态接口确认 `initialized:true`，继续使用原账户登录，无需重新初始化。以下凭证读取命令仅适用于全新、尚未初始化的部署；凭证只应由用户在自己的终端读取并直接填入页面，不要发到聊天或写进文档：
+当前生产已初始化，升级后匿名状态接口确认 `initialized:true`，继续使用原账户登录，无需重新初始化。以下凭证读取命令仅适用于全新、尚未初始化的部署，在服务器确定 `PROD_DIR` 后执行；凭证只应由用户在自己的终端读取并直接填入页面，不要发到聊天或写进文档：
 
-```powershell
-& "$env:WINDIR\System32\OpenSSH\ssh.exe" -i "$env:USERPROFILE\.ssh\workbench_deploy" -p 22 ubuntu@sy.ggh.cool "sudo cat /opt/workbench/deploy/production/secrets/setup_token"
+```bash
+sudo cat "$PROD_DIR/secrets/setup_token"
 ```
 
 初始化完成后应再次验证登录、创建/保存/重命名/移动/删除恢复、导入导出、附件、退出登录和容器重启后的持久化。一次性凭证是否作废以真实接口结果为准，不手工猜测或删除。
@@ -265,3 +278,28 @@ Windows 配套 ZIP 为 `data/workbench-sync-windows-file-rename-20261103.zip`，
 构建保留既有大分包告警。npm 全量审计 9 项（5 moderate、2 high、2 critical），官方审计与锁文件核对涉及节点均为开发/测试依赖；本日生产依赖审计为 0 项。没有自动升级依赖，开发依赖修复单列后续处理；静态 Caddy 运行镜像不包含 Node/node_modules。
 
 服务器日志：`/tmp/workbench-build-20261109.log`、`/tmp/workbench-upgrade-20261109.log`、`/tmp/workbench-verify-20261109.log`；开发电脑只读浏览器日志和截图为忽略的 data/production-browser-20261109.local.log 与 data/production-login-20261109.png。域名 SSH 初次超时，后使用记录 IP 119.91.26.81、继续校验 sy.ggh.cool 主机密钥连接，没有修改 DNS 或关闭主机密钥检查。旧镜像和失败恢复分支保留，本次未触发回滚；异机恢复未演练，同机备份不替代异机副本。Windows 同步助手未更新。
+
+## 15. 2026-11-11 main 发布与 V14→V20 升级
+
+发布版本 `preview-20261111-bf8ba06`，源码为 `main` 的完整提交 `bf8ba065cffad07bbe05e8d630adf3e576e7b626`，与发布前远端 main 一致。478 个已跟踪源码文件由 Git 归档交付，SHA-256 为 `1fd1917cedef7c9abfa740020125f97faa6ac1d8348681d83cf07368add63f6c`；开发数据、环境值、依赖目录和秘密未进入归档。服务器保留新旧源码、配置和来源清单，当前配置位置应由运行容器的 Compose 标签读取，不使用旧目录覆盖新版。
+
+运行镜像 ID：
+
+- 后端：`sha256:f7f9a6c24095de14418fd7151ff2d1cdefa8bc4a0976f926ab19cfdf5bf572e9`。
+- Web：`sha256:f2dca567aaf849518d8e6dfacdeeb1a4e59ba300f24711c2c03d30b33738efc2`。
+
+旧站在线时顺序构建后端和 Web，Maven 依赖准备约 20 分钟；后端打包、前端类型检查/生产构建和 Caddy 配置验证通过。保留既有 500 kB 分包提示及 npm 安装报告的 9 项审计告警（5 moderate、2 high、2 critical）；本次没有重新执行独立依赖审计或升级依赖，也没有将构建当作业务集成测试。
+
+维护窗口为北京时间 `2026-11-11T09:47:26+08:00` 至 `09:47:51+08:00`，约 25 秒。只停止 Workbench Web 与后端写入，在同一窗口备份数据库逻辑导出、附件卷、证书/配置卷，并保留旧源码、配置/secret、镜像和容器标识。备份位于服务器受限目录（root:root 700），压缩包可读取及 SHA-256 清单校验通过；私有路径保存在运维记录，不新增到公开仓库。未执行数据库恢复演练或异机复制。
+
+先启动新版后端，真实执行 V15、V16、V17、V18、V19、V20，Flyway 最高版本 20、失败记录 0。恢复 Web 前，全部原有业务表按主键排序的行导出摘要、逐表数量及全部文件对象摘要前后相同。主要数量为 note_file 38、note_revision 461、file_object 388、account 1、sync_device 1、web_session 14、vault_snapshot 0、vault_snapshot_history 0；包含目录、历史和删除记录，不等于可见文档数。新增恢复密钥、Office 会话、阅读进度、书籍、文章批次及练习记录均为 0；没有代用户启用恢复密钥、创建保险库、生成推送凭证或搬入开发测试数据。MySQL 与 WordPress 两个容器 ID 未变。
+
+发布后真实检查：
+
+- HTTPS 首页 200、HTTP 308、readiness UP、initialized=true；匿名笔记、保险库/恢复密钥/历史/保留、阅读目录、每日文章/练习及会话接口均为 401，无凭证接收请求也为 401。
+- CSRF Cookie 的 Secure/HttpOnly/SameSite=Strict、Java PID 1 UID=100、页面与镜像内容摘要一致。页面仍不开放 WebAssembly，实际 `vault-worker-Bn04lASK.js` 只在 Worker 开放 WebAssembly 且 connect-src=none；`pdf.worker.min-CIqJB0yW.mjs` 使用专用 Worker 策略，PDF 字体、字符映射及 WASM 静态资源齐全。
+- 真实 Chrome 打开生产登录页，运行实际发布的加密 Worker，以虚构秘密检查条目/安全笔记/头像、草稿、改密、备份、历史、清理候选和恢复密钥重置保留正文；生产业务 API 写请求为 0。已检查登录页截图。该检查只验证生产静态产物与浏览器加密，不等同于生产账户内保存及持久化验收。
+
+登录后笔记保存/附件、书籍上传与进度、每日文章真实接收及两种挑战，仍需用户在生产实际体验；实现侧真实 HTTP/MySQL/Chrome 专项沿用架构文档对应记录，本次不重复无关全量回归。实际英文发声仍需具备英文语音的设备试听。ONLYOFFICE 未部署，Office 在线编辑未上线；2FA 继续暂缓，Windows 助手未更新，保险库继续仅用测试秘密。
+
+服务端构建、切换和只读检查日志分别为 `/tmp/workbench-prepare-20261111.log`、`/tmp/workbench-upgrade-20261111.log`、`/tmp/workbench-verify-20261111.log`；开发电脑检查脚本、源码包和截图位于忽略提交的 `data/`。回滚分支未触发；已迁移后回滚须按部署指南处理数据库与对象，不能直接切换旧镜像。

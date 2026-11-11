@@ -39,6 +39,42 @@ const linkedNotePath = new URLSearchParams(window.location.search).get('note')
 const section = ref<'home' | 'notes' | 'reading' | 'sync' | 'settings' | 'vault'>(linkedNotePath ? 'notes' : 'home')
 const items = ref<Note[]>([])
 const current = ref<Note>()
+const favorites = ref(new Map<string, { desired: boolean; confirmed: boolean; pending: boolean; working: boolean }>())
+const favoritePending = computed(() => current.value ? favorites.value.get(current.value.id)?.pending : false)
+const favoriteWorking = computed(() => current.value ? favorites.value.get(current.value.id)?.working : false)
+function applyFavorite(id: string, value: boolean) {
+  for (const note of [...items.value, ...searchResults.value]) if (note.id === id) note.favorite = value
+  if (current.value?.id === id) current.value.favorite = value
+}
+function overlayFavorites() {
+  for (const [id, state] of favorites.value) if (state.pending) applyFavorite(id, state.desired)
+}
+let favoritesRestored = false
+function persistFavorites() {
+  try {
+    const pending = [...favorites.value].filter(([, state]) => state.pending).map(([id, state]) => ({ id, value: state.desired }))
+    if (pending.length) sessionStorage.setItem(`workbench-favorites:${props.username}`, JSON.stringify(pending))
+    else sessionStorage.removeItem(`workbench-favorites:${props.username}`)
+    return true
+  } catch { problem.value = '收藏选择暂存失败，请重试，尚未确认的操作不能视为已保存。'; return false }
+}
+function restoreFavorites() {
+  if (favoritesRestored) return
+  favoritesRestored = true
+  try {
+    const stored: unknown = JSON.parse(sessionStorage.getItem(`workbench-favorites:${props.username}`) || '[]')
+    if (!Array.isArray(stored)) throw new Error('Invalid favorites')
+    for (const entry of stored) {
+      const note = items.value.find(item => item.id === entry?.id && !item.deleted)
+      if (note && typeof entry.value === 'boolean') favorites.value.set(note.id, { desired: entry.value, confirmed: note.favorite, pending: true, working: false })
+    }
+    overlayFavorites()
+    retryFavorites()
+  } catch { favoritesRestored = false; throw new Error('无法读取本机待同步收藏，请保留浏览器数据并重试。') }
+}
+function retryFavorites() { for (const [id, state] of favorites.value) if (state.pending) void syncFavorite(id) }
+window.addEventListener('online', retryFavorites)
+onBeforeUnmount(() => { sessionEnded = true; window.removeEventListener('online', retryFavorites) })
 const text = ref('')
 const savedText = ref('')
 const status = ref('请选择或新建一篇笔记')
@@ -304,10 +340,13 @@ function persistDraft() {
 async function refresh() {
   try {
     items.value = await listNotes()
+    restoreFavorites()
+    overlayFavorites()
     if (query.value || view.value === 'trash') {
       const serial = ++querySerial
       const result = await listNotes(view.value === 'trash', query.value)
       if (serial === querySerial) searchResults.value = result
+      overlayFavorites()
     }
     problem.value = ''
     return true
@@ -330,6 +369,8 @@ async function refreshDirectory() {
 }
 
 function applyNote(note: Note) {
+  const favorite = favorites.value.get(note.id)
+  if (favorite?.pending) note.favorite = favorite.desired
   saveFeedback.value = undefined
   current.value = note
   treeSelection.value = note.id
@@ -432,6 +473,8 @@ async function saveNow(): Promise<boolean> {
         status.value = '正在保存…'
         const saved = await write<Note>(`/notes/${attempt.id}`, 'PUT', { path: attempt.path, type: 'note', content: attempt.content, baseVersion: attempt.baseVersion }, attempt.operation, AbortSignal.timeout(30_000))
         if (sessionEnded) return false
+        const favorite = favorites.value.get(saved.id)
+        if (favorite) saved.favorite = favorite.desired
         current.value = saved
         savedText.value = attempt.content
         pending = undefined
@@ -670,11 +713,42 @@ async function removeNote(note: Note) {
 
 async function toggleFavorite() {
   if (!current.value) return
+  const note = current.value
+  let state = favorites.value.get(note.id)
+  if (!state) { state = { desired: note.favorite, confirmed: note.favorite, pending: false, working: false }; favorites.value.set(note.id, state) }
+  state = favorites.value.get(note.id)!
+  if (!state.pending) { state.confirmed = note.favorite; state.desired = note.favorite }
+  const previous = state.desired
+  const wasPending = state.pending
+  state.desired = !note.favorite
+  state.pending = true
+  if (!persistFavorites()) { state.desired = previous; state.pending = wasPending; return }
+  applyFavorite(note.id, state.desired)
+  void syncFavorite(note.id)
+}
+
+async function syncFavorite(id: string) {
+  const state = favorites.value.get(id)
+  if (!state || state.working || !state.pending || sessionEnded) return
+  state.working = true
   try {
-    await write(`/notes/${current.value.id}/favorite?value=${!current.value.favorite}`, 'PUT')
-    current.value.favorite = !current.value.favorite
-    await refresh()
-  } catch (error) { problem.value = message(error) }
+    while (state.pending && !sessionEnded) {
+      const desired = state.desired
+      await write(`/notes/${id}/favorite?value=${desired}`, 'PUT', undefined, undefined, AbortSignal.timeout(15000))
+      if (sessionEnded) return
+      state.confirmed = desired
+      state.pending = state.desired !== desired
+      persistFavorites()
+      applyFavorite(id, state.desired)
+    }
+  } catch (error) {
+    if (sessionEnded) return
+    if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+      state.desired = state.confirmed; state.pending = false; applyFavorite(id, state.confirmed)
+      persistFavorites()
+      problem.value = message(error)
+    } else problem.value = '收藏状态尚未确认，当前选择已保留。请点击待同步旁的重试。'
+  } finally { state.working = false }
 }
 
 async function showConflict() {
@@ -808,7 +882,7 @@ watch(query, () => {
   window.clearTimeout(searchTimer)
   const serial = ++querySerial
   searchTimer = setTimeout(async () => {
-    try { const result = await listNotes(view.value === 'trash', query.value); if (serial === querySerial) searchResults.value = result }
+    try { const result = await listNotes(view.value === 'trash', query.value); if (serial === querySerial) { searchResults.value = result; overlayFavorites() } }
     catch (error) { if (serial === querySerial) problem.value = message(error) }
   }, 250)
 })
@@ -843,7 +917,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
 
     <main v-if="section === 'home'" class="home-main">
       <header class="workspace-topbar"><div class="breadcrumb"><AButton type="text" class="icon-button mobile-menu" @click="mobileNav = !mobileNav" title="显示导航" aria-label="显示导航"><Menu :size="20" /></AButton><span>工作台</span></div><span class="private-label"><Shield :size="13" />个人工作空间</span></header>
-      <HomeView :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
+      <HomeView :username="username" :items="items" :loading="loading" :error="problem" @notes="switchView('notes')" @favorites="switchView('favorites')" @open="openHomeNote" @refresh="refresh" />
     </main>
 
     <main v-if="section === 'reading'" class="home-main">
@@ -916,7 +990,7 @@ onBeforeUnmount(() => { ++openSerial; openController?.abort(); window.clearTimeo
         </div>
       </template>
       <section v-else class="workspace-empty"><span class="empty-icon"><NotebookPen :size="38" stroke-width="1.25" /></span><p class="eyebrow">YOUR NOTES, YOUR SPACE</p><h1>{{ view === 'trash' ? '找回值得保留的记录' : '让每一个想法，都有归处' }}</h1><p>{{ view === 'trash' ? '从左侧选择已删除的笔记，查看历史并恢复。' : '新建一篇笔记，或导入已有的 Markdown 文件。' }}</p><AButton type="primary" v-if="view !== 'trash'" class="primary" @click="openCreate('note')"><FilePlus2 :size="17" />写下第一篇笔记</AButton><p class="plaintext-note">普通笔记以明文保存，请勿在此记录密码或其他秘密。</p></section>
-      <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ activeDocument ? '文件已打开，保存状态见上方' : status }}</span><span v-if="activeDocument">{{ activeDocument.size.toLocaleString() }} 字节 · {{ activeDocument.path.split('.').at(-1)?.toUpperCase() }}</span><span v-else-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span></footer>
+      <footer class="statusbar"><span role="status" aria-live="polite" :class="{ warning: conflict || dirty }"><span class="status-dot" />{{ activeDocument ? '文件已打开，保存状态见上方' : status }}</span><span v-if="activeDocument">{{ activeDocument.size.toLocaleString() }} 字节 · {{ activeDocument.path.split('.').at(-1)?.toUpperCase() }}</span><span v-else-if="current">{{ text.length.toLocaleString() }} 字符<span class="status-separator">·</span>Markdown<span class="status-separator">·</span>UTF-8</span><span class="device-status">设备同步尚未启用</span><span v-if="favoritePending" class="favorite-sync-status"><span role="status">收藏待同步</span><AButton v-if="!favoriteWorking" type="link" size="small" @click="current &amp;&amp; syncFavorite(current.id)">重试</AButton></span></footer>
     </main>
 
     <aside v-if="section === 'notes' && !activeDocument && outlineVisible && current && !current.deleted" class="outline-sidebar"><div><ListTree :size="15" /><strong>大纲</strong></div><AButton v-for="(heading, index) in outline" :key="heading.line" :style="{ paddingLeft: `${12 + (heading.depth - 1) * 10}px` }" @click="jumpHeading(index)">{{ heading.title }}</AButton><p v-if="!outline.length">使用标题组织你的笔记</p><p class="saved-time">服务器确认时间<br />{{ displayTime(current.updatedAt) }}</p></aside>

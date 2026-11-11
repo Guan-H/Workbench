@@ -3,7 +3,6 @@ import { Alert as AAlert, Badge as ABadge, Button as AButton, Card as ACard, Emp
 import { FileKey2, FileLock2, FilePenLine, FolderKey, KeyRound, Pencil, Plus, RotateCcw, Search, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { api, ApiError } from '../../shared/api/client'
-import AppPagination from '../../shared/AppPagination.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import VaultEntryFields from './VaultEntryFields.vue'
 import VaultEntryAvatar from './VaultEntryAvatar.vue'
@@ -28,16 +27,16 @@ const filter = ref<'all' | 'login' | 'secure-note' | 'favorite' | 'trash'>('all'
 const activeEntries = computed(() => props.entries.filter(entry => !entry.deletedAt))
 const trashEntries = computed(() => props.entries.filter(entry => !!entry.deletedAt))
 const query = ref('')
-const page = ref(1)
+const entryRows = ref<HTMLElement>()
 const matches = computed(() => (filter.value === 'trash' ? trashEntries.value : activeEntries.value).filter(entry => (filter.value === 'all' || filter.value === 'trash' || (filter.value === 'favorite' ? entry.favorite : entry.type === filter.value))
   && entrySearchText(entry).toLocaleLowerCase().includes(query.value.toLocaleLowerCase())))
 const loginCount = computed(() => activeEntries.value.filter(entry => entry.type === 'login').length)
 const secureNoteCount = computed(() => activeEntries.value.filter(entry => entry.type === 'secure-note').length)
-const pages = computed(() => Math.max(1, Math.ceil(matches.value.length / 10)))
 const favoriteCount = computed(() => activeEntries.value.filter(entry => entry.favorite).length)
-const visibleEntries = computed(() => matches.value.slice((page.value - 1) * 10, page.value * 10))
-watch([query, filter], () => { page.value = 1 })
-watch(pages, count => { page.value = Math.min(page.value, count) })
+watch([query, filter], async () => {
+  await nextTick()
+  entryRows.value?.scrollTo({ top: 0 })
+})
 const records = ref<VaultDraftRecord[]>([])
 const draftBoxOpen = ref(false)
 const draftBusy = ref(false)
@@ -357,13 +356,12 @@ defineExpose({ flushDraft, hasUnsafeDraft, save })
         <template #title><span class="vault-panel-title">{{ filter === 'trash' ? '保险库回收站' : filter === 'favorite' ? '常用收藏' : filter === 'secure-note' ? '安全笔记' : filter === 'login' ? '登录账号' : '全部条目' }}<ATag>{{ matches.length }}</ATag></span></template>
         <template v-if="filter !== 'trash'" #extra><div class="vault-new-actions"><AButton size="small" :disabled="!storageReady || saving" @click="begin(undefined, 'secure-note')"><FileLock2 :size="15" aria-hidden="true" />新建安全笔记</AButton><AButton type="primary" size="small" :disabled="!storageReady || saving" @click="begin()"><Plus :size="15" aria-hidden="true" />新增登录条目</AButton></div></template>
         <div class="vault-list-search"><label for="vault-search" class="sr-only">本地搜索</label><AInput id="vault-search" v-model:value="query" placeholder="搜索名称、账号、标签或正文" :maxlength="500" allow-clear><template #prefix><Search :size="16" class="vault-muted" aria-hidden="true" /></template></AInput></div>
-        <div class="vault-entry-rows">
-          <AList :data-source="visibleEntries" :split="false" :locale="{ emptyText: '暂无条目' }">
+        <div ref="entryRows" class="vault-entry-rows" role="region" aria-label="条目滚动列表" tabindex="0">
+          <AList :data-source="matches" :split="false" :locale="{ emptyText: '暂无条目' }">
             <template #renderItem="{ item }"><AListItem class="vault-list-item"><AButton type="text" class="vault-entry-row" :class="{ active: selectedId === item.id }" :aria-pressed="selectedId === item.id" :disabled="saving" @click="select(item)"><VaultEntryAvatar :name="item.name" :icon="item.icon" /><span class="vault-entry-row-copy"><strong>{{ item.name }}</strong><small>{{ item.type === 'login' ? item.username || '未填写用户名' : '安全笔记' }}</small></span><Star v-if="item.favorite" class="vault-favorite-icon" :size="14" aria-label="已收藏" /></AButton></AListItem></template>
 
           </AList>
         </div>
-        <nav class="vault-pagination" aria-label="保险库条目分页"><span>共 {{ matches.length }} 条 · 第 {{ page }}/{{ pages }} 页 · 10 条/页</span><AppPagination v-model:page="page" :pages="pages" :page-size="10" :total="matches.length" /></nav>
       </ACard>
       <ACard class="vault-entry-detail" :bordered="false" aria-label="保险库条目详情">
         <template #title><div class="vault-detail-heading"><VaultEntryAvatar v-if="showingDetails && selected" :name="selected.name" :icon="selected.icon" :size="40" /><span><h2>{{ detailTitle }}</h2><small v-if="showingDetails">{{ selected?.type === 'secure-note' ? '安全笔记' : '登录账号' }}<Star v-if="selected?.favorite" :size="12" aria-label="已收藏" /></small></span></div></template>

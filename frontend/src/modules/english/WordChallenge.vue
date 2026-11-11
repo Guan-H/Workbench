@@ -1,31 +1,31 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, Input as AInput, Progress as AProgress, RadioGroup as ARadioGroup, RadioButton as ARadioButton } from 'ant-design-vue'
 import { Check, Puzzle, RotateCcw, Trophy, X } from 'lucide-vue-next'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { api, ApiError, write } from '../../shared/api/client'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppDialog from '../../shared/AppDialog.vue'
-import { practiceTime, resolveWordGame, wordGameOperationId, WordGameVersionError, type WordGame, type WordGameResponse, type WordGameMode, type WordGameOperation } from './word-game'
+import ConfirmDialog from '../../shared/ConfirmDialog.vue'
+import { practiceTime, wordGameOperationId, type WordGameMode } from './word-game'
+import { wordPractice } from './word-practice'
+import type { Word } from './types'
 import ReadAloudButton from './ReadAloudButton.vue'
 import { stopEnglishSpeech } from './speech'
 
-const props = defineProps<{ batchId: string; wordCount: number }>()
-const opened = ref(false), busy = ref(false), error = ref(''), requiresReload = ref(false)
-const mode = ref<WordGameMode>('matching')
-const rounds = shallowRef<Record<WordGameMode, WordGame | undefined>>({ matching: undefined, spelling: undefined })
-const game = computed(() => rounds.value[mode.value]), pending = shallowRef<WordGameOperation>()
-const word = ref<number>(), meaning = ref<number>(), ticking = ref(0)
+const props = defineProps<{ username: string; batchId: string; wordCount: number; vocabulary: Word[] }>()
+const opened = ref(false), mode = ref<WordGameMode>('matching'), ticking = ref(0), confirmation = ref(false)
+const sessions = { matching: wordPractice(props.username, props.batchId, 'matching', props.vocabulary), spelling: wordPractice(props.username, props.batchId, 'spelling', props.vocabulary) }
+const practice = computed(() => sessions[mode.value])
+const game = computed(() => practice.value.game.value)
+const busy = computed(() => practice.value.creating.value)
+const pending = computed(() => practice.value.queue.value.length > 0 || !!practice.value.createPending.value)
+const syncing = computed(() => practice.value.syncing.value)
+const error = computed(() => practice.value.error.value)
+const requiresReload = computed(() => practice.value.conflict.value)
+const blocked = computed(() => busy.value || requiresReload.value || practice.value.storageFailed.value)
+const word = ref<number>(), meaning = ref<number>()
 const spellingInput = ref(''), hintShown = ref(false), spellingField = ref<{ focus: () => void }>()
-let receivedAt = performance.now(), disposed = false, timer: ReturnType<typeof setInterval> | undefined
-const receivedTimes = { matching: receivedAt, spelling: receivedAt }
-const elapsed = computed(() => (game.value?.elapsedSeconds ?? 0) + (game.value?.completed ? 0 : ticking.value))
+let timer: ReturnType<typeof setInterval> | undefined
+const elapsed = computed(() => { void ticking.value; return practice.value.elapsed() })
 const accuracy = computed(() => game.value?.attempts ? Math.round(game.value.matched.length / game.value.attempts * 100) : 0)
-const blocked = computed(() => busy.value || !!pending.value || requiresReload.value)
-watch(opened, () => stopEnglishSpeech())
-watch(mode, value => {
-  stopEnglishSpeech(); word.value = undefined; meaning.value = undefined; spellingInput.value = ''; hintShown.value = false
-  receivedAt = receivedTimes[value]; ticking.value = Math.floor((performance.now() - receivedAt) / 1000)
-  error.value = ''
-})
 const spellingRound = computed(() => game.value?.mode === 'spelling' && !game.value.completed ? game.value : undefined)
 const spellingWord = computed(() => spellingRound.value?.words.find(choice => choice.id === spellingRound.value?.spellingPrompt.wordId)?.label ?? '')
 const feedback = computed(() => game.value?.feedback
@@ -33,97 +33,47 @@ const feedback = computed(() => game.value?.feedback
     ? game.value.feedback.correct ? '拼写正确！继续下一题。' : '还没有拼对，请修改后再试。'
     : game.value.feedback.correct ? '配对正确！继续寻找下一对。' : '这两个还不是一对，再试一次。'
   : mode.value === 'spelling' ? '根据释义输入英文单词，按回车也可以提交。' : '先选一个英文单词，再选对应释义。也可以先选释义。')
-
-function apply(response: WordGameResponse) {
-  const value = resolveWordGame(response, mode.value)
-  rounds.value = { ...rounds.value, [value.mode]: value }
-  receivedAt = performance.now()
-  receivedTimes[value.mode] = receivedAt
-  ticking.value = 0
-  word.value = undefined
-  meaning.value = undefined
-  if (!value.feedback || value.feedback.correct) { spellingInput.value = ''; hintShown.value = false }
-  if (value.mode === 'spelling' && !value.completed) void nextTick(() => spellingField.value?.focus())
-}
-
-async function perform(operation: WordGameOperation) {
-  if (busy.value) return
-  busy.value = true
-  error.value = ''
-  pending.value = operation
-  try {
-    const path = operation.kind === 'create' ? '/home/english/word-games' : `/home/english/word-games/${operation.gameId}/answers`
-    const result = await write<WordGameResponse>(path, 'POST', operation.body, operation.id, AbortSignal.timeout(15000))
-    if (disposed) return
-    apply(result)
-    pending.value = undefined
-  } catch (cause) {
-    if (disposed) return
-    if (cause instanceof WordGameVersionError) {
-      pending.value = undefined
-      requiresReload.value = false
-    }
-    if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
-      pending.value = undefined
-      requiresReload.value = operation.kind !== 'create'
-    }
-    error.value = cause instanceof Error ? cause.message : '请求结果未确认，请重试核对。'
-  } finally {
-    if (!disposed) busy.value = false
-  }
-}
-
+watch(opened, () => stopEnglishSpeech())
+watch(mode, () => { stopEnglishSpeech(); word.value = undefined; meaning.value = undefined; spellingInput.value = ''; hintShown.value = false })
 function start(reviewOf?: string) {
-  if (blocked.value) return
-  void perform({ kind: 'create', id: wordGameOperationId(), body: { batchId: props.batchId, mode: mode.value, ...(reviewOf ? { reviewOf } : {}) } })
+  if (!blocked.value && !pending.value) void practice.value.start(reviewOf)
 }
-
 function open() {
   opened.value = true
-  if (!pending.value && (!game.value || game.value.completed)) start()
+  if (pending.value) void practice.value.retry()
+  else if (!game.value || game.value.completed) start()
 }
-
 function choose(side: 'word' | 'meaning', id: number) {
   const current = game.value
   if (!current || current.completed || blocked.value || current.matched.includes(id)) return
   if (side === 'word') word.value = word.value === id ? undefined : id
   else meaning.value = meaning.value === id ? undefined : id
   if (word.value !== undefined && meaning.value !== undefined) {
-    void perform({ kind: 'answer', id: wordGameOperationId(), gameId: current.id,
+    practice.value.answer({ kind: 'answer', id: wordGameOperationId(), gameId: current.id,
       body: { baseRevision: current.revision, wordId: word.value, meaningId: meaning.value } })
+    word.value = undefined; meaning.value = undefined
   }
 }
-
 function submitSpelling() {
   const current = spellingRound.value
   if (!current || blocked.value || !spellingInput.value.trim()) return
-  void perform({ kind: 'spelling', id: wordGameOperationId(), gameId: current.id,
+  practice.value.answer({ kind: 'spelling', id: wordGameOperationId(), gameId: current.id,
     body: { baseRevision: current.revision, wordId: current.spellingPrompt.wordId, spelling: spellingInput.value } })
+  if (game.value?.feedback?.correct) { spellingInput.value = ''; hintShown.value = false }
+  void nextTick(() => spellingField.value?.focus())
 }
-
-async function reload() {
-  if (!game.value || busy.value) return
-  busy.value = true
-  try {
-    const latest = await api<WordGameResponse>(`/home/english/word-games/${game.value.id}`, { signal: AbortSignal.timeout(15000) })
-    if (!disposed) { apply(latest); requiresReload.value = false; error.value = '' }
-  } catch (cause) {
-    if (!disposed) error.value = cause instanceof Error ? cause.message : '读取进度失败，请重试。'
-  } finally { if (!disposed) busy.value = false }
+async function adoptServer(accepted: boolean) {
+  confirmation.value = false
+  if (!accepted) return
+  try { await practice.value.adoptServer(); word.value = undefined; meaning.value = undefined; spellingInput.value = ''; hintShown.value = false }
+  catch (cause) { practice.value.error.value = cause instanceof Error ? cause.message : '读取进度失败，请重试。' }
 }
-
 function incorrect(side: 'word' | 'meaning', id: number) {
   const last = game.value?.feedback
-  return !!last && !last.correct && word.value === undefined && meaning.value === undefined
-    && (side === 'word' ? last.wordId : last.meaningId) === id
+  return !!last && !last.correct && word.value === undefined && meaning.value === undefined && (side === 'word' ? last.wordId : last.meaningId) === id
 }
-
-onMounted(() => {
-  timer = setInterval(() => {
-    if (opened.value && game.value && !game.value.completed) ticking.value = Math.floor((performance.now() - receivedAt) / 1000)
-  }, 1000)
-})
-onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
+onMounted(() => { timer = setInterval(() => { ticking.value++ }, 1000) })
+onBeforeUnmount(() => { clearInterval(timer) })
 </script>
 
 <template>
@@ -139,21 +89,21 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
       <header class="word-game-header"><div><span>{{ mode === 'spelling' ? '单词拼写' : '单词配对' }}</span><h2 id="word-game-title">{{ game?.completed ? '这一轮，完成了' : mode === 'spelling' ? '把记住的单词写下来' : '找到属于它的另一半' }}</h2></div><AButton type="text" aria-label="关闭单词挑战" :disabled="busy" @click="opened = false"><X :size="20" /></AButton></header>
       <div class="word-game-body">
         <AAlert v-if="error" type="error" show-icon :message="error" class="word-game-error">
-          <template #description><span v-if="pending">请求结果尚未确认。重试会核对同一操作，不会重复计分。</span><span v-else-if="requiresReload">先读取服务器最新进度，再继续选择。</span></template>
-          <template #action><AButton v-if="pending" :loading="busy" @click="perform(pending)">重试上次操作</AButton><AButton v-else-if="requiresReload" :loading="busy" @click="reload">读取最新进度</AButton><AButton v-else :disabled="busy" @click="start()">重新开始</AButton></template>
+          <template #description><span v-if="requiresReload">本机待同步答题已保留，采用服务器进度前需要明确确认。</span><span v-else-if="pending">答题结果尚未保存，可继续练习；重试会核对同一操作，不重复计分。</span></template>
+          <template #action><AButton v-if="requiresReload" @click="confirmation = true">采用服务器进度</AButton><AButton v-else-if="pending || practice.storageFailed.value" :loading="syncing || busy" @click="practice.retry()">重试上次操作</AButton><AButton v-else :disabled="busy" @click="start()">重新开始</AButton></template>
         </AAlert>
         <template v-if="game">
           <div class="word-game-stats" aria-label="本轮练习统计"><span>{{ mode === 'spelling' ? '已完成' : '已配对' }} <strong>{{ game.matched.length }} / {{ game.words.length }}</strong></span><span>连续答对 <strong>{{ game.streak }}</strong></span><span>用时 <strong>{{ practiceTime(elapsed) }}</strong></span></div>
           <AProgress :percent="Math.round(game.matched.length / game.words.length * 100)" :show-info="false" :stroke-color="'var(--color-primary)'" size="small" />
           <template v-if="!game.completed">
-            <p class="word-game-feedback" :class="{ incorrect: game.feedback && !game.feedback.correct }" role="status" aria-live="polite">{{ busy ? '正在确认配对…' : feedback }}</p>
+            <p class="word-game-feedback" :class="{ incorrect: game.feedback && !game.feedback.correct }" role="status" aria-live="polite">{{ feedback }}</p>
             <div v-if="game.mode === 'matching'" class="word-game-board" aria-label="英文与释义配对区">
               <div class="word-game-column"><h3>英文单词</h3><div v-for="choice in game.words" :key="choice.id" class="word-game-word" :class="{ matched: game.matched.includes(choice.id) }" :aria-hidden="game.matched.includes(choice.id) || undefined"><AButton class="word-game-choice" :class="{ selected: word === choice.id, incorrect: incorrect('word', choice.id) }" :data-word-choice="choice.id" :aria-pressed="word === choice.id" :disabled="blocked || game.matched.includes(choice.id)" @click="choose('word', choice.id)"><span lang="en">{{ choice.label }}</span><Check v-if="word === choice.id" :size="16" aria-hidden="true" /></AButton><ReadAloudButton v-if="!game.matched.includes(choice.id)" :text="choice.label" :label="`朗读挑战单词 ${choice.label}`" compact :disabled="blocked" /></div></div>
               <div class="word-game-column"><h3>中文释义</h3><AButton v-for="choice in game.meanings" :key="choice.id" class="word-game-choice" :class="{ selected: meaning === choice.id, matched: game.matched.includes(choice.id), incorrect: incorrect('meaning', choice.id) }" :data-meaning-choice="choice.id" :aria-pressed="meaning === choice.id" :aria-hidden="game.matched.includes(choice.id) || undefined" :disabled="blocked || game.matched.includes(choice.id)" @click="choose('meaning', choice.id)"><span>{{ choice.label }}</span><Check v-if="meaning === choice.id" :size="16" aria-hidden="true" /></AButton></div>
             </div>
             <div v-else-if="spellingRound" class="word-spelling" aria-label="英文拼写练习">
               <div class="word-spelling-prompt"><span>中文释义</span><h3>{{ spellingRound.spellingPrompt.meaning }}</h3><p v-if="spellingRound.spellingPrompt.example" lang="en">{{ spellingRound.spellingPrompt.example }}</p></div>
-              <form @submit.prevent="submitSpelling"><label for="word-spelling-input">英文拼写</label><AInput id="word-spelling-input" ref="spellingField" v-model:value="spellingInput" size="large" placeholder="输入对应的英文单词" autocomplete="off" autocapitalize="off" autocorrect="off" :spellcheck="false" :maxlength="100" :disabled="blocked" /><div class="word-spelling-hints"><AButton :disabled="blocked" @click="hintShown = true">首字母提示</AButton><ReadAloudButton :text="spellingWord" label="听当前单词发音" :disabled="blocked" /></div><p v-if="hintShown" class="word-spelling-hint" role="status">首字母：<strong lang="en">{{ Array.from(spellingWord.trim())[0] }}</strong> · 共 {{ Array.from(spellingWord.trim()).length }} 个字符</p><AButton type="primary" html-type="submit" :disabled="blocked || !spellingInput.trim()" :loading="busy">提交拼写</AButton></form>
+              <form @submit.prevent="submitSpelling"><label for="word-spelling-input">英文拼写</label><AInput id="word-spelling-input" ref="spellingField" v-model:value="spellingInput" size="large" placeholder="输入对应的英文单词" autocomplete="off" autocapitalize="off" autocorrect="off" :spellcheck="false" :maxlength="100" :disabled="blocked" /><div class="word-spelling-hints"><AButton :disabled="blocked" @click="hintShown = true">首字母提示</AButton><ReadAloudButton :text="spellingWord" label="听当前单词发音" :disabled="blocked" /></div><p v-if="hintShown" class="word-spelling-hint" role="status">首字母：<strong lang="en">{{ Array.from(spellingWord.trim())[0] }}</strong> · 共 {{ Array.from(spellingWord.trim()).length }} 个字符</p><AButton type="primary" html-type="submit" :disabled="blocked || !spellingInput.trim()" >提交拼写</AButton></form>
             </div>
             <p class="word-game-note">不计时限，按自己的节奏来。{{ game.eligibleCount < game.sourceCount ? '重复单词或相同释义已合并出题。' : '' }}</p>
           </template>
@@ -161,15 +111,16 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
             <span class="word-game-trophy"><Trophy :size="32" aria-hidden="true" /></span><h3>{{ game.mistakes.length ? '再看一眼，这些词会更熟悉' : mode === 'spelling' ? '全部拼写正确' : '全部配对成功' }}</h3>
             <p>{{ game.attempts }} 次{{ mode === 'spelling' ? '提交' : '配对' }} · 正确率 {{ accuracy }}% · 最长连对 {{ game.bestStreak }}</p>
             <div v-if="game.mistakes.length" class="word-game-review" aria-label="本轮错词"><article v-for="item in game.mistakes" :key="item.word"><div><strong lang="en">{{ item.word }}</strong><span v-if="item.phonetic">{{ item.phonetic }}</span><ReadAloudButton :text="item.word" :label="`朗读错词 ${item.word}`" compact /></div><p>{{ item.meaning }}</p><div v-if="item.example" class="word-review-example"><p lang="en">{{ item.example }}</p><ReadAloudButton :text="item.example" :label="`朗读错词例句 ${item.word}`" compact /></div></article></div>
-            <div class="word-game-result-actions"><AButton v-if="game.mistakes.length" type="primary" :disabled="blocked" @click="start(game.id)"><RotateCcw :size="15" />再练错词（{{ game.mistakes.length }}）</AButton><AButton :disabled="blocked" @click="start()">再来一轮</AButton></div>
+            <div class="word-game-result-actions"><AButton v-if="game.mistakes.length" type="primary" :disabled="blocked || pending" @click="start(game.id)"><RotateCcw :size="15" />再练错词（{{ game.mistakes.length }}）</AButton><AButton :disabled="blocked || pending" @click="start()">再来一轮</AButton></div>
           </div>
         </template>
         <p v-else-if="busy" class="word-game-loading" role="status">正在从当前批次准备单词…</p>
         <div v-else-if="!error" class="word-game-loading" role="status"><p>练习尚未就绪，请重新开始。</p><AButton @click="start()">重新开始</AButton></div>
       </div>
-      <footer class="word-game-footer"><span>单词来自当前选中的推送批次</span><AButton :disabled="busy" @click="opened = false">{{ game?.completed ? '完成' : '暂时关闭' }}</AButton></footer>
+      <footer class="word-game-footer"><span role="status">{{ pending ? `待同步 ${practice.queue.value.length} 次答题${syncing ? " · 正在保存" : " · 尚未保存服务器"}` : game ? "本轮答题已同步" : "单词来自当前选中的推送批次" }}</span><AButton :disabled="busy" @click="opened = false">{{ game?.completed ? '完成' : '暂时关闭' }}</AButton></footer>
     </section>
   </AppDialog>
+  <ConfirmDialog v-if="confirmation" message="采用服务器当前进度，并放弃本机尚未确认的答题？已在服务器保存的答题不会撤销。" confirm-label="采用服务器进度" @answer="adoptServer" />
 </template>
 
 <style scoped>

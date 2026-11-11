@@ -9,7 +9,7 @@ import type { Note } from '../../shared/api/client'
 import { loadCalendar, moveMonth, type CalendarDay, type HomeCalendar } from './calendar'
 import DailyEnglishCard from '../english/DailyEnglishCard.vue'
 
-const props = defineProps<{ items: Note[]; loading: boolean; error: string }>()
+const props = defineProps<{ username: string; items: Note[]; loading: boolean; error: string }>()
 const emit = defineEmits<{ notes: []; favorites: []; open: [note: Note]; refresh: [] }>()
 const notes = computed(() => props.items.filter(note => !note.deleted && note.type === 'note'))
 const recent = computed(() => [...notes.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.path.localeCompare(b.path)).slice(0, 3))
@@ -127,7 +127,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
         </section>
 
         <div class="home-side">
-        <DailyEnglishCard />
+        <DailyEnglishCard :username="username" />
         <section class="home-card home-documents" aria-label="文档速览">
           <header class="home-document-heading">
             <div class="home-document-tabs" role="tablist" aria-label="文档列表类型">
