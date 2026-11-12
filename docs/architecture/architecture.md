@@ -1655,3 +1655,5 @@ SyncAssistantDownload 读取同源 `/downloads/sync-assistant.json` 并 HEAD 核
 `build-sync-desktop.ps1 -PublishDownload` 调用标准库打包脚本，仅从指定 dist 构建目录收集主程序、安装入口、说明和 _internal，拒绝链接/重解析点，验证 Windows x64 PE。发布完整 ZIP，文件名带内容摘要；原子替换清单，记录 version/builtAt/platform/sourceRevision/sourceDirty/file/bytes/sha256。产物置于忽略提交的 `frontend/public/downloads/`，由 Vite/public、前端构建与既有 Caddy 分发，不含同步状态/凭证；静态程序可直接下载，不把网页登录当成分发鉴权。Caddy 单独处理 downloads，缺失文件为 404，不进入 SPA fallback；清单及包使用 no-store。
 
 真实 Chrome 下载 SHA-256、文件大小、ZIP 完整性及所有文件和构建目录比对通过；真实静态目录缺清单/缺文件、重试、375px 布局通过。实际缓存的生产 Caddy 镜像验证配置、构建产物 GET/HEAD 与 404 通过。使用实际组件的独立页面与真实文件服务，不假冒登录/后端状态；未重跑完整同步或安装器回归。部署指南要求独立传输清单和它引用的 ZIP 到目标源码，再构建 web；git archive 不包含生成产物。生产和用户已安装助手未更新。
+
+2026-11-12 12:37 后续发布：上述双语学习、朗读兼容和助手下载随提交 d92542a 发布生产，V20→V21、原业务表/对象摘要及公开安装包下载校验通过，详见部署记录第 17 节；覆盖本节开发阶段的“未发布”描述。安装包已提供，用户已安装助手仍需手动更新。生产账户内业务和真实发声未代验收，当前安全及 Office 边界保持。

@@ -35,7 +35,7 @@
 
 Windows 开发电脑执行 `./scripts/build-sync-desktop.ps1 -Variant web-download -PublishDownload`，沿用已准备的 `sync-client/.venv` 固定构建依赖；生成完整 PyInstaller 程序并发布到忽略提交的 `frontend/public/downloads/`。ZIP 包含主程序、安装入口、说明、_internal 与构建元数据，不包含本机同步状态/凭证。清单为 `sync-assistant.json`，文件名包含 ZIP 摘要前 12 位。先完成助手打包，再运行前端构建；Vite 本地直接提供 public 下的文件。
 
-下载文件不进入 Git。部署源码若来自 `git archive`，须额外携带经核对的 ZIP 和清单，放入服务器源码的 `frontend/public/downloads/` 再构建 web 镜像，详见 Agent 部署指南。缺少文件时页面明确不可用；本批尚未发布生产，不将本地可下载当成生产已有入口。
+下载文件不进入 Git。部署源码若来自 `git archive`，须额外携带经核对的 ZIP 和清单，放入服务器源码的 `frontend/public/downloads/` 再构建 web 镜像，详见 Agent 部署指南。缺少文件时页面明确不可用；2026-11-12 生产已提供本次提交对应的助手下载，已安装助手仍需手动更新。
 
 ### 1. MySQL（项目根目录执行，PowerShell 7）
 

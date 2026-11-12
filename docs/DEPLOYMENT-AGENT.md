@@ -32,7 +32,7 @@
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
-- 当前源码迁移最高为 V21；执行时重新核对 `database/migrations/`。2026-11-11 生产已实际升级至 V20，V21 尚未发布，后续部署仍须在服务器实时查询，不能仅依赖该历史记录。
+- 当前源码迁移最高为 V21；执行时重新核对 `database/migrations/`。2026-11-12 生产已实际升级至 V21（发布详情见部署记录第 17 节），后续部署仍须在服务器实时查询，不能仅依赖该历史记录。
 
 ### 功能与部署边界
 
@@ -61,7 +61,7 @@ sha256sum workbench-release.tar.gz
 
 上传前检查归档清单，不应含 `.git`、`.env`、`secrets/`、`data/`、数据库导出或私钥。使用已确认的 SSH 入口传输，目标机器重新校验 SHA-256。不要传输开发目录整体或依赖包目录。
 
-同步中心助手下载是额外构建产物，不包含在 `git archive` 中。在与发布提交一致的 Windows 工作区执行 `./scripts/build-sync-desktop.ps1 -Variant web-download -PublishDownload`，核对生成清单的 sourceRevision/sourceDirty（正式发布应对应目标提交且 sourceDirty=false）、ZIP 大小与完整 SHA-256。只额外传输 `frontend/public/downloads/sync-assistant.json` 以及该清单引用的 ZIP；核对无越界路径或用户状态/凭证，再放入独立发布源码的同名目录。**必须在构建 web 镜像之前完成**，Dockerfile 会随 public 静态文件打包。不能在 Ubuntu 上用 Python 源码冒充 Windows EXE，或只复制主 EXE 而遗漏 _internal。
+同步中心助手下载是额外构建产物，不包含在 `git archive` 中。在与发布提交一致的 Windows 工作区执行 `./scripts/build-sync-desktop.ps1 -Variant web-download -PublishDownload`，核对生成清单的 sourceRevision/sourceDirty（正式发布应对应目标提交且 sourceDirty=false）、ZIP 大小与完整 SHA-256。只额外传输 `frontend/public/downloads/sync-assistant.json` 以及该清单引用的 ZIP；核对无越界路径或用户状态/凭证，先创建独立发布源码的 `frontend/public/downloads/` 目录，再放入产物。Git 归档不会保留空的 public 目录。**必须在构建 web 镜像之前完成**，Dockerfile 会随 public 静态文件打包。不能在 Ubuntu 上用 Python 源码冒充 Windows EXE，或只复制主 EXE 而遗漏 _internal。
 
 发布后核对 `/downloads/sync-assistant.json`、ZIP 的 HEAD/实际下载摘要和同步中心按钮；缺失文件应为 404，不能返回 SPA HTML。下载文件是公开静态程序分发，不含登录或设备凭证；没有自动安装、签名更新协议或服务端强制升级功能。未提供安装包时页面应明确不可用，不能伪报发布完成。
 
