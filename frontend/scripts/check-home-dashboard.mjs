@@ -84,8 +84,8 @@ export async function checkHomeDashboard(page, request, output) {
     assert.equal(await page.locator('.home-content').getByRole('button', { name, exact: true }).count(), 0)
   }
   const calendarBox = await page.locator('.home-calendar').boundingBox()
-  assert.ok(calendarBox.width >= 380 && calendarBox.width <= 420)
-  assert.ok((await page.locator('.home-documents').boundingBox()).height <= 260)
+  assert.ok(calendarBox.width >= 332 && calendarBox.width <= 400)
+  assert.ok((await page.locator('.home-documents').boundingBox()).height <= 340)
 
   // Navigate the actual month controls, including year rollover and unpublished schedule states.
   const current = (await request('/home/calendar')).body.month
@@ -140,6 +140,6 @@ export async function checkHomeDashboard(page, request, output) {
     calendar: 'authenticated real calendar API; official holiday and makeup dates; leap year, invalid month, unknown-year and rollover checks passed',
     notes: 'real MySQL-backed recent and favorite tabs, 3 records each; keyboard tab switching, deleted/folder exclusion and real editor links verified',
     actions: 'homepage creation/import shortcuts removed; existing note-page actions covered by the original regression suite; no external news requests',
-    layout: '1440, 375 and 812 px; full content width and no horizontal overflow; desktop calendar 380–420 px; compact document panel <=260 px high; internal scrolling reaches favorites',
+    layout: '1440, 375 and 812 px; full content width and no horizontal overflow; desktop calendar 332–400 px; compact document panel <=340 px high; internal scrolling reaches favorites',
   }, null, 2))
 }

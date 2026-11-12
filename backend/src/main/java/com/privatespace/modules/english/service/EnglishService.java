@@ -6,6 +6,7 @@ public interface EnglishService {
     Credential change(Change change);
     Receipt receive(String token, byte[] body);
     Daily daily(String date, int page, Long batch);
+    Summary summary();
     Submission batchContent(long id);
     Logs logs(int page);
 }

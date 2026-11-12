@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 public class EnglishController {
     private final EnglishService service;
     public EnglishController(EnglishService service){this.service=service;}
+    @GetMapping("/summary") public ResponseEntity<Summary> summary(){return ResponseEntity.ok().header("Cache-Control","no-store").body(service.summary());}
     @GetMapping public ResponseEntity<Daily> daily(@RequestParam(required=false) String date,@RequestParam(defaultValue="1") int page,@RequestParam(required=false) Long batch){return ResponseEntity.ok().header("Cache-Control","no-store").body(service.daily(date,page,batch));}
     @GetMapping("/webhook") public ResponseEntity<Status> status(){return ResponseEntity.ok().header("Cache-Control","no-store").body(service.status());}
     @PostMapping("/webhook") public ResponseEntity<Credential> change(@RequestBody Change change){return ResponseEntity.ok().header("Cache-Control","no-store").body(service.change(change));}

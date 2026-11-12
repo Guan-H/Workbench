@@ -7,12 +7,17 @@ import AppDialog from '../../shared/AppDialog.vue'
 import AppMessage, { type Notice } from '../../shared/AppMessage.vue'
 import AppPagination from '../../shared/AppPagination.vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
+import ContentLoading from '../../shared/ContentLoading.vue'
+import ContentLoadError from '../../shared/ContentLoadError.vue'
+import { vContentMotion } from '../../shared/content-motion'
 import { folderOptions, folderPath, type LibraryChange, type NovelBook, type NovelLibrary } from './library'
-const NovelReader = defineAsyncComponent(() => import('./NovelReader.vue'))
+const NovelReader = defineAsyncComponent({ loader: () => import('./NovelReader.vue'), loadingComponent: ContentLoading, errorComponent: ContentLoadError, delay: 120 })
 const props = defineProps<{ username:string; requestedFile?:Note }>()
 const emit = defineEmits<{uploaded:[file:Note]}>()
 const reader=ref<{flush:()=>Promise<void>;isLoading:()=>boolean}>(),current=ref<Note>(),input=ref<HTMLInputElement>()
 const library=ref<NovelLibrary>({revision:'0',folders:[],books:[]}),loading=ref(true),folder=ref(''),query=ref(''),page=ref(1),opening=ref(false),error=ref(''),notice=ref<Notice>()
+const loaded=ref(false)
+let libraryController:AbortController|undefined,openController:AbortController|undefined
 const uploadFile=ref<File>(),destination=ref(''),uploading=ref(false),uploadProgress=ref<UploadProgress>(),uncertain=ref(false)
 const editor=ref<{action:LibraryChange['action'];id?:string;name:string;parentId:string;revision:string;operation:string;pending?:LibraryChange}>(),changing=ref(false)
 let serial=0,uploadOperation='',uploadRevision='',noticeTimer:ReturnType<typeof setTimeout>|undefined,disposed=false,polling=false,pollTimer:ReturnType<typeof setInterval>|undefined
@@ -22,26 +27,31 @@ const pages=computed(()=>Math.max(1,Math.ceil(filtered.value.length/10)))
 const visible=computed(()=>filtered.value.slice((page.value-1)*10,page.value*10))
 interface FolderNode {key:string;title:string;children?:FolderNode[]}
 const tree=computed(()=>{
-  const children=(parent:string):FolderNode[]=>library.value.folders.filter(item=>item.parentId===parent).map(item=>({key:item.id,title:item.name,children:children(item.id)}))
-  return children('')
+  const nodes=new Map<string,FolderNode & {children:FolderNode[]}>(library.value.folders.map(item=>[item.id,{key:item.id,title:item.name,children:[]}]))
+  const roots:FolderNode[]=[]
+  for(const item of library.value.folders){const node=nodes.get(item.id);if(!node)continue;if(!item.parentId)roots.push(node);else nodes.get(item.parentId)?.children.push(node)}
+  return roots
 })
 watch([query,folder],()=>{page.value=1})
 watch(pages,value=>{page.value=Math.min(page.value,value)})
 watch(()=>props.requestedFile,file=>{if(file) void open(file.id)},{immediate:true})
 function notify(text:string) {notice.value={kind:'success',text};clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>{notice.value=undefined},2000)}
 async function refresh() {
+  libraryController?.abort()
+  const controller=libraryController=new AbortController()
   loading.value=true
-  try {library.value=await api<NovelLibrary>('/reader/library');error.value='';if(folder.value&&!library.value.folders.some(item=>item.id===folder.value)) folder.value=''}
-  catch(cause){error.value=cause instanceof Error?cause.message:'读取书籍目录失败。'}
-  finally{loading.value=false}
+  try {const result=await api<NovelLibrary>('/reader/library',{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])});if(disposed||controller.signal.aborted)return;library.value=result;loaded.value=true;error.value='';if(folder.value&&!library.value.folders.some(item=>item.id===folder.value)) folder.value=''}
+  catch(cause){if(!disposed&&!controller.signal.aborted)error.value=cause instanceof Error?cause.message:'读取书籍目录失败。'}
+  finally{if(!disposed&&libraryController===controller){loading.value=false;libraryController=undefined}}
 }
 async function open(id:string) {
-  const request=++serial;opening.value=true;error.value='';await reader.value?.flush()
-  try {const latest=await api<Note>(`/reader/library/files/${id}`);if(!disposed&&request===serial)current.value=latest}
+  openController?.abort()
+  const controller=openController=new AbortController(),request=++serial;opening.value=true;error.value=''
+  try {await reader.value?.flush();if(disposed||request!==serial)return;const latest=await api<Note>(`/reader/library/files/${id}`,{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])});if(!disposed&&request===serial)current.value=latest}
   catch(cause){if(!disposed&&request===serial)error.value=cause instanceof Error?cause.message:'书籍打开失败。'}
-  finally{if(!disposed&&request===serial)opening.value=false}
+  finally{if(!disposed&&request===serial){opening.value=false;openController=undefined}}
 }
-async function books() {++serial;await reader.value?.flush();current.value=undefined;opening.value=false;await refresh()}
+async function books() {++serial;openController?.abort();await reader.value?.flush();current.value=undefined;opening.value=false;await refresh()}
 async function poll() {
   if(polling||!current.value||reader.value?.isLoading()||document.visibilityState==='hidden')return
   polling=true;const id=current.value.id
@@ -82,7 +92,7 @@ async function upload() {
   finally{if(!disposed){uploading.value=false;uploadProgress.value=undefined}}
 }
 onMounted(()=>{void refresh();pollTimer=setInterval(()=>{void poll()},5000);window.addEventListener('focus',poll);document.addEventListener('visibilitychange',poll)})
-onBeforeUnmount(()=>{disposed=true;++serial;clearTimeout(noticeTimer);clearInterval(pollTimer);window.removeEventListener('focus',poll);document.removeEventListener('visibilitychange',poll)})
+onBeforeUnmount(()=>{disposed=true;++serial;libraryController?.abort();openController?.abort();clearTimeout(noticeTimer);clearInterval(pollTimer);window.removeEventListener('focus',poll);document.removeEventListener('visibilitychange',poll)})
 defineExpose({prepareLeave:async()=>{if(uploading.value||changing.value)return false;await reader.value?.flush();return true}})
 </script>
 
@@ -93,16 +103,16 @@ defineExpose({prepareLeave:async()=>{if(uploading.value||changing.value)return f
     <div v-else class="reading-library-header"><div><p>我的阅读</p><h1>书籍目录</h1><span>独立管理书籍分类；加入的笔记共用同一份正文，修改后自动更新。</span></div><div class="reading-header-actions"><AButton @click="edit('create-folder')"><FolderPlus :size="16" />新建目录</AButton><AButton type="primary" @click="input?.click()"><Upload :size="16" />上传书籍</AButton></div></div>
     <input ref="input" type="file" accept=".txt,.epub,.md" hidden @change="selected">
     <AAlert v-if="error" type="error" show-icon :message="error" />
-    <p v-if="opening" role="status" class="reading-opening">正在打开书籍…</p>
+    <ContentLoading :pending="opening" label="正在打开书籍…" />
     <NovelReader v-if="current" ref="reader" :key="current.id" :file="current" :username="username" @updated="notify('已同步源文件修改。')" />
     <template v-else>
-      <div class="reading-library-tools"><AInput v-model:value="query" aria-label="搜索阅读书目" placeholder="搜索书籍或源文件路径" allow-clear><template #prefix><Search :size="16" /></template></AInput><AButton :loading="loading" aria-label="刷新书目" title="刷新书目" @click="refresh"><RefreshCw :size="16" /></AButton><span>{{ filtered.length }} 本</span></div>
+      <div class="reading-library-tools"><AInput v-model:value="query" aria-label="搜索阅读书目" placeholder="搜索书籍或源文件路径" allow-clear><template #prefix><Search :size="16" /></template></AInput><AButton :loading="loading" :disabled="loading" aria-label="刷新书目" title="刷新书目" @click="refresh"><RefreshCw :size="16" /></AButton><span>{{ loaded?filtered.length+' 本':'加载中' }}</span></div>
       <div class="novel-mobile-folder"><label>书籍目录<ASelect v-model:value="folder" aria-label="当前书籍目录" :options="folderOptions(library.folders)" /></label></div>
       <div class="novel-browser">
         <aside class="novel-folders" aria-label="独立书籍目录"><AButton :type="!folder?'primary':'default'" @click="folder=''">书籍根目录 /</AButton><ATree :tree-data="tree" :selected-keys="[folder]" block-node @select="(_keys,info)=>folder=String(info.node.key)" /></aside>
         <div class="novel-folder-body"><div class="novel-folder-heading"><strong>{{ folderPath(folder,library.folders)||'书籍根目录 /' }}</strong><template v-if="folder"><AButton size="small" @click="edit('update-folder')">编辑目录</AButton><AButton size="small" danger @click="edit('delete-folder')">删除目录</AButton></template></div>
-          <div class="reading-library-scroll" :aria-busy="loading"><p v-if="loading&&!library.books.length" role="status">正在读取书籍目录…</p><div v-else-if="!filtered.length" class="reading-empty"><BookOpen :size="40" /><h2>当前没有书籍</h2><p>在笔记中右键“复制到书架”，或在这里上传；笔记目录不会自动加入。</p></div>
-            <ul v-else class="reading-books"><li v-for="book in visible" :key="book.fileId"><button type="button" :data-reading-path="book.file?.path||book.sourcePath" :aria-label="`阅读 ${book.file?.path||book.sourcePath}`" :disabled="!book.file" @click="open(book.fileId)"><span class="reading-book-icon"><BookOpen :size="23" /></span><span class="reading-book-info"><strong>{{ name(book) }}</strong><small>目录：{{ folderPath(book.folderId,library.folders)||'根目录' }}</small><small>源文件：{{ book.file?.path||book.sourcePath }}{{ !book.file?'（已删除或不可用）':'' }}</small></span></button><ADropdown :trigger="['click']"><AButton type="text" :aria-label="`书籍操作：${name(book)}`" title="书籍操作"><Ellipsis :size="19" /></AButton><template #overlay><AMenu><AMenuItem @click="edit('move-book',book)">移动分类</AMenuItem><AMenuItem danger @click="edit('remove-book',book)">从书架移除</AMenuItem></AMenu></template></ADropdown></li></ul>
+          <div class="reading-library-scroll" :aria-busy="loading"><ContentLoading v-if="!loaded&&loading" skeleton label="正在读取书籍目录…" /><div v-else-if="!loaded" class="reading-empty"><p>书籍目录尚未读取成功。</p><AButton @click="refresh">重新读取书目</AButton></div><div v-else-if="!filtered.length" class="reading-empty"><BookOpen :size="40" /><h2>当前没有书籍</h2><p>在笔记中右键“复制到书架”，或在这里上传；笔记目录不会自动加入。</p></div>
+            <ul v-else v-content-motion="folder + ':' + page + ':' + query" class="reading-books"><li v-for="book in visible" :key="book.fileId"><button type="button" :data-reading-path="book.file?.path||book.sourcePath" :aria-label="`阅读 ${book.file?.path||book.sourcePath}`" :disabled="!book.file" @click="open(book.fileId)"><span class="reading-book-icon"><BookOpen :size="23" /></span><span class="reading-book-info"><strong>{{ name(book) }}</strong><small>目录：{{ folderPath(book.folderId,library.folders)||'根目录' }}</small><small>源文件：{{ book.file?.path||book.sourcePath }}{{ !book.file?'（已删除或不可用）':'' }}</small></span></button><ADropdown :trigger="['click']"><AButton type="text" :aria-label="`书籍操作：${name(book)}`" title="书籍操作"><Ellipsis :size="19" /></AButton><template #overlay><AMenu><AMenuItem @click="edit('move-book',book)">移动分类</AMenuItem><AMenuItem danger @click="edit('remove-book',book)">从书架移除</AMenuItem></AMenu></template></ADropdown></li></ul>
           </div>
           <footer class="reading-pagination"><span>共 {{ filtered.length }} 本 · 第 {{ page }} / {{ pages }} 页 · 10 本/页</span><AppPagination v-model:page="page" :pages="pages" :total="filtered.length" :page-size="10" :disabled="loading" /></footer>
         </div>

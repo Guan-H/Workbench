@@ -46,7 +46,7 @@ try {
       headers:{Authorization:`Bearer ${credential.token}`},data:{requestId:'word-game-fixture',articles:[],words}})
     assert.equal(receipt.status(),200)
     const batchId = (await receipt.json()).id
-    await page.reload(); await page.getByText('单词',{exact:true}).click()
+    await page.reload(); await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByText('单词',{exact:true}).click()
     const card = page.getByRole('complementary',{name:'单词挑战',exact:true})
     await card.getByRole('button',{name:'开始挑战',exact:true}).waitFor()
     await page.screenshot({path:output+'/entry-desktop.png'})
@@ -137,11 +137,18 @@ try {
     await page.screenshot({path:output+'/spelling-desktop.png',animations:'disabled'})
     await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/spelling-mobile.png',animations:'disabled'})
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.setViewportSize({width:1440,height:1000})
+    const finishPronunciation=async()=>{
+      // Wait for the native engine; an unavailable voice uses the real UI fallback.
+      await page.waitForFunction(()=>{const panel=document.querySelector('.word-spelling-readback');return !panel||panel.textContent.includes('本次朗读未完成。')},undefined,{timeout:30000})
+      const next=dialog.getByRole('button',{name:/^(继续下一题|查看本轮结果)$/})
+      if(await next.count())await next.click()
+    }
     while(!spelling.completed) {
       const question=spelling.spellingPrompt
       const expected=spelling.words.find(word=>word.id===question.wordId).label
       const response=page.waitForResponse(response=>response.url().endsWith(`/word-games/${spelling.id}/answers`)&&response.ok())
       await spellInput.fill('  '+expected.toUpperCase()+'  ');await spellInput.press('Enter');spelling=await (await response).json()
+      await finishPronunciation()
     }
     assert.equal(spelling.attempts,7);assert.equal(spelling.mistakes.length,1)
     await dialog.getByText('7 次提交 · 正确率 86% · 最长连对 6',{exact:true}).waitFor()
@@ -151,6 +158,7 @@ try {
     assert.equal((await call(games+'/'+spellReview.id+'/answers','POST',{baseRevision:'0',wordId:0,meaningId:0})).status,400)
     const spellResponse=page.waitForResponse(response=>response.url().endsWith(`/word-games/${spellReview.id}/answers`)&&response.ok())
     await spellInput.fill(spellReview.words[0].label);await spellInput.press('Enter');const finishedSpellReview=await (await spellResponse).json();assert.equal(finishedSpellReview.completed,true)
+    await finishPronunciation()
     const anon=await browser.newContext()
     assert.equal((await anon.request.get(`http://127.0.0.1:${port}/api/v1${games}/${current.id}`)).status(),401)
     assert.equal((await anon.request.get(`http://127.0.0.1:${port}/api/v1${games}/${current.id}`,{headers:{Authorization:`Bearer ${credential.token}`}})).status(),401)

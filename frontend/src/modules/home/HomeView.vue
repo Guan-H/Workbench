@@ -7,10 +7,12 @@ import dayjs, { type Dayjs } from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import type { Note } from '../../shared/api/client'
 import { loadCalendar, moveMonth, type CalendarDay, type HomeCalendar } from './calendar'
-import DailyEnglishCard from '../english/DailyEnglishCard.vue'
+import LearningSummary from '../english/LearningSummary.vue'
+import ContentLoading from '../../shared/ContentLoading.vue'
+import { vContentMotion } from '../../shared/content-motion'
 
 const props = defineProps<{ username: string; items: Note[]; loading: boolean; error: string }>()
-const emit = defineEmits<{ notes: []; favorites: []; open: [note: Note]; refresh: [] }>()
+const emit = defineEmits<{ notes: []; favorites: []; open: [note: Note]; refresh: []; learning: [] }>()
 const notes = computed(() => props.items.filter(note => !note.deleted && note.type === 'note'))
 const recent = computed(() => [...notes.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.path.localeCompare(b.path)).slice(0, 3))
 const favorites = computed(() => notes.value.filter(note => note.favorite).sort((a, b) => a.path.localeCompare(b.path)).slice(0, 3))
@@ -26,6 +28,8 @@ let dayTimer: ReturnType<typeof setInterval> | undefined
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Shanghai' })
 const updatedFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' })
 const todayLabel = computed(() => calendar.value ? dateFormat.format(new Date(calendar.value.today + 'T12:00:00+08:00')) : '正在读取日期…')
+const todayNumber = computed(() => calendar.value?.today.slice(-2) ?? '—')
+const todayMonth = computed(() => calendar.value?.today.slice(0, 7).replace('-', ' / ') ?? '')
 const monthLabel = computed(() => calendar.value ? calendar.value.month.replace('-', ' 年 ') + ' 月' : '')
 const calendarDate = computed(() => dayjs(selectedDate.value || (calendar.value?.month ?? '2000-01') + '-01').locale('zh-cn'))
 const calendarDays = computed(() => new Map(calendar.value?.days.map(day => [day.date, day]) ?? []))
@@ -89,8 +93,8 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
   <section class="home-content" aria-labelledby="home-title">
     <div class="home-dashboard">
       <header class="home-heading">
-        <h1 id="home-title">工作台</h1>
-        <p v-if="calendar"><time :datetime="calendar.today">{{ todayLabel }}</time><span>北京时间</span></p>
+        <div class="home-heading-copy"><span class="home-kicker">我的空间 / 每日一览</span><h1 id="home-title">工作台<span class="home-heading-dot">.</span></h1><p>欢迎回来，{{ username }}。</p></div>
+        <div v-if="calendar" class="home-date-signature"><span class="home-date-number" aria-hidden="true">{{ todayNumber }}</span><div><span class="home-date-month" aria-hidden="true">{{ todayMonth }}</span><time :datetime="calendar.today">{{ todayLabel }}</time><span class="home-date-zone">北京时间</span></div></div>
       </header>
 
       <div class="home-columns">
@@ -101,7 +105,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
                 <template #title><div>{{ calendar.notice }}</div><div class="home-calendar-tooltip-legend">休：放假；班：调休上班；灰底为周末。</div></template>
                 <AButton type="text" class="home-calendar-info" aria-label="日期与假期说明"><CircleAlert :size="15" aria-hidden="true" /></AButton>
               </ATooltip>
-            </h2><span>北京时间</span>
+            </h2>
           </header>
           <div v-if="calendarError" class="home-list-message" role="alert"><p>{{ calendarError }}</p><AButton @click="refreshCalendar(requestedMonth)">重试日期信息</AButton></div>
           <template v-else-if="calendar">
@@ -123,12 +127,13 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
               <small v-if="!calendar.available">放假与调休安排待确认</small>
             </div>
           </template>
-          <p v-else class="home-list-message" role="status">正在读取日期与节假日…</p>
+          <ContentLoading v-else skeleton label="正在读取日期与节假日…" />
         </section>
 
         <div class="home-side">
-        <DailyEnglishCard :username="username" />
+        <LearningSummary @open="emit('learning')" />
         <section class="home-card home-documents" aria-label="文档速览">
+          <div class="home-section-label"><span>文档速览</span><span>接着上次的记录</span></div>
           <header class="home-document-heading">
             <div class="home-document-tabs" role="tablist" aria-label="文档列表类型">
               <AButton id="home-tab-recent" role="tab" aria-controls="home-document-panel" :aria-selected="documentTab === 'recent'" :tabindex="documentTab === 'recent' ? 0 : -1" @click="documentTab = 'recent'" @keydown="documentTabKey"><Clock3 :size="16" aria-hidden="true" />最近编辑</AButton>
@@ -137,13 +142,13 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
             <AButton type="text" class="home-document-all" @click="documentTab === 'recent' ? emit('notes') : emit('favorites')">{{ documentTab === 'recent' ? '进入笔记' : '全部收藏' }}<ArrowRight :size="14" aria-hidden="true" /></AButton>
           </header>
           <div id="home-document-panel" role="tabpanel" :aria-labelledby="'home-tab-' + documentTab" tabindex="0">
-            <p v-if="loading" class="home-list-message" role="status">正在读取文档…</p>
+            <ContentLoading v-if="loading && !items.length" label="正在读取文档…" />
             <div v-else-if="error" class="home-list-message" role="alert"><p>{{ error }}</p><AButton @click="emit('refresh')">重新加载笔记</AButton></div>
-            <ul v-else-if="documentList.length" class="home-note-list">
+            <ul v-else-if="documentList.length" v-content-motion="documentTab" class="home-note-list">
               <li v-for="note in documentList" :key="note.id">
                 <AButton :data-home-note="documentTab === 'recent' ? note.id : undefined" :data-home-favorite="documentTab === 'favorites' ? note.id : undefined" :title="note.path" @click="emit('open', note)">
                   <FileText :size="16" aria-hidden="true" />
-                  <span class="home-note-info"><strong>{{ name(note) }}</strong></span>
+                  <span class="home-note-info"><strong>{{ name(note) }}</strong><small>{{ note.path.includes('/') ? note.path.slice(0, note.path.lastIndexOf('/')) : '根目录' }}</small></span>
                   <time :datetime="note.updatedAt">{{ updated(note) }}</time>
                   <ChevronRight :size="14" aria-hidden="true" />
                 </AButton>
@@ -157,3 +162,70 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
     </div>
   </section>
 </template>
+
+<style scoped>
+.home-content { padding: 28px 32px 36px; background: #f7f8fa; }
+.home-heading { align-items: center; margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--color-border); }
+.home-kicker { display: block; color: var(--color-text-muted); font-size: 12px; letter-spacing: 2px; }
+.home-heading-copy h1 { margin: 8px 0 6px; font-size: 32px; font-weight: 650; letter-spacing: -1px; line-height: 1.2; }
+.home-heading-dot { color: var(--color-primary); }
+.home-heading-copy p { font-size: 13px; }
+.home-date-signature { display: flex; align-items: center; gap: 16px; }
+.home-date-number { font-family: Georgia, 'Times New Roman', serif; font-size: 72px; line-height: 1; letter-spacing: -4px; color: var(--color-text); }
+.home-date-signature > div { display: grid; gap: 4px; }
+.home-date-month { font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: 2px; }
+.home-date-signature time { font-size: 12px; color: var(--color-text-muted); }
+.home-date-zone { font-size: 11px; color: var(--color-text-muted); }
+.home-columns { grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; }
+.home-calendar { grid-column: 2; grid-row: 1; }
+.home-side { grid-column: 1; grid-row: 1; gap: 20px; }
+.home-card { border-radius: 12px; padding: 22px; box-shadow: 0 2px 8px #18263b03; }
+.home-calendar .home-card-heading h2 { font-size: 15px; gap: 7px; }
+.home-calendar .home-card-heading h2 > svg { color: var(--color-text-muted); }
+.home-holiday-summary { background: #f5f7f6; border: 1px solid #e9edea; padding: 12px 14px; border-radius: 8px; }
+.home-holiday-summary strong { font-size: 14px; line-height: 1.7; }
+.home-holiday-summary p { margin-top: 4px; }
+.home-month-controls { margin-top: 16px; }
+.home-month-controls h3 { font-size: 13px; }
+.home-selected-date { border: 0; border-top: 1px solid var(--color-border); border-radius: 0; padding: 14px 0 0; font-size: 12px; gap: 4px 8px; }
+.home-section-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; font-size: 14px; font-weight: 600; }
+.home-section-label > span:last-child { color: var(--color-text-muted); font-size: 12px; font-weight: 400; }
+.home-document-heading { margin-bottom: 4px; }
+.home-document-tabs { gap: 4px; }
+.home-document-tabs button { border-radius: 6px; font-size: 12px; }
+.home-document-all { min-height: 36px; }
+.home-note-list button { min-height: 62px; padding: 10px 8px; border-radius: 6px; background: transparent; box-shadow: none; }
+.home-note-list button > svg:first-child { width: 32px; height: 36px; padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text-muted); background: #fafbfc; }
+.home-note-info { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; flex: 1; gap: 4px; }
+.home-note-info strong { display: block; font-size: 13px; font-weight: 500; }
+.home-note-info small { font-size: 11px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-note-list time { font-size: 11px; }
+@media (min-width: 1600px) { .home-columns { grid-template-columns: minmax(0, 1fr) 400px; } }
+@media (max-width: 1120px) {
+  .home-content { padding: 24px; }
+  .home-columns { grid-template-columns: minmax(0, 1fr) 332px; gap: 16px; }
+  .home-card { padding: 18px; }
+}
+@media (max-width: 900px) {
+  .home-columns { grid-template-columns: minmax(0, 1fr); }
+  .home-calendar { grid-column: 1; grid-row: 2; }
+  .home-side { grid-column: 1; grid-row: 1; }
+  .home-calendar :deep(.ant-picker-content) { max-width: 460px; margin-inline: auto; }
+}
+@media (max-width: 480px) {
+  .home-content { padding: 20px 16px 28px; }
+  .home-heading { flex-direction: row; align-items: center; gap: 12px; padding-bottom: 20px; margin-bottom: 20px; }
+  .home-kicker { font-size: 10px; letter-spacing: 1px; }
+  .home-heading-copy h1 { font-size: 26px; }
+  .home-heading-copy p { max-width: 140px; overflow-wrap: anywhere; font-size: 12px; }
+  .home-date-signature { gap: 8px; flex-shrink: 0; }
+  .home-date-number { font-size: 46px; letter-spacing: -2px; }
+  .home-date-month { font-size: 10px; letter-spacing: 1px; }
+  .home-date-signature time { max-width: 100px; font-size: 10px; line-height: 1.6; }
+  .home-date-zone { font-size: 10px; }
+  .home-card { padding: 16px; }
+  .home-section-label > span:last-child { font-size: 11px; }
+  .home-note-list button { gap: 8px; }
+  .home-document-tabs button { padding-inline: 7px; }
+}
+</style>

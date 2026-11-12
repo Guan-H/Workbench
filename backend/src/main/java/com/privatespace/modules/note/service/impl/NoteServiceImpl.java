@@ -56,6 +56,11 @@ public class NoteServiceImpl implements NoteService {
 
     public NoteResponse metadata(String id) { return response(required(id), null); }
 
+    public List<NoteResponse> metadataBatch(List<String> ids) {
+        if (ids.isEmpty()) return List.of();
+        return mapper.metadataBatch(ids).stream().map(row -> response(row, null)).toList();
+    }
+
     public NoteResponse read(String id, boolean track) {
         var note = required(id);
         if (track && !note.deleted()) mapper.opened(note.id());

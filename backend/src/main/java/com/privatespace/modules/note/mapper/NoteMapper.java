@@ -22,6 +22,12 @@ public interface NoteMapper {
     @Select("SELECT " + FIELDS + " FROM note_file WHERE id = #{id}")
     NoteFileEntity find(String id);
 
+    @Select({"<script>",
+            "SELECT id, path, type, version, object_id AS objectId, NULL AS content, deleted, favorite, last_opened_at AS lastOpenedAt, updated_at AS updatedAt, size, sha256 FROM note_file WHERE id IN",
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "</script>"})
+    List<NoteFileEntity> metadataBatch(@org.apache.ibatis.annotations.Param("ids") List<String> ids);
+
     @Select("SELECT " + FIELDS + " FROM note_file WHERE path = #{path}")
     NoteFileEntity byPath(String path);
 

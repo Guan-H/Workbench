@@ -9,9 +9,10 @@ import { api, write } from '../../shared/api/client'
 import WordChallenge from './WordChallenge.vue'
 import TranslationPractice from './TranslationPractice.vue'
 import ReadAloudButton from './ReadAloudButton.vue'
+import SpeechSettings from './SpeechSettings.vue'
 import { stopEnglishSpeech } from './speech'
 import type { StudyDashboard, StudyItems, StudyPlan, StudySettings, StudySource } from './study-types'
-const props=defineProps<{username:string}>()
+const props=withDefaults(defineProps<{username:string;embedded?:boolean}>(),{embedded:false})
 const emit=defineEmits<{close:[];source:[source:StudySource]}>()
 const data=ref<StudyDashboard>(),settings=ref<StudySettings>(),items=ref<StudyItems>(),tab=ref('today'),query=ref(''),page=ref(1),loading=ref(false),busy=ref(false),error=ref(''),notice=ref<Notice>()
 const sentenceMode=ref<'en-zh'|'zh-en'>('en-zh'),selected=ref('')
@@ -64,9 +65,9 @@ onMounted(load)
 onBeforeUnmount(()=>{disposed=true;++serial;clearTimeout(timer);clearTimeout(noticeTimer);stopEnglishSpeech()})
 </script>
 <template>
-  <AppDialog label="英语学习" :width="960">
-    <section class="study-dialog">
-      <header class="study-heading"><div><h2>英语学习</h2><p>历史推送词库 · 四级范围由推送端提供</p></div><div><AButton type="text" :loading="loading" aria-label="刷新学习记录" @click="load"><RefreshCw :size="18" /></AButton><AButton type="text" aria-label="关闭英语学习" @click="emit('close')"><X :size="20" /></AButton></div></header>
+  <component :is="embedded?'div':AppDialog" label="英语学习" :width="embedded?undefined:960">
+    <section class="study-dialog" :class="{'study-embedded':embedded}" aria-label="英语学习">
+      <header class="study-heading"><div><h2>英语学习</h2><p>历史推送词库 · 四级范围由推送端提供</p><SpeechSettings /></div><div><AButton type="text" :loading="loading" aria-label="刷新学习记录" @click="load"><RefreshCw :size="18" /></AButton><AButton v-if="!embedded" type="text" aria-label="关闭英语学习" @click="emit('close')"><X :size="20" /></AButton><AButton v-else @click="emit('close')">返回每日文章</AButton></div></header>
       <div class="study-scroll">
         <AppMessage :notice="notice" @close="notice=undefined" />
         <AAlert v-if="error" type="error" show-icon :message="error" />
@@ -90,7 +91,7 @@ onBeforeUnmount(()=>{disposed=true;++serial;clearTimeout(timer);clearTimeout(not
             <ARadioGroup v-if="tab==='wrong'" v-model:value="wrongKind" aria-label="错题类型"><ARadioButton value="word">错词</ARadioButton><ARadioButton value="sentence">错句（自评）</ARadioButton></ARadioGroup>
             <label class="study-search">搜索单词或释义<AInput v-model:value="query" :maxlength="200" allow-clear aria-label="搜索学习词库" /></label>
             <p v-if="!items?.items.length&&!loading">{{ tab==='wrong'?'还没有累计错词。':'还没有符合条件的历史词汇。' }}</p>
-            <ul v-else class="study-word-list"><li v-for="item in items?.items" :key="item.id"><div><strong lang="en">{{ item.name }}</strong><ReadAloudButton :text="item.name" :label="`朗读词库单词 ${item.name}`" compact /></div><p>{{ item.word?.phonetic }} {{ item.meaning }}</p><p v-if="item.word?.example" lang="en">{{ item.word.example }}</p><div class="study-progress"><span v-for="entry in item.progress" :key="entry.mode">{{ ratingName(entry.mode) }}：累计错 {{ entry.mistakes }} 次 · 复习 {{ entry.nextDate || '尚未安排' }}</span><span v-if="!item.progress.length">未学习</span></div><div class="study-sources"><AButton v-for="source in item.sources" :key="`${source.batchId}:${source.articleIndex}`" type="link" size="small" @click="emit('source',source)">来源 {{ source.date }} · #{{ source.batchId }}</AButton></div></li></ul>
+            <ul v-else class="study-word-list"><li v-for="item in items?.items" :key="item.id"><div><strong lang="en">{{ item.name }}</strong><ReadAloudButton :kind="item.kind==='word'?'word':'sentence'" :text="item.name" :label="`朗读词库单词 ${item.name}`" compact /></div><p>{{ item.word?.phonetic }} {{ item.meaning }}</p><p v-if="item.word?.example" lang="en">{{ item.word.example }}</p><div class="study-progress"><span v-for="entry in item.progress" :key="entry.mode">{{ ratingName(entry.mode) }}：累计错 {{ entry.mistakes }} 次 · 复习 {{ entry.nextDate || '尚未安排' }}</span><span v-if="!item.progress.length">未学习</span></div><div class="study-sources"><AButton v-for="source in item.sources" :key="`${source.batchId}:${source.articleIndex}`" type="link" size="small" @click="emit('source',source)">来源 {{ source.date }} · #{{ source.batchId }}</AButton></div></li></ul>
             <AppPagination v-if="items" v-model:page="page" :pages="Math.max(1,Math.ceil(items.total/10))" :total="items.total" :page-size="10" :disabled="loading" @update:page="loadItems" />
           </template>
           <template v-else>
@@ -99,10 +100,11 @@ onBeforeUnmount(()=>{disposed=true;++serial;clearTimeout(timer);clearTimeout(not
           </template>
         </template>
       </div>
-      <footer class="study-footer"><span>学习记录以服务器确认结果为准</span><AButton @click="emit('close')">关闭</AButton></footer>
+      <footer v-if="!embedded" class="study-footer"><span>学习记录以服务器确认结果为准</span><AButton @click="emit('close')">关闭</AButton></footer>
     </section>
-  </AppDialog>
+  </component>
 </template>
 <style scoped>
+.study-dialog.study-embedded{max-height:none}.study-embedded .study-scroll{overflow:visible}.study-embedded .study-heading{padding-inline:0}.study-embedded .study-scroll{padding-inline:0}
 .study-dialog{display:flex;flex-direction:column;max-height:calc(100dvh - 80px)}.study-heading{display:flex;justify-content:space-between;align-items:start;padding:22px 24px 16px;border-bottom:1px solid var(--color-border);gap:12px}.study-heading h2{font-size:21px;margin:0 0 6px}.study-heading p,.study-footer span{font-size:12px;color:var(--color-text-muted);margin:0}.study-heading>div:last-child{display:flex}.study-scroll{padding:20px 24px;overflow:auto;min-height:0}.study-summary,.study-tabs,.study-settings,.study-search{margin-bottom:16px}.study-tabs{display:flex;flex-wrap:wrap;gap:6px}.study-settings summary{cursor:pointer}.study-setting-fields{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:14px}.study-setting-fields label{display:grid;gap:6px}.study-setting-fields .ant-input-number{width:100px}.study-empty{padding:20px 0}.study-task-list,.study-word-list{list-style:none;padding:0}.study-task-list li{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--color-border);padding:10px 0}.study-task-list li>span:first-child{flex:1;min-width:120px;overflow-wrap:anywhere}.study-search{display:grid;gap:8px}.study-word-list li{padding:14px 0;border-bottom:1px solid var(--color-border)}.study-word-list li>div:first-child{display:flex;gap:12px;align-items:center}.study-word-list strong{font-size:18px}.study-word-list p{white-space:pre-wrap;overflow-wrap:anywhere}.study-progress{display:grid;gap:6px;color:var(--color-text-muted);font-size:12px}.study-sources,.study-sentence-list{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.study-footer{border-top:1px solid var(--color-border);padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px}.study-footer button,.study-heading button{min-height:40px}.study-scroll>p{line-height:1.8}@media(max-width:600px){.study-dialog{max-height:calc(100dvh - 32px)}.study-heading,.study-scroll{padding:16px}.study-footer{padding:12px 16px}.study-tabs label{min-height:40px}.study-footer span{max-width:65%}.study-setting-fields{align-items:start}.study-task-list{max-height:260px;overflow:auto}}
 </style>

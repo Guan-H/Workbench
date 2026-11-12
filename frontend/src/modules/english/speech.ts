@@ -7,10 +7,16 @@ interface SpeechJob {
   voice: SpeechSynthesisVoice
   chunks: string[]
   index: number
+  iteration: number
+  total: number
+  gapSeconds: number
   utterance?: SpeechSynthesisUtterance
+  finish: (result: SpeechResult) => void
 }
 
-const active = shallowRef<{ owner: symbol; phase: 'starting' | 'speaking' }>()
+export type SpeechResult = 'finished' | 'cancelled' | 'failed'
+
+const active = shallowRef<{ owner: symbol; phase: 'starting' | 'speaking' | 'waiting'; iteration: number; total: number }>()
 const notice = shallowRef<Notice>()
 export const englishSpeech = readonly(active)
 export const englishSpeechNotice = readonly(notice)
@@ -40,14 +46,22 @@ function notify(text: string) {
 
 export function stopEnglishSpeech(owner?: symbol) {
   if (!job || (owner !== undefined && job.owner !== owner)) return
+  finishSpeech(job, 'cancelled')
+}
+
+function finishSpeech(current: SpeechJob, result: SpeechResult) {
+  if (job !== current) return
   // Clear ownership before cancel: late native events must not stop a newer playback.
   job = undefined
   active.value = undefined
   clearTimeout(watchdog)
   clearTimeout(dispatchTimer)
-  cancelledAt = performance.now()
-  synthesis()?.cancel()
+  if (result !== 'finished') {
+    cancelledAt = performance.now()
+    synthesis()?.cancel()
+  }
   releaseSpeechOutput()
+  current.finish(result)
 }
 
 /** Small chunks avoid native engines rejecting an entire long article. No text is truncated. */
@@ -71,8 +85,12 @@ export function speechChunks(text: string) {
 
 function fail(current: SpeechJob, text: string) {
   if (job !== current) return
-  stopEnglishSpeech()
+  finishSpeech(current, 'failed')
   notify(text)
+}
+
+function show(current: SpeechJob, phase: 'starting' | 'speaking' | 'waiting') {
+  active.value = { owner: current.owner, phase, iteration: current.iteration, total: current.total }
 }
 
 function speakChunk(current: SpeechJob) {
@@ -80,9 +98,18 @@ function speakChunk(current: SpeechJob) {
   if (!engine || job !== current) return
   if (text === undefined) {
     clearTimeout(watchdog)
-    job = undefined
-    active.value = undefined
-    releaseSpeechOutput()
+    if (current.iteration < current.total) {
+      show(current, 'waiting')
+      // Repeat only after all chunks ended. Keep the warmed output alive through the follow-along gap.
+      dispatchTimer = setTimeout(() => {
+        if (job !== current) return
+        current.iteration++
+        current.index = 0
+        speakChunk(current)
+      }, current.gapSeconds * 1000)
+      return
+    }
+    finishSpeech(current, 'finished')
     return
   }
   const utterance = new SpeechSynthesisUtterance(text)
@@ -90,11 +117,11 @@ function speakChunk(current: SpeechJob) {
   utterance.voice = current.voice
   utterance.lang = current.voice.lang
   utterance.rate = 0.9
-  active.value = { owner: current.owner, phase: 'starting' }
+  show(current, 'starting')
   utterance.onstart = () => {
     if (job !== current || current.utterance !== utterance) return
     clearTimeout(watchdog)
-    active.value = { owner: current.owner, phase: 'speaking' }
+    show(current, 'speaking')
     watchdog = setTimeout(() => fail(current, '朗读未能正常结束，请检查设备语音服务后重试。'), Math.max(20000, text.length * 300))
   }
   utterance.onend = () => {
@@ -115,29 +142,39 @@ function speakChunk(current: SpeechJob) {
 }
 
 /** Start preparation in the click; only the latest owner may enqueue native speech afterwards. */
-export function toggleEnglishSpeech(owner: symbol, text: string) {
+export function toggleEnglishSpeech(owner: symbol, text: string, options: { repeats: number; gapSeconds: number } = { repeats: 1, gapSeconds: 2 }) {
   if (job?.owner === owner) { stopEnglishSpeech(owner); return }
+  void playEnglishSpeech(owner, text, options)
+}
+
+/** Restart on every call; resolve only after the real engine ends, fails or is cancelled. */
+export function playEnglishSpeech(owner: symbol, text: string, options: { repeats: number; gapSeconds: number } = { repeats: 1, gapSeconds: 2 }): Promise<SpeechResult> {
   stopEnglishSpeech()
   clearEnglishSpeechNotice()
   const engine = synthesis()
-  if (!engine) { notify('当前浏览器不支持语音朗读，请使用支持语音朗读的浏览器。'); return }
+  if (!engine) { notify('当前浏览器不支持语音朗读，请使用支持语音朗读的浏览器。'); return Promise.resolve('failed') }
   const voices = engine.getVoices()
   const voice = voices.find(item => item.lang.replace('_', '-').toLowerCase() === 'en-us')
     ?? voices.find(item => /^en(?:[-_]|$)/i.test(item.lang))
   if (!voice) {
     notify(voices.length ? '当前设备没有可用英文语音，请在系统中安装或启用英语语音后重试。' : '语音列表尚未就绪，请稍后重试；若持续不可用，请检查系统语音设置。')
-    return
+    return Promise.resolve('failed')
   }
   const chunks = speechChunks(text)
-  if (!chunks.length) { notify('没有可朗读的英文内容。'); return }
-  const next = { owner, voice, chunks, index: 0 }
-  job = next
-  active.value = { owner, phase: 'starting' }
-  void prepareSpeechOutput().then(() => {
-    if (job !== next) return
-    // Native cancel is asynchronous on some engines; do not enqueue a replacement in the same turn.
-    dispatchTimer = setTimeout(() => speakChunk(next), Math.max(0, 100 - (performance.now() - cancelledAt)))
+  if (!chunks.length) { notify('没有可朗读的英文内容。'); return Promise.resolve('failed') }
+  const total = [1, 2, 3, 5].includes(options.repeats) ? options.repeats : 1
+  const gapSeconds = [1, 2, 3, 5].includes(options.gapSeconds) ? options.gapSeconds : 2
+  return new Promise(resolve => {
+    const next: SpeechJob = { owner, voice, chunks, index: 0, iteration: 1, total, gapSeconds, finish: resolve }
+    job = next
+    show(next, 'starting')
+    void prepareSpeechOutput().then(() => {
+      if (job !== next) return
+      // Native cancel is asynchronous on some engines; do not enqueue a replacement in the same turn.
+      dispatchTimer = setTimeout(() => speakChunk(next), Math.max(0, 100 - (performance.now() - cancelledAt)))
+    })
   })
 }
 
 window.addEventListener('pagehide', () => stopEnglishSpeech())
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopEnglishSpeech() })

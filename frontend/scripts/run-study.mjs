@@ -21,9 +21,9 @@ try{
     catch(error){return{status:error.status,code:error.code}}
   },{path,method,body,operation})
   const study='/home/english/study',games='/home/english/word-games'
-  const openStudy=async()=>{await page.getByRole('button',{name:'今日学习与词库',exact:true}).click();await page.getByRole('dialog',{name:'英语学习',exact:true}).locator('.study-summary').waitFor()}
-  const learning=()=>page.getByRole('dialog',{name:'英语学习',exact:true})
-  const closeStudy=()=>learning().getByRole('button',{name:'关闭英语学习',exact:true}).click()
+  const openStudy=async()=>{await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByRole('button',{name:'今日学习与词库',exact:true}).click();await learning().locator('.study-summary').waitFor()}
+  const learning=()=>page.getByRole('region',{name:'英语学习',exact:true})
+  const closeStudy=()=>learning().getByRole('button',{name:'返回每日文章',exact:true}).click()
   const chooseRadio=(root,name)=>root.locator('.ant-radio-button-wrapper').filter({hasText:new RegExp('^'+name+'$')}).click()
   const studyTab=name=>chooseRadio(learning(),name)
   const push=async(payload,token)=>{
@@ -65,7 +65,7 @@ try{
     const received=await push(payload,credential.token);assert.equal(received.status,200)
     assert.equal((await push(legacy,credential.token)).value.duplicate,true)
     assert.equal((await push({...payload,requestId:'bad-pair',articles:[{...payload.articles[0],text:'Unrelated full text.'}]},credential.token)).value.code,'SENTENCE_TEXT_MISMATCH')
-    await page.reload();await page.getByText('Paired article',{exact:true}).waitFor()
+    await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByText('Paired article',{exact:true}).waitFor()
     await chooseRadio(page,'双语对照')
     assert.equal(await page.getByLabel('逐句英中对照').locator('li').count(),2)
     assert.equal(await page.getByRole('button',{name:'朗读第 1 句',exact:true}).count(),1)

@@ -149,5 +149,13 @@ public class EnglishServiceImpl implements EnglishService {
             return new Daily(day,view(latest),history,mapper.total(day),page);
         });
     }
+    public Summary summary() {
+        String day = date(null);
+        var latest = mapper.latest(day);
+        if (latest == null) return new Summary(day, 0, 0, null);
+        var content = storedContent(latest.payload());
+        return new Summary(day, content.articles().size(), content.words().size(),
+                content.articles().isEmpty() ? null : content.articles().get(0).title());
+    }
     public Logs logs(int page){return new Logs(mapper.logs(offset(page)).stream().map(row->new Log(Long.toString(row.id()),row.requestId(),row.status(),row.code(),row.receivedAt().atOffset(ZoneOffset.UTC).toString())).toList(),mapper.logTotal(),page);}
 }

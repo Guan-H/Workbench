@@ -20,6 +20,7 @@ public final class EnglishDtos {
     public record Batch(String id, String receivedAt, Submission content) {}
     public record History(String id, String requestId, String date, String receivedAt) {}
     public record Daily(String date, Batch latest, List<History> history, long total, int page) {}
+    public record Summary(String date, int articles, int words, String latestTitle) {}
     public record Log(String id, String requestId, String status, String code, String receivedAt) {}
     public record Logs(List<Log> items, long total, int page) {}
 }

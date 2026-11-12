@@ -7,15 +7,16 @@ Workbench 是可自托管的单用户私人工作台，将笔记、文件、阅�
 - **笔记与文件**：Markdown 编辑、分栏预览、大纲、搜索、收藏、历史版本和回收站；支持目录管理、右键菜单、拖拽、批量导入与选择范围导出。
 - **文档工作区**：TXT 在线编辑、PDF 只读预览；接入 ONLYOFFICE 后可编辑 Word/Excel，旧 DOC/XLS 转换为新格式另存。
 - **书籍阅读**：独立书籍目录，支持 TXT、EPUB 和 Markdown；提供目录、阅读位置保存、排版、沉浸和全屏模式。加入书架的笔记共用源文件内容。
+- **思维导图**：独立管理纯文本导图，支持节点编辑、拖拽层级、折叠、缩放、撤销重做、自动保存、版本冲突保护、回收站及 JSON 导入导出。
 - **Windows 同步**：通过配对连接服务器，支持全库或指定目录同步、文件改名跟随、增量同步及手动冲突处理。
 - **密码保险库**：浏览器端加密的账号与安全笔记，支持独立主密码、锁定、草稿箱、恢复密钥、加密备份、历史与回收站。普通笔记和附件由服务器明文存储，不应当作保险库使用；保险库的使用边界见 [安全说明](docs/security/M3-REVIEW.md)，仅用于测试秘密。
-- **工作台与学习**：日期、月历、节假日、最近编辑与收藏；通过 Webhook 接收文章、句子和单词，支持逐句双语、原生朗读、历史词库、每日计划、间隔复习、配对/拼写及双向翻译自评。
+- **工作台与学习**：主页显示日期、月历、节假日、文档速览和学习摘要；独立学习页集中展示 Webhook 文章、句子与单词，支持逐句双语、原生朗读、历史词库、每日计划、间隔复习、配对/拼写及双向翻译自评。
 
 文章内容由外部推送方提供，不自动抓取。原生朗读需要设备提供英文语音。功能操作说明见 [开发与使用说明](docs/DEVELOPMENT.md)；开发进度、验收及发布记录单独保存在 [进度文档](docs/PROGRESS.md) 和 [部署记录](docs/DEPLOYMENT.md)。
 
 ## 技术组成
 
-- 前端：Vue 3、TypeScript、Ant Design Vue 4、CodeMirror、Markdown-it、PDF.js。
+- 前端：Vue 3、TypeScript、Ant Design Vue 4、CodeMirror、Markdown-it、PDF.js、Mind Elixir。
 - 后端：Java 17、Spring Boot、MyBatis、Flyway，包名为 `com.privatespace`。
 - 数据库：MySQL 8.4；普通文件对象保存于独立持久化目录或 Docker 卷。
 - 同步助手：Python、Tkinter，面向 Windows。
@@ -128,3 +129,4 @@ MySQL、后端与 Web 分别运行在独立容器中，数据库和文件数据�
 - [详细运行、操作与验证说明](docs/DEVELOPMENT.md)。
 - [部署指南](docs/DEPLOYMENT-AGENT.md) 与 [实际部署记录](docs/DEPLOYMENT.md)。
 - [每日文章 Webhook](docs/WEBHOOK-ENGLISH.md) 与 [人工验收清单](docs/acceptance/)。
+- [独立思维导图与保存格式](docs/MINDMAP.md)。

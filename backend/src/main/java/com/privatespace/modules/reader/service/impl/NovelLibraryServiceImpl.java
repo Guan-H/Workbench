@@ -26,10 +26,13 @@ public class NovelLibraryServiceImpl implements NovelLibraryService {
     }
     @Transactional(readOnly=true)
     public NovelLibraryResponse list() {
-        var books=mapper.books().stream().map(book -> {
-            NoteResponse file=null;
-            try { var candidate=notes.metadata(book.fileId()); if (supported(candidate)) file=candidate; }
-            catch (ApiException exception) { if (exception.status()!=404) throw exception; }
+        var references = mapper.books();
+        // Resolve only referenced metadata in one query, never the whole notebook or source bytes.
+        var sources = new HashMap<String, NoteResponse>();
+        notes.metadataBatch(references.stream().map(book -> book.fileId()).toList())
+                .stream().filter(NovelLibraryServiceImpl::supported).forEach(file -> sources.put(file.id(), file));
+        var books=references.stream().map(book -> {
+            NoteResponse file=sources.get(book.fileId());
             return new NovelLibraryResponse.Book(book.fileId(),book.folderId(),book.sourcePath(),file);
         }).toList();
         return new NovelLibraryResponse(Long.toString(mapper.revision()),mapper.folders().stream().map(item->new NovelLibraryResponse.Folder(item.id(),item.parentId(),item.name())).toList(),books);

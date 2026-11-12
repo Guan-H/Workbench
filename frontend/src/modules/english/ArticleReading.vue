@@ -12,7 +12,7 @@ onBeforeUnmount(() => stopEnglishSpeech())
 </script>
 <template>
   <article class="english-article">
-    <div class="english-article-heading"><h3>{{ article.title }}</h3><ReadAloudButton :text="article.text" label="朗读文章或句子" /></div>
+    <div class="english-article-heading"><h3>{{ article.title }}</h3><ReadAloudButton :text="article.text" label="朗读文章或句子" kind="article" /></div>
     <ARadioGroup v-model:value="mode" size="small" aria-label="文章阅读模式" class="article-mode"><ARadioButton value="original">原文</ARadioButton><ARadioButton value="translation">译文</ARadioButton><ARadioButton value="bilingual">双语对照</ARadioButton></ARadioGroup>
     <p v-if="mode === 'original'" lang="en">{{ article.text }}</p>
     <p v-else-if="mode === 'translation'">{{ article.translation || '这篇文章尚未提供译文。' }}</p>

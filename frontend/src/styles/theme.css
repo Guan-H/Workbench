@@ -213,7 +213,9 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .import-area > button { width: 100%; font-size: 12px; background: transparent; border: 0; justify-content: flex-start; }
 .import-area small { display: block; font-size: 11px; overflow-wrap: anywhere; color: var(--color-text-muted); }
 .import-area small button { border: 0; font-size: 11px; }
-.note-main { min-width: 0; flex: 1; display: flex; flex-direction: column; background: white; }
+.note-main { position: relative; min-width: 0; flex: 1; display: flex; flex-direction: column; background: white; }
+.note-pending { position: absolute; top: 52px; right: 12px; max-width: calc(100% - 24px); z-index: 4; pointer-events: none; }
+.note-pending .content-loading { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; }
 .workspace-topbar { min-height: 64px; padding: 0 24px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .breadcrumb { display: flex; gap: 9px; align-items: center; min-width: 0; font-size: 12px; color: var(--color-text-muted); }
 .breadcrumb strong { font-weight: 500; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

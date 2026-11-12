@@ -11,6 +11,8 @@ public interface NoteService {
     Map<String, Object> list(boolean deleted, String cursor, String query, boolean includeGroups);
     NoteResponse read(String id, boolean track);
     NoteResponse metadata(String id);
+    /** Metadata only; absent IDs are omitted and source bodies are never loaded. */
+    java.util.List<NoteResponse> metadataBatch(java.util.List<String> ids);
     NoteResponse create(WriteNoteRequest request, String operation);
     NoteResponse save(String id, WriteNoteRequest request, String operation);
     NoteResponse delete(String id, String baseVersion, String operation);
