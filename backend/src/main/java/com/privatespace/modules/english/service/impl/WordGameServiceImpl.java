@@ -20,6 +20,8 @@ import com.privatespace.modules.english.entity.WordGameState.LastOperation;
 import com.privatespace.modules.english.mapper.WordGameMapper;
 import com.privatespace.modules.english.service.EnglishService;
 import com.privatespace.modules.english.service.WordGameService;
+import com.privatespace.modules.english.service.StudyService;
+import com.privatespace.modules.english.service.StudyProgressService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -29,11 +31,14 @@ public class WordGameServiceImpl implements WordGameService {
     private final WordGameMapper mapper;
     private final EnglishService english;
     private final ObjectMapper json;
+    private final StudyService study;
+    private final StudyProgressService progress;
 
-    public WordGameServiceImpl(WordGameMapper mapper, EnglishService english, ObjectMapper json) {
+    public WordGameServiceImpl(WordGameMapper mapper, EnglishService english, ObjectMapper json, StudyService study, StudyProgressService progress) {
         this.mapper = mapper;
         this.english = english;
         this.json = json;
+        this.study = study; this.progress = progress;
     }
 
     @Override
@@ -44,7 +49,24 @@ public class WordGameServiceImpl implements WordGameService {
         int eligibleCount;
         String mode = request.mode() == null ? "matching" : request.mode();
         long batchId = Long.parseLong(request.batchId());
-        if (request.reviewOf() == null) {
+        Long planId = request.studyPlanId()==null?null:Long.parseLong(request.studyPlanId());
+        String requestHash=com.privatespace.modules.english.util.StudyIdentity.hash("word-round\n"+json.writeValueAsString(request));
+        if(planId!=null) {
+            String receipt=study.roundReceipt(operation,requestHash);
+            if(receipt!=null) return read(receipt);
+        }
+        if (request.reviewOf() == null && planId != null) {
+            var round=study.round(planId,mode);
+            String receipt=study.roundReceipt(operation,requestHash);
+            if(receipt!=null) return read(receipt);
+            if(round.batchId()!=batchId) throw new ApiException(409,"STUDY_CHANGED","计划来源已变化，请刷新学习计划。");
+            if(round.activeGame()!=null) {
+                study.roundReceipt(operation,requestHash,round.activeGame());
+                return read(round.activeGame());
+            }
+            source=round.items().stream().map(item->json.readValue(item.payload(),Word.class)).toList();
+            sourceCount=source.size();source=unique(source);eligibleCount=source.size();
+        } else if (request.reviewOf() == null) {
             source = english.batchContent(batchId).words();
             sourceCount = source.size();
             source = unique(source);
@@ -52,6 +74,7 @@ public class WordGameServiceImpl implements WordGameService {
         } else {
             WordGameEntity previous = require(mapper.find(request.reviewOf()));
             WordGameState state = state(previous);
+            if(!Objects.equals(planId,study.gamePlan(previous.id()))) throw new ApiException(409,"WORD_REVIEW_MODE_CHANGED","错词重练须保留原计划范围。");
             if (previous.batchId() != batchId || state.finishedSeconds() == null) {
                 throw new ApiException(409, "WORD_REVIEW_NOT_READY", "请先完成这一轮，再练错词。");
             }
@@ -70,11 +93,16 @@ public class WordGameServiceImpl implements WordGameService {
         var initial = new WordGameState(selected, order(selected.size()), order(selected.size()), List.of(),
                 List.of(), 0, 0, 0, sourceCount, eligibleCount, Instant.now(), null, null, mode);
         // The operation UUID is the round ID, so a lost create response can be retried without another round.
-        mapper.create(new WordGameEntity(operation, batchId, request.reviewOf(), 0, json.writeValueAsString(initial)));
+        int inserted=mapper.create(new WordGameEntity(operation, batchId, request.reviewOf(), 0, json.writeValueAsString(initial)));
         WordGameEntity saved = require(mapper.lock(operation));
         if (saved.batchId() != batchId || !Objects.equals(saved.reviewOf(), request.reviewOf()) || !mode(state(saved)).equals(mode)) {
             throw new ApiException(409, "WORD_GAME_OPERATION_CHANGED", "同一操作不能用于不同批次或练习。");
         }
+        if(planId!=null) {
+            if(inserted>0) study.attach(operation,planId,selected,mode);
+            if(!Objects.equals(study.gamePlan(operation),planId)) throw new ApiException(409,"STUDY_CHANGED","该操作已用于其他范围。");
+            study.roundReceipt(operation,requestHash,operation);
+        } else if(study.gamePlan(operation)!=null) throw new ApiException(409,"STUDY_CHANGED","该操作属于学习计划。");
         return view(saved);
     }
 
@@ -145,6 +173,9 @@ public class WordGameServiceImpl implements WordGameService {
                 old.sourceCount(), old.eligibleCount(), old.startedAt(), finished,
                 new LastOperation(operation, request, new Feedback(word, meaning, correct)), mode(old));
         mapper.save(id, json.writeValueAsString(next));
+        String practiceMode=mode(old);
+        progress.wordAnswer(id,word,practiceMode,correct,old.pairs().get(word),row.batchId());
+        if(!correct&&meaning!=word) progress.wordAnswer(id,meaning,practiceMode,false,old.pairs().get(meaning),row.batchId());
         return view(require(mapper.find(id)));
     }
 

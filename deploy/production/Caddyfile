@@ -15,6 +15,13 @@
 		}
 	}
 
+	# Missing release files must return 404, never the SPA HTML fallback.
+	handle /downloads/* {
+		root * /srv
+		header Cache-Control "no-store"
+		file_server
+	}
+
 	handle {
 		root * /srv
 		try_files {path} /index.html

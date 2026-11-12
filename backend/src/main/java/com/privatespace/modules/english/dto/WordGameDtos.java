@@ -14,7 +14,10 @@ public final class WordGameDtos {
 
     public record Create(@NotNull @Pattern(regexp = "[1-9][0-9]{0,17}") String batchId,
             @Pattern(regexp = UUID_PATTERN) String reviewOf,
-            @Pattern(regexp = "matching|spelling") String mode) {}
+            @Pattern(regexp = "matching|spelling") String mode,
+            @Pattern(regexp = "[1-9][0-9]{0,17}") String studyPlanId) {
+        public Create(String batchId,String reviewOf,String mode) { this(batchId,reviewOf,mode,null); }
+    }
 
     public record Answer(@NotNull @Pattern(regexp = "0|[1-9][0-9]{0,17}") String baseRevision,
             @NotNull @PositiveOrZero Integer wordId, @PositiveOrZero Integer meaningId,

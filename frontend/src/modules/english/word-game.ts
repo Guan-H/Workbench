@@ -42,7 +42,7 @@ export function resolveWordGame(value: WordGameResponse, expectedMode: WordGameM
 }
 
 export type WordGameOperation =
-  | { kind: 'create'; id: string; body: { batchId: string; mode: WordGameMode; reviewOf?: string } }
+  | { kind: 'create'; id: string; body: { batchId: string; mode: WordGameMode; reviewOf?: string; studyPlanId?: string } }
   | { kind: 'answer'; id: string; gameId: string; body: { baseRevision: string; wordId: number; meaningId: number } }
   | { kind: 'spelling'; id: string; gameId: string; body: { baseRevision: string; wordId: number; spelling: string } }
 
@@ -70,7 +70,7 @@ export function projectWordAnswer(game: WordGame, operation: WordAnswerOperation
   if (!correct) for (const id of new Set([wordId, meaningId])) {
     const word = game.words.find(item => item.id === id)
     const meaning = game.meanings.find(item => item.id === id)
-    if (word && meaning && !mistakes.some(item => item.word === word.label)) mistakes.push(vocabulary.find(item => item.word === word.label)
+    if (word && meaning && !mistakes.some(item => item.word === word.label && item.meaning === meaning.label)) mistakes.push(vocabulary.find(item => item.word === word.label && item.meaning === meaning.label)
       ?? { word: word.label, meaning: meaning.label, phonetic: null, example: null })
   }
   const streak = correct ? game.streak + 1 : 0
@@ -80,7 +80,8 @@ export function projectWordAnswer(game: WordGame, operation: WordAnswerOperation
   if (game.mode === 'matching') return { ...common, mode: 'matching', completed, spellingPrompt: null }
   if (completed) return { ...common, mode: 'spelling', completed: true, spellingPrompt: null }
   const next = game.words.find(item => !matched.includes(item.id))!
-  const source = vocabulary.find(item => item.word === next.label)
+  const nextMeaning = game.meanings.find(item => item.id === next.id)!.label
+  const source = vocabulary.find(item => item.word === next.label && item.meaning === nextMeaning)
   const escaped = next.label.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return { ...common, mode: 'spelling', completed: false, spellingPrompt: { wordId: next.id,
     meaning: game.meanings.find(item => item.id === next.id)!.label,

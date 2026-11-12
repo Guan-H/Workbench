@@ -10,6 +10,7 @@ import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import AppMessage from '../../shared/AppMessage.vue'
 import SyncScopePicker, { type SyncScope } from './SyncScopePicker.vue'
 import SyncConflictPanel from './SyncConflictPanel.vue'
+import SyncAssistantDownload from './SyncAssistantDownload.vue'
 
 interface SyncDevice { id: string; name: string; revoked: boolean; createdAt: string; lastSeenAt: string | null; scope: SyncScope; scopeVersion: string }
 const devices = ref<SyncDevice[]>([])
@@ -132,6 +133,7 @@ onBeforeUnmount(() => { alive = false; clearInterval(timer); clearTimeout(messag
   <section class="sync-content" aria-labelledby="sync-title">
     <header class="sync-page-heading"><div><h1 id="sync-title">同步中心</h1><p>配对 Windows 助手，管理普通笔记的设备授权。</p></div><AButton :disabled="loading || busy" :aria-busy="loading" @click="refresh(true)"><RefreshCw :size="16" :class="{ 'message-loading': loading }" aria-hidden="true" />{{ loading ? '正在刷新…' : '刷新设备' }}</AButton></header>
     <p class="sync-scope">请使用与服务器配套的助手版本。冲突记录来自助手实际成功上报；旧版或尚未上报的设备不能据此判断没有冲突。</p>
+    <SyncAssistantDownload />
     <p v-if="problem" class="error-message" role="alert">{{ problem }}</p>
     <p v-if="listError" class="error-message" role="alert">{{ listError }}</p>
     <AppMessage :notice="feedback ? { kind: 'info', text: feedback } : undefined" @close="feedback = ''" />

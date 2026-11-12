@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, Input as AInput, Progress as AProgress, RadioGroup as ARadioGroup, RadioButton as ARadioButton } from 'ant-design-vue'
 import { Check, Puzzle, RotateCcw, Trophy, X } from 'lucide-vue-next'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, useId } from 'vue'
 import AppDialog from '../../shared/AppDialog.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import { practiceTime, wordGameOperationId, type WordGameMode } from './word-game'
@@ -10,9 +10,11 @@ import type { Word } from './types'
 import ReadAloudButton from './ReadAloudButton.vue'
 import { stopEnglishSpeech } from './speech'
 
-const props = defineProps<{ username: string; batchId: string; wordCount: number; vocabulary: Word[] }>()
+const props = defineProps<{ username: string; batchId: string; wordCount: number; vocabulary: Word[]; studyPlanId?: string; matchingGame?: string | null; spellingGame?: string | null }>()
+const emit=defineEmits<{ stored: [] }>()
+const titleId=useId()
 const opened = ref(false), mode = ref<WordGameMode>('matching'), ticking = ref(0), confirmation = ref(false)
-const sessions = { matching: wordPractice(props.username, props.batchId, 'matching', props.vocabulary), spelling: wordPractice(props.username, props.batchId, 'spelling', props.vocabulary) }
+const sessions = { matching: wordPractice(props.username, props.batchId, 'matching', props.vocabulary,props.studyPlanId), spelling: wordPractice(props.username, props.batchId, 'spelling', props.vocabulary,props.studyPlanId) }
 const practice = computed(() => sessions[mode.value])
 const game = computed(() => practice.value.game.value)
 const busy = computed(() => practice.value.creating.value)
@@ -72,14 +74,19 @@ function incorrect(side: 'word' | 'meaning', id: number) {
   const last = game.value?.feedback
   return !!last && !last.correct && word.value === undefined && meaning.value === undefined && (side === 'word' ? last.wordId : last.meaningId) === id
 }
-onMounted(() => { timer = setInterval(() => { ticking.value++ }, 1000) })
+watch([syncing,()=>game.value?.revision],()=>{if(!syncing.value&&!pending.value&&game.value)emit('stored')})
+onMounted(() => {
+  timer = setInterval(() => { ticking.value++ }, 1000)
+  if(props.matchingGame)void sessions.matching.resume(props.matchingGame)
+  if(props.spellingGame)void sessions.spelling.resume(props.spellingGame)
+})
 onBeforeUnmount(() => { clearInterval(timer) })
 </script>
 
 <template>
-  <aside class="word-challenge" aria-labelledby="word-challenge-title">
+  <aside class="word-challenge" :aria-labelledby="titleId">
     <span class="word-challenge-icon"><Puzzle :size="21" aria-hidden="true" /></span>
-    <div><h3 id="word-challenge-title">单词挑战</h3><p>{{ mode === 'spelling' ? '看释义，练英文拼写。' : '把英文和释义配成一对。' }}</p><small>本批次 {{ wordCount }} 个词 · 每轮最多 6 {{ mode === 'spelling' ? '题' : '对' }}</small></div>
+    <div><h3 :id="titleId">单词挑战</h3><p>{{ mode === 'spelling' ? '看释义，练英文拼写。' : '把英文和释义配成一对。' }}</p><small>{{ studyPlanId ? '本计划' : '本批次' }} {{ wordCount }} 个词 · 每轮最多 6 {{ mode === 'spelling' ? '题' : '对' }}</small></div>
     <ARadioGroup v-model:value="mode" size="small" aria-label="单词挑战模式" :disabled="blocked"><ARadioButton value="matching">配对</ARadioButton><ARadioButton value="spelling">拼写</ARadioButton></ARadioGroup>
     <AButton type="primary" :disabled="wordCount === 0 || busy" @click="open">{{ game && !game.completed ? '继续挑战' : '开始挑战' }}</AButton>
   </aside>

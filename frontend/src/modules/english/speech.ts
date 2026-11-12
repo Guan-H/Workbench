@@ -1,5 +1,6 @@
 import { readonly, shallowRef } from 'vue'
 import type { Notice } from '../../shared/AppMessage.vue'
+import { prepareSpeechOutput, releaseSpeechOutput } from './speech-output'
 
 interface SpeechJob {
   owner: symbol
@@ -16,6 +17,8 @@ export const englishSpeechNotice = readonly(notice)
 let job: SpeechJob | undefined
 let watchdog: ReturnType<typeof setTimeout> | undefined
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
+let dispatchTimer: ReturnType<typeof setTimeout> | undefined
+let cancelledAt = -Infinity
 
 function synthesis() {
   return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
@@ -41,7 +44,10 @@ export function stopEnglishSpeech(owner?: symbol) {
   job = undefined
   active.value = undefined
   clearTimeout(watchdog)
+  clearTimeout(dispatchTimer)
+  cancelledAt = performance.now()
   synthesis()?.cancel()
+  releaseSpeechOutput()
 }
 
 /** Small chunks avoid native engines rejecting an entire long article. No text is truncated. */
@@ -76,6 +82,7 @@ function speakChunk(current: SpeechJob) {
     clearTimeout(watchdog)
     job = undefined
     active.value = undefined
+    releaseSpeechOutput()
     return
   }
   const utterance = new SpeechSynthesisUtterance(text)
@@ -85,18 +92,20 @@ function speakChunk(current: SpeechJob) {
   utterance.rate = 0.9
   active.value = { owner: current.owner, phase: 'starting' }
   utterance.onstart = () => {
-    if (job !== current) return
+    if (job !== current || current.utterance !== utterance) return
     clearTimeout(watchdog)
     active.value = { owner: current.owner, phase: 'speaking' }
     watchdog = setTimeout(() => fail(current, '朗读未能正常结束，请检查设备语音服务后重试。'), Math.max(20000, text.length * 300))
   }
   utterance.onend = () => {
-    if (job !== current) return
+    if (job !== current || current.utterance !== utterance) return
     clearTimeout(watchdog)
+    current.utterance = undefined
     current.index++
-    speakChunk(current)
+    dispatchTimer = setTimeout(() => speakChunk(current), 0)
   }
   utterance.onerror = event => {
+    if (job !== current || current.utterance !== utterance) return
     if (event.error === 'not-allowed') fail(current, '浏览器未允许播放，请直接点击朗读按钮重试，并检查声音权限。')
     else fail(current, '英文朗读失败，请检查设备语音服务与网络后重试。')
   }
@@ -105,7 +114,7 @@ function speakChunk(current: SpeechJob) {
   catch { fail(current, '当前浏览器无法启动英文朗读，请检查设备语音设置。') }
 }
 
-/** Invoked directly by a user click; native speech is not queued behind earlier selections. */
+/** Start preparation in the click; only the latest owner may enqueue native speech afterwards. */
 export function toggleEnglishSpeech(owner: symbol, text: string) {
   if (job?.owner === owner) { stopEnglishSpeech(owner); return }
   stopEnglishSpeech()
@@ -123,5 +132,12 @@ export function toggleEnglishSpeech(owner: symbol, text: string) {
   if (!chunks.length) { notify('没有可朗读的英文内容。'); return }
   const next = { owner, voice, chunks, index: 0 }
   job = next
-  speakChunk(next)
+  active.value = { owner, phase: 'starting' }
+  void prepareSpeechOutput().then(() => {
+    if (job !== next) return
+    // Native cancel is asynchronous on some engines; do not enqueue a replacement in the same turn.
+    dispatchTimer = setTimeout(() => speakChunk(next), Math.max(0, 100 - (performance.now() - cancelledAt)))
+  })
 }
+
+window.addEventListener('pagehide', () => stopEnglishSpeech())

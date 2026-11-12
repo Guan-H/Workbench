@@ -23,8 +23,8 @@ export class WordPractice {
   private readonly generation = sessionGeneration()
   private readonly storageKey: string
 
-  constructor(owner: string, readonly batchId: string, readonly mode: WordGameMode, private readonly vocabulary: Word[]) {
-    this.storageKey = `workbench-word-practice:${encodeURIComponent(owner)}:${batchId}:${mode}`
+  constructor(owner: string, readonly batchId: string, readonly mode: WordGameMode, private readonly vocabulary: Word[], private readonly planId?: string) {
+    this.storageKey = `workbench-word-practice:${encodeURIComponent(owner)}:${batchId}:${mode}${planId ? ':study:'+planId : ''}`
     try {
       const stored = JSON.parse(sessionStorage.getItem(this.storageKey) || 'null')
       if (!stored) return
@@ -51,7 +51,7 @@ export class WordPractice {
 
   async start(reviewOf?: string) {
     if (!this.active() || this.creating.value || this.queue.value.length || this.createPending.value) return
-    this.createPending.value = { kind: 'create', id: wordGameOperationId(), body: { batchId: this.batchId, mode: this.mode, ...(reviewOf ? { reviewOf } : {}) } }
+    this.createPending.value = { kind: 'create', id: wordGameOperationId(), body: { batchId: this.batchId, mode: this.mode, ...(this.planId ? {studyPlanId:this.planId} : {}), ...(reviewOf ? { reviewOf } : {}) } }
     if (this.persist()) await this.retry()
   }
 
@@ -124,16 +124,26 @@ export class WordPractice {
     this.confirmed = saved; this.game.value = saved; this.queue.value = []; this.createPending.value = undefined
     this.conflict.value = false; this.error.value = ''; this.receivedAt = performance.now(); this.persist()
   }
+  async resume(id: string) {
+    if(this.game.value || this.queue.value.length || this.createPending.value || this.creating.value) return
+    this.creating.value=true
+    try {
+      const saved=resolveWordGame(await api<WordGameResponse>(`/home/english/word-games/${id}`),this.mode)
+      if(!this.active()) return
+      this.confirmed=saved;this.game.value=saved;this.receivedAt=performance.now()
+    } catch(cause) { this.error.value=cause instanceof Error?cause.message:'读取练习失败。' }
+    finally { this.creating.value=false }
+  }
 }
 
-export function wordPractice(owner: string, batchId: string, mode: WordGameMode, vocabulary: Word[]) {
+export function wordPractice(owner: string, batchId: string, mode: WordGameMode, vocabulary: Word[], planId?: string) {
   const prefix = `${sessionGeneration()}:`
   for (const key of practices.keys()) if (!key.startsWith(prefix)) practices.delete(key)
-  const key = `${prefix}${owner}:${batchId}:${mode}`
+  const key = `${prefix}${owner}:${batchId}:${mode}:${planId ?? ''}`
   let value = practices.get(key)
   // Preserve cross-view work only while it awaits acknowledgement; normal rounds remain page-local.
   if (value && !value.queue.value.length && !value.createPending.value) value = undefined
-  if (!value) { value = new WordPractice(owner, batchId, mode, vocabulary); practices.set(key, value) }
+  if (!value) { value = new WordPractice(owner, batchId, mode, vocabulary, planId); practices.set(key, value) }
   return value
 }
 

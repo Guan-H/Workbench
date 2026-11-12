@@ -19,6 +19,7 @@ public interface EnglishMapper {
     @Select("SELECT COUNT(*) FROM english_batch WHERE learning_date=#{date}") long total(String date);
     @Select(BATCH + " WHERE id=#{id} AND learning_date=#{date}") EnglishBatch batch(long id, String date);
     @Select(BATCH + " WHERE id=#{id}") EnglishBatch batchById(long id);
+    @Select(BATCH + " WHERE id>#{cursor} ORDER BY id LIMIT 100") List<EnglishBatch> after(long cursor);
     @Insert("INSERT INTO english_webhook_log(request_id,status,code) VALUES(#{requestId},#{status},#{code})") void log(String requestId, String status, String code);
     @Select("SELECT id,request_id AS requestId,status,code,received_at AS receivedAt FROM english_webhook_log ORDER BY id DESC LIMIT 10 OFFSET #{offset}") List<EnglishLog> logs(int offset);
     @Select("SELECT COUNT(*) FROM english_webhook_log") long logTotal();

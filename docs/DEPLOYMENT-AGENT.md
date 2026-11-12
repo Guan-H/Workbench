@@ -32,11 +32,12 @@
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
-- 当前源码迁移最高为 V20；执行时重新核对 `database/migrations/`。2026-11-11 生产已实际升级至 V20，后续部署仍须在服务器实时查询，不能仅依赖该历史记录。
+- 当前源码迁移最高为 V21；执行时重新核对 `database/migrations/`。2026-11-11 生产已实际升级至 V20，V21 尚未发布，后续部署仍须在服务器实时查询，不能仅依赖该历史记录。
 
 ### 功能与部署边界
 
 - V15：保险库恢复密钥包装；V16：Office 会话与回调收据；V17：阅读进度；V18：独立书籍目录与引用；V19：每日文章 Webhook；V20：配对/拼写练习快照。
+- V21：历史学习词句、来源、间隔进度、每日计划、译文草稿/自评及幂等收据；仅新增表，不重写原推送批次。双语/计划前端必须与新版后端配套。学习专项 `scripts/test-study.ps1` 使用独立真实环境，不能向生产注入夹具。
 - V18 会收录此前实际阅读过的有效 TXT/EPUB，属于预期数据初始化，不是复制整个笔记库。
 - TXT、PDF、书籍阅读、每日文章与单词挑战不需要 ONLYOFFICE；原生朗读依赖客户端英文语音，不需要服务器语音容器。
 - **当前生产 Compose 未接通 ONLYOFFICE。** `deploy/compose.office.yml` 与 `scripts/start-office.ps1` 是本地联调配置。不能直接用于公网，也不能把主站发布成功描述为 Word/Excel 在线编辑已上线。
@@ -59,6 +60,10 @@ sha256sum workbench-release.tar.gz
 ```
 
 上传前检查归档清单，不应含 `.git`、`.env`、`secrets/`、`data/`、数据库导出或私钥。使用已确认的 SSH 入口传输，目标机器重新校验 SHA-256。不要传输开发目录整体或依赖包目录。
+
+同步中心助手下载是额外构建产物，不包含在 `git archive` 中。在与发布提交一致的 Windows 工作区执行 `./scripts/build-sync-desktop.ps1 -Variant web-download -PublishDownload`，核对生成清单的 sourceRevision/sourceDirty（正式发布应对应目标提交且 sourceDirty=false）、ZIP 大小与完整 SHA-256。只额外传输 `frontend/public/downloads/sync-assistant.json` 以及该清单引用的 ZIP；核对无越界路径或用户状态/凭证，再放入独立发布源码的同名目录。**必须在构建 web 镜像之前完成**，Dockerfile 会随 public 静态文件打包。不能在 Ubuntu 上用 Python 源码冒充 Windows EXE，或只复制主 EXE 而遗漏 _internal。
+
+发布后核对 `/downloads/sync-assistant.json`、ZIP 的 HEAD/实际下载摘要和同步中心按钮；缺失文件应为 404，不能返回 SPA HTML。下载文件是公开静态程序分发，不含登录或设备凭证；没有自动安装、签名更新协议或服务端强制升级功能。未提供安装包时页面应明确不可用，不能伪报发布完成。
 
 源码解压到新的独立发布根目录，确认归档无绝对路径或 `..` 越界条目；目录非空时先核对其已有发布身份，不能直接覆盖。保留旧源码和镜像，后续构建使用新发布目录。服务器不必有 Git，也不要在其中保存 GitHub 写入凭证。
 

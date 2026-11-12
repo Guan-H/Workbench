@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9-]*$')][string]$Variant)
+param([ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9-]*$')][string]$Variant, [switch]$PublishDownload)
 
 $ErrorActionPreference = 'Stop'
 $syncProject = Join-Path (Split-Path -Parent $PSScriptRoot) 'sync-client'
@@ -27,6 +27,10 @@ try {
     [IO.File]::WriteAllText((Join-Path $bundleDirectory '安装说明.txt'), "首次使用：双击 安装同步助手.exe，点击安装并创建快捷方式。`r`n以后双击桌面或开始菜单中的 私有空间同步助手。`r`n更新前正常退出旧版；配对、队列和同步文件保留。`r`n程序和 _internal 必须一起保留。", [Text.UTF8Encoding]::new($true))
     Write-Host "Desktop executable: $mainExecutable"
     Write-Host "Installer entry: $(Join-Path $bundleDirectory '安装同步助手.exe')"
+    if ($PublishDownload) {
+        & $buildPython (Join-Path $PSScriptRoot 'package-sync-download.py') --bundle $bundleDirectory
+        if ($LASTEXITCODE -ne 0) { throw 'Download package publishing failed.' }
+    }
 } finally {
     Pop-Location
 }

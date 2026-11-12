@@ -64,7 +64,21 @@ public class EnglishServiceImpl implements EnglishService {
         if(input==null || input.requestId()==null || !input.requestId().matches("[A-Za-z0-9._:-]{1,128}") || input.articles()==null || input.words()==null)throw invalid();
         if(input.date()!=null)date(input.date());
         if(input.articles().size()>10 || input.words().size()>400 || input.articles().size()+input.words().size()==0)throw invalid();
-        for(Article a:input.articles()){if(a==null)throw invalid();text(a.title(),200,true);text(a.text(),100000,true);text(a.translation(),100000,false);}
+        for(Article a:input.articles()){
+            if(a==null)throw invalid();text(a.title(),200,true);text(a.text(),100000,true);text(a.translation(),100000,false);
+            if (a.sentences() != null) {
+                if (a.sentences().isEmpty() || a.sentences().size() > 2000) throw invalid();
+                for (Sentence sentence : a.sentences()) {
+                    if (sentence == null) throw invalid();
+                    text(sentence.text(), 4000, true); text(sentence.translation(), 4000, true);
+                }
+                String original = a.sentences().stream().map(Sentence::text).collect(java.util.stream.Collectors.joining());
+                String translated = a.sentences().stream().map(Sentence::translation).collect(java.util.stream.Collectors.joining());
+                if (!compact(original).equals(compact(a.text())) || !compact(translated).equals(compact(a.translation()))) {
+                    throw new ApiException(400, "SENTENCE_TEXT_MISMATCH", "逐句原文及译文须按顺序覆盖全文；可忽略空白差异。");
+                }
+            }
+        }
         for(Word w:input.words()){if(w==null)throw invalid();text(w.word(),100,true);text(w.phonetic(),200,false);text(w.meaning(),2000,true);text(w.example(),4000,false);}
         return input;
     }
@@ -107,6 +121,7 @@ public class EnglishServiceImpl implements EnglishService {
         try {if(!input.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"))throw invalid();return LocalDate.parse(input).toString();}
         catch(java.time.DateTimeException e){throw invalid();}
     }
+    private String compact(String value) { return value == null ? "" : value.replaceAll("(?U)\\s+", ""); }
     private int offset(int page){if(page<1||page>1000000)throw new ApiException(400,"INVALID_PAGE","分页参数无效。");return (page-1)*10;}
     private record LegacyContent(String requestId, String date, List<Article> articles, List<Word> cet4, List<Word> cet6) {}
 
