@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { entryIcons, isEntryIconId } from './entry-icons'
 import { entryIconDataUrl } from './entry-icon-assets'
-import { moveEntryToTrash, newEntry, parseEntry, restoreEntry } from './entries'
+import { moveEntryToTrash, newEntry, parseContent, parseEntry, restoreEntry } from './entries'
 import { parseEntryAvatar, type CustomEntryAvatar } from './entry-avatar'
 
 const testPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 describe('vault platform avatars', () => {
+  it('migrates old custom avatars, deduplicates reuse, and retains the gallery when entries are purged', () => {
+    const avatar: CustomEntryAvatar = { kind: 'custom', dataUrl: testPng }
+    const entry = { ...newEntry(), name: 'first', icon: avatar }
+    const content = parseContent({ format: 'private-space-vault-content', version: 1, entries: [entry, { ...entry, id: crypto.randomUUID() }] })
+    expect(content.avatars).toEqual([avatar])
+    expect(parseContent({ ...content, entries: [] }).avatars).toEqual([avatar])
+    expect(() => parseContent({ ...content, avatars: ['youtube'] })).toThrow('INVALID_VAULT_CONTENT')
+    expect(() => parseContent({ ...content, avatars: [{ kind: 'custom', dataUrl: 'https://example.invalid' }] })).toThrow('INVALID_VAULT_CONTENT')
+  })
   it('bundles all 25 choices as real local SVGs without active or remote resources', () => {
     expect(entryIcons).toHaveLength(25)
     expect(new Set(entryIcons.map(icon => icon.id)).size).toBe(25)

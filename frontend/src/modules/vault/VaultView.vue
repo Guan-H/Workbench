@@ -11,6 +11,7 @@ import VaultEntriesView from './VaultEntriesView.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import type { SavedVault } from './types'
 import type { VaultEntry } from './entries'
+import type { CustomEntryAvatar } from './entry-avatar'
 import VaultBackupDialog from './VaultBackupDialog.vue'
 import VaultRecoveryDialog from './VaultRecoveryDialog.vue'
 import { readRecoveryRequest } from './recovery-store'
@@ -44,6 +45,7 @@ const pending = ref<{ envelope: VaultEnvelope; operation: string }>()
 const changeOpen = ref(false)
 const pendingChange = ref<{ envelope: VaultEnvelope; operation: string; baseVersion: string }>()
 const openedEntries = ref<VaultEntry[]>([])
+const openedAvatars = ref<CustomEntryAvatar[]>([])
 const expiredCount = computed(() => retentionPolicy.value?.enabled ? expiredTrash(openedEntries.value, retentionPolicy.value.trashCutoff).length : 0)
 const entriesView = ref<InstanceType<typeof VaultEntriesView>>()
 const entryState = ref({ editing: false, working: false })
@@ -61,7 +63,7 @@ function forgetPasswords() { password.value = ''; confirmation.value = '' }
 function forceLock(reason = '') {
   recoveryOpen.value = false; backupOpen.value = false; historyOpen.value = false; backupSource.value = undefined
   serial++; worker.lock(); forgetPasswords(); busy.value = false; changeOpen.value = false
-  openedEntries.value = []; entryState.value = { editing: false, working: false }
+  openedEntries.value = []; openedAvatars.value = []; entryState.value = { editing: false, working: false }
   if (saved.value) phase.value = 'locked'
   if (reason) notify(reason)
 }
@@ -71,7 +73,7 @@ async function lock(reason = '保险库已锁定。') {
   serial++
   const flushing = entriesView.value?.flushDraft() ?? Promise.resolve(true)
   recoveryOpen.value = false; backupOpen.value = false; historyOpen.value = false; backupSource.value = undefined
-  phase.value = 'locking'; openedEntries.value = []; changeOpen.value = false; forgetPasswords(); busy.value = true
+  phase.value = 'locking'; openedEntries.value = []; openedAvatars.value = []; changeOpen.value = false; forgetPasswords(); busy.value = true
   const task = (async () => {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -95,7 +97,7 @@ async function prepareLeave(): Promise<boolean> {
   forceLock(''); return true
 }
 function encryptionFailure(text: string) { forceLock(''); problem.value = text }
-function entriesStored(snapshot: SavedVault, entries: VaultEntry[]) { saved.value = snapshot; openedEntries.value = entries }
+function entriesStored(snapshot: SavedVault, entries: VaultEntry[], avatars: CustomEntryAvatar[]) { saved.value = snapshot; openedEntries.value = entries; openedAvatars.value = avatars }
 async function load() {
   if (phase.value === 'unlocked' && !await prepareLeave()) return
   const expected = ++serial
@@ -173,7 +175,7 @@ async function unlock() {
     const result = await worker.request({ kind: 'unlock', password: secret, envelope: latest.envelope, id: latest.vaultId })
     if (expected !== serial) return
     if (result.kind !== 'unlocked') throw new Error('VAULT_REJECTED')
-    openedEntries.value = result.entries; phase.value = 'unlocked'; lastActivity = Date.now(); notify('保险库已解锁。')
+    openedEntries.value = result.entries; openedAvatars.value = result.avatars; phase.value = 'unlocked'; lastActivity = Date.now(); notify('保险库已解锁。')
   } catch {
     if (expected === serial) { worker.lock(); phase.value = 'locked'; problem.value = '无法解锁：主密码不正确、密文异常或浏览器加密操作失败。原数据未改动，请核对后重试。' }
   } finally { if (expected === serial) { busy.value = false; forgetPasswords() } }
@@ -217,7 +219,7 @@ async function changeMaster(passwords: { currentPassword: string; newPassword: s
     if (expected !== serial) return
     if (result.kind !== 'rewrapped') throw new Error('VAULT_REWRAP_FAILED')
     pendingChange.value = { envelope: result.envelope, operation: crypto.randomUUID(), baseVersion: base.version }
-    worker.lock(); forgetPasswords(); changeOpen.value = false; openedEntries.value = []; phase.value = 'locked'
+    worker.lock(); forgetPasswords(); changeOpen.value = false; openedEntries.value = []; openedAvatars.value = []; phase.value = 'locked'
     await submitMasterChange(expected)
   } catch {
     if (expected === serial) {
@@ -270,7 +272,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity)
   window.removeEventListener('focus', checkIdle); window.removeEventListener('pagehide', leavingPage)
   window.removeEventListener('beforeunload', beforeUnload)
-  openedEntries.value = []; leaveConfirmation.value?.answer(false)
+  openedEntries.value = []; openedAvatars.value = []; leaveConfirmation.value?.answer(false)
 })
 defineExpose({ prepareLeave, lock })
 </script>
@@ -316,7 +318,7 @@ defineExpose({ prepareLeave, lock })
         <div class="vault-status-summary"><h2 id="unlocked-vault-title"><span class="vault-status-dot" />保险库已解锁</h2><span class="vault-status-separator" /><span>无操作 5 分钟后锁定</span><ATooltip :title="`当前服务器版本 ${saved?.version}`"><span class="vault-version">v{{ saved?.version }}</span></ATooltip></div>
         <div class="vault-lock-actions"><AButton type="text" :disabled="busy || entryState.editing || entryState.working || restorePending || recoveryPending" @click="openRecovery('setup')">设置恢复密钥</AButton><ATooltip :title="entryState.editing ? '先保存或关闭当前编辑，再修改主密码' : '修改保险库解锁主密码'"><span><AButton type="text" :disabled="busy || entryState.editing || entryState.working" @click="changeOpen = true"><KeyRound :size="15" aria-hidden="true" />修改主密码</AButton></span></ATooltip><AButton @click="lock()"><LockKeyhole :size="15" aria-hidden="true" />立即锁定</AButton></div>
       </div>
-      <VaultEntriesView v-if="saved" ref="entriesView" :worker="worker" :snapshot="saved" :entries="openedEntries" @stored="entriesStored" @notice="notify" @fatal="encryptionFailure" @reload="load" @state="entryState = $event" />
+      <VaultEntriesView v-if="saved" ref="entriesView" :worker="worker" :snapshot="saved" :entries="openedEntries" :avatars="openedAvatars" @stored="entriesStored" @notice="notify" @fatal="encryptionFailure" @reload="load" @state="entryState = $event" />
     </section>
     <VaultRecoveryDialog v-if="recoveryOpen && saved" :username="username" :mode="recoveryMode" :snapshot="saved" :worker="phase === 'unlocked' ? worker : undefined" @close="closeRecovery" @completed="recoveryCompleted" @fatal="encryptionFailure" @notice="notify" />
     <ChangeMasterPasswordDialog v-if="changeOpen && phase === 'unlocked'" :busy="busy" @close="changeOpen = false" @submit="changeMaster" />

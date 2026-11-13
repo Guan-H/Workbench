@@ -8,6 +8,7 @@ import AppMessage, { type Notice } from '../../shared/AppMessage.vue'
 import AppPagination from '../../shared/AppPagination.vue'
 import UploadProgressBar from '../../shared/UploadProgressBar.vue'
 import ContentLoading from '../../shared/ContentLoading.vue'
+import EmptyIllustration from '../../shared/EmptyIllustration.vue'
 import ContentLoadError from '../../shared/ContentLoadError.vue'
 import { vContentMotion } from '../../shared/content-motion'
 import { folderOptions, folderPath, type LibraryChange, type NovelBook, type NovelLibrary } from './library'
@@ -111,7 +112,7 @@ defineExpose({prepareLeave:async()=>{if(uploading.value||changing.value)return f
       <div class="novel-browser">
         <aside class="novel-folders" aria-label="独立书籍目录"><AButton :type="!folder?'primary':'default'" @click="folder=''">书籍根目录 /</AButton><ATree :tree-data="tree" :selected-keys="[folder]" block-node @select="(_keys,info)=>folder=String(info.node.key)" /></aside>
         <div class="novel-folder-body"><div class="novel-folder-heading"><strong>{{ folderPath(folder,library.folders)||'书籍根目录 /' }}</strong><template v-if="folder"><AButton size="small" @click="edit('update-folder')">编辑目录</AButton><AButton size="small" danger @click="edit('delete-folder')">删除目录</AButton></template></div>
-          <div class="reading-library-scroll" :aria-busy="loading"><ContentLoading v-if="!loaded&&loading" skeleton label="正在读取书籍目录…" /><div v-else-if="!loaded" class="reading-empty"><p>书籍目录尚未读取成功。</p><AButton @click="refresh">重新读取书目</AButton></div><div v-else-if="!filtered.length" class="reading-empty"><BookOpen :size="40" /><h2>当前没有书籍</h2><p>在笔记中右键“复制到书架”，或在这里上传；笔记目录不会自动加入。</p></div>
+          <div class="reading-library-scroll" :aria-busy="loading"><ContentLoading v-if="!loaded&&loading" skeleton label="正在读取书籍目录…" /><div v-else-if="!loaded" class="reading-empty"><p>书籍目录尚未读取成功。</p><AButton @click="refresh">重新读取书目</AButton></div><div v-else-if="!filtered.length" class="reading-empty"><EmptyIllustration kind="reading" /><h2>当前没有书籍</h2><p>在笔记中右键“复制到书架”，或在这里上传；笔记目录不会自动加入。</p></div>
             <ul v-else v-content-motion="folder + ':' + page + ':' + query" class="reading-books"><li v-for="book in visible" :key="book.fileId"><button type="button" :data-reading-path="book.file?.path||book.sourcePath" :aria-label="`阅读 ${book.file?.path||book.sourcePath}`" :disabled="!book.file" @click="open(book.fileId)"><span class="reading-book-icon"><BookOpen :size="23" /></span><span class="reading-book-info"><strong>{{ name(book) }}</strong><small>目录：{{ folderPath(book.folderId,library.folders)||'根目录' }}</small><small>源文件：{{ book.file?.path||book.sourcePath }}{{ !book.file?'（已删除或不可用）':'' }}</small></span></button><ADropdown :trigger="['click']"><AButton type="text" :aria-label="`书籍操作：${name(book)}`" title="书籍操作"><Ellipsis :size="19" /></AButton><template #overlay><AMenu><AMenuItem @click="edit('move-book',book)">移动分类</AMenuItem><AMenuItem danger @click="edit('remove-book',book)">从书架移除</AMenuItem></AMenu></template></ADropdown></li></ul>
           </div>
           <footer class="reading-pagination"><span>共 {{ filtered.length }} 本 · 第 {{ page }} / {{ pages }} 页 · 10 本/页</span><AppPagination v-model:page="page" :pages="pages" :total="filtered.length" :page-size="10" :disabled="loading" /></footer>

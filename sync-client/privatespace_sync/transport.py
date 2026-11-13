@@ -9,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import __version__
+
 
 class SyncError(Exception):
     def __init__(self, code: str, status: int = 0):
@@ -34,7 +36,8 @@ class Remote:
         self.opener = urllib.request.build_opener(NoRedirect())
 
     def request(self, path: str, *, body=None, operation: str | None = None, binary: bool = False, timeout: float = 15):
-        headers = {"Accept": "application/json"}
+        # Identify the app explicitly; a library-default UA can be denied by edge browser checks.
+        headers = {"Accept": "application/json", "User-Agent": f"Workbench-Sync/{__version__}"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         if self.scope_version is not None:

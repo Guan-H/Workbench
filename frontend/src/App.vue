@@ -8,6 +8,8 @@ import AuthView from './modules/auth/AuthView.vue'
 import WorkspaceView from './modules/note/WorkspaceView.vue'
 import { api, refreshCsrf, type AuthStatus } from './shared/api/client'
 import { onSessionExpired, setAuthenticatedSession } from './shared/api/session'
+import BrandMark from './shared/BrandMark.vue'
+import { loadServerTheme, themeAccent } from './modules/settings/server-appearance'
 
 const account = ref<AuthStatus>()
 const error = ref('')
@@ -16,6 +18,7 @@ const workspace = ref<InstanceType<typeof WorkspaceView>>()
 const expiring = ref(false)
 const loginNotice = ref('')
 function authenticated(status: AuthStatus) {
+  if (status.authenticated) void loadServerTheme()
   setAuthenticatedSession(status.authenticated)
   account.value = status
   loginNotice.value = ''
@@ -59,10 +62,10 @@ onBeforeUnmount(unsubscribe)
 </script>
 
 <template>
-  <AConfigProvider :locale="zhCN" :auto-insert-space-in-button="false" :theme="{ token: { colorPrimary: '#39765b', colorText: '#252a28', colorBorder: '#e1e6e1', borderRadius: 6, fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Microsoft YaHei, sans-serif' } }">
+  <AConfigProvider :locale="zhCN" :auto-insert-space-in-button="false" :theme="{ token: { colorPrimary: account?.authenticated ? themeAccent : '#526b83', colorText: '#302f2d', colorTextSecondary: '#716e68', colorBorder: '#e7e5df', colorBgLayout: '#f7f6f3', colorBgContainer: '#ffffff', borderRadius: 8, fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Microsoft YaHei, sans-serif' } }">
   <div v-if="error" class="connection-alert" role="alert">{{ error }}<AButton :disabled="loading" @click="load">重新连接</AButton></div>
   <WorkspaceView v-if="account?.authenticated" ref="workspace" :inert="expiring || undefined" :username="account.username!" @logout="logout" @session-expired="expireSession" />
   <AuthView v-else-if="account" :initialized="account.initialized" :notice="loginNotice" @authenticated="authenticated" />
-  <main v-else class="connection-page"><div class="brand-mark">私</div><h1>私有空间</h1><p role="status">{{ error ? '等待连接账户服务' : '正在连接账户服务…' }}</p></main>
+  <main v-else class="connection-page"><BrandMark /><h1>私有空间</h1><p role="status">{{ error ? '等待连接账户服务' : '正在连接账户服务…' }}</p></main>
   </AConfigProvider>
 </template>

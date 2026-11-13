@@ -39,6 +39,24 @@ try{
   await node('branch').click();const floating=()=>maps.getByRole('toolbar',{name:'当前节点快捷操作',exact:true})
   await floating().getByRole('button',{name:'收起当前分支',exact:true}).click();await saved();assert.equal((await call('/mindmaps/'+id)).document.nodeData.children[0].expanded,false)
   await node('branch').click();await floating().getByRole('button',{name:'展开当前分支',exact:true}).click();await saved();assert.equal((await call('/mindmaps/'+id)).document.nodeData.children[0].expanded,true)
+  // The center topic has no ordinary expander. Its controls fold all branches and must persist.
+  await node('root').click();await floating().getByRole('button',{name:'收起全部分支',exact:true}).click();await saved()
+  assert.ok((await call('/mindmaps/'+id)).document.nodeData.children.every(child=>child.expanded===false))
+  assert.equal(await node('leaf').count(),0)
+  await node('root').click();await floating().getByRole('button',{name:'展开全部分支',exact:true}).click();await saved();await node('leaf').waitFor()
+  await canvas.focus();await canvas.press('ArrowLeft');await saved()
+  assert.ok((await call('/mindmaps/'+id)).document.nodeData.children.every(child=>child.expanded===false))
+  await canvas.press('ArrowRight');await saved();await node('leaf').waitFor()
+  const allBranches=async label=>{
+    await canvas.click({button:'right',position:{x:20,y:20}});await menu().waitFor()
+    await menu().getByRole('menuitem',{name:label,exact:true}).click();await saved()
+  }
+  await allBranches('收起全部分支');const collapsed=(await call('/mindmaps/'+id)).document
+  assert.ok(collapsed.nodeData.children.every(child=>child.expanded===false))
+  await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'思维导图',exact:true}).click()
+  await list.locator(`[data-map-id="${id}"]`).click();await node('root').waitFor()
+  assert.deepEqual((await call('/mindmaps/'+id)).document,collapsed);assert.equal(await node('leaf').count(),0)
+  await allBranches('展开全部分支');await node('leaf').waitFor()
   await node('root').click({button:'right'});await menu().waitFor();assert.ok(await menu().getByRole('menuitem',{name:/删除节点/}).getAttribute('aria-disabled').then(value=>value==='true'));await page.keyboard.press('Escape')
   // Context menu at the bottom edge stays within the actual browser viewport.
   const c=await canvas.boundingBox();await canvas.click({button:'right',position:{x:c.width-8,y:c.height-8}});await menu().waitFor()

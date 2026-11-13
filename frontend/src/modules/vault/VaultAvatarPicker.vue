@@ -9,7 +9,7 @@ import { entryIcons } from './entry-icons'
 import type { CustomEntryAvatar, EntryAvatar } from './entry-avatar'
 import { createCustomAvatar } from './custom-avatar'
 
-const props = defineProps<{ name: string; icon?: EntryAvatar }>()
+const props = defineProps<{ name: string; icon?: EntryAvatar; avatars?: CustomEntryAvatar[] }>()
 const emit = defineEmits<{ close: []; choose: [icon: EntryAvatar | undefined] }>()
 const selected = ref(props.icon)
 const custom = ref<CustomEntryAvatar | undefined>(typeof props.icon === 'object' ? props.icon : undefined)
@@ -54,9 +54,10 @@ onBeforeUnmount(() => { disposed = true; custom.value = undefined })
           <AButton v-if="custom" class="vault-avatar-default" aria-label="使用自定义头像" :aria-pressed="typeof selected === 'object'" :disabled="processing" @click="selected = custom"><VaultEntryAvatar :name="name" :icon="custom" :size="36" /><span>自定义头像</span><Check v-if="typeof selected === 'object'" :size="16" aria-hidden="true" /></AButton>
           <input ref="fileInput" type="file" accept="image/png,image/jpeg" aria-label="自定义头像图片" hidden @change="chooseFile" />
           <AButton :loading="processing" @click="fileInput?.click()">{{ custom ? '更换图片' : '选择自定义图片' }}</AButton>
-          <p>PNG/JPEG，最大 2 MiB。在本机缩小并加密保存，计入保险库容量。</p>
+          <p>PNG/JPEG，最大 2 MiB。保存条目后加入加密头像库，删除条目后仍可复用，计入保险库容量。</p>
           <AAlert v-if="imageError" :message="imageError" type="error" show-icon role="alert" />
         </div>
+        <template v-if="avatars?.length"><h3>我的头像 · {{ avatars.length }}</h3><div class="vault-avatar-options" aria-label="已保存的自定义头像"><AButton v-for="(avatar, index) in avatars" :key="avatar.dataUrl" :aria-label="`使用已保存头像 ${index + 1}`" :aria-pressed="typeof selected === 'object' && selected.dataUrl === avatar.dataUrl" :disabled="processing" @click="selected = avatar; custom = avatar"><VaultEntryAvatar :name="name" :icon="avatar" :size="36" /><span>头像 {{ index + 1 }}</span><Check v-if="typeof selected === 'object' && selected.dataUrl === avatar.dataUrl" class="vault-avatar-check" :size="13" aria-hidden="true" /></AButton></div></template>
         <label for="vault-icon-query">搜索平台</label><AInput id="vault-icon-query" v-model:value="query" placeholder="搜索名称，如 谷歌、ChatGPT、抖音" :maxlength="100" allow-clear><template #prefix><Search :size="15" aria-hidden="true" /></template></AInput>
         <div class="vault-avatar-options" aria-label="平台头像选项"><AButton v-for="icon in visible" :key="icon.id" :aria-label="`选择 ${icon.label} 头像`" :aria-pressed="selected === icon.id" :disabled="processing" :title="icon.label" @click="selected = icon.id"><VaultEntryAvatar :name="name" :icon="icon.id" :size="36" /><span>{{ icon.label }}</span><Check v-if="selected === icon.id" class="vault-avatar-check" :size="13" aria-hidden="true" /></AButton><p v-if="!matches.length" role="status">没有匹配的平台</p></div>
         <nav class="vault-avatar-pages" aria-label="平台头像分页"><span>共 {{ matches.length }} 个平台 · 第 {{ page }}/{{ pages }} 页 · 10 个/页</span><AppPagination v-model:page="page" :pages="pages" :total="matches.length" :page-size="10" /></nav>

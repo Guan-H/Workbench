@@ -32,7 +32,7 @@
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
-- 当前源码迁移最高为 V21；执行时重新核对 `database/migrations/`。2026-11-12 生产已实际升级至 V21（发布详情见部署记录第 17 节），后续部署仍须在服务器实时查询，不能仅依赖该历史记录。
+- 当前源码迁移最高为 V24，新增独立导图、日历记录与共享背景主题存储。执行时重新核对 `database/migrations/` 和服务器实际迁移状态。
 
 ### 功能与部署边界
 

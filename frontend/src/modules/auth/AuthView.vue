@@ -4,6 +4,7 @@ import { Button as AButton, Input as AInput } from 'ant-design-vue'
 import { ref } from 'vue'
 import { ArrowRight, LockKeyhole, NotebookPen, FolderSync, ShieldCheck } from 'lucide-vue-next'
 import { api, refreshCsrf, type AuthStatus } from '../../shared/api/client'
+import BrandMark from '../../shared/BrandMark.vue'
 
 const props = defineProps<{ initialized: boolean; notice?: string }>()
 const emit = defineEmits<{ authenticated: [status: AuthStatus] }>()
@@ -35,7 +36,7 @@ async function submit() {
 <template>
   <main class="auth-page">
     <section class="auth-intro">
-      <div class="brand"><span class="brand-mark"><NotebookPen :size="22" /></span><strong>私有空间</strong></div>
+      <div class="brand"><BrandMark /><strong>私有空间</strong></div>
       <div class="intro-copy"><p class="eyebrow">A SPACE OF YOUR OWN</p><h1>把想法留下，<br />把空间留给自己。</h1><p>笔记、文件与重要信息，<br />在属于你的地方，有条不紊。</p></div>
       <div class="intro-features"><span><NotebookPen :size="18" />自由书写</span><span><FolderSync :size="18" />文件随行</span><span><ShieldCheck :size="18" />私人空间</span></div>
       <p class="intro-footnote">PRIVATE SPACE · 个人工作台</p>

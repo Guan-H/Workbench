@@ -6,6 +6,7 @@ import { api, ApiError } from '../../shared/api/client'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import VaultEntryFields from './VaultEntryFields.vue'
 import VaultEntryAvatar from './VaultEntryAvatar.vue'
+import type { CustomEntryAvatar } from './entry-avatar'
 import VaultDraftBox from './VaultDraftBox.vue'
 import { draftAction, entrySearchText, moveEntryToTrash, newEntry, parseContent, parseDraft, parseEntry, rebaseDraft, replaceEntry, restoreEntry, type VaultDraft, type VaultDraftSummary, type VaultEntry } from './entries'
 import { listVaultDrafts, putVaultDraft, removeVaultDraft, type VaultDraftRecord } from './draft-store'
@@ -13,8 +14,8 @@ import type { SavedVault, PendingVaultSave } from './types'
 import type { VaultWorker } from './worker-client'
 import type { VaultCommand, VaultReply } from './vault-worker'
 
-const props = defineProps<{ worker: VaultWorker; snapshot: SavedVault; entries: VaultEntry[] }>()
-const emit = defineEmits<{ stored: [snapshot: SavedVault, entries: VaultEntry[]]; notice: [text: string]; fatal: [text: string]; reload: []; state: [state: { editing: boolean; working: boolean }] }>()
+const props = defineProps<{ worker: VaultWorker; snapshot: SavedVault; entries: VaultEntry[]; avatars: CustomEntryAvatar[] }>()
+const emit = defineEmits<{ stored: [snapshot: SavedVault, entries: VaultEntry[], avatars: CustomEntryAvatar[]]; notice: [text: string]; fatal: [text: string]; reload: []; state: [state: { editing: boolean; working: boolean }] }>()
 const editor = ref<VaultEntry>()
 const selectedId = ref('')
 const selected = computed(() => props.entries.find(entry => entry.id === selectedId.value))
@@ -281,11 +282,11 @@ async function save() {
       try {
         parseEntry(editor.value)
         editor.value.updatedAt = new Date().toISOString()
-        const content = parseContent({ format: 'private-space-vault-content', version: 1, entries: replaceEntry(props.entries, clone(editor.value)) })
+        const content = parseContent({ format: 'private-space-vault-content', version: 1, avatars: props.avatars, entries: replaceEntry(props.entries, clone(editor.value)) })
         if (new TextEncoder().encode(JSON.stringify(content)).length > 1048576) throw new Error('TOO_LARGE')
       } catch { error.value = '请填写条目名称和自定义字段名称，并检查内容长度；当前加密快照最多 1 MiB。'; return }
       if (!await flushDraft() || disposed) return
-      const sealed = await task({ kind: 'seal', content: clone({ format: 'private-space-vault-content', version: 1, entries: replaceEntry(props.entries, clone(editor.value)) }) })
+      const sealed = await task({ kind: 'seal', content: clone({ format: 'private-space-vault-content', version: 1, avatars: props.avatars, entries: replaceEntry(props.entries, clone(editor.value)) }) })
       if (disposed) return
       if (sealed.kind !== 'sealed') throw new Error('VAULT_SEAL_FAILED')
       const candidate: PendingVaultSave = { baseVersion, operation: crypto.randomUUID(), envelope: sealed.envelope }
@@ -305,7 +306,7 @@ async function save() {
     if (disposed) return
     if (adopted.kind !== 'adopted') throw new Error('VAULT_ADOPT_FAILED')
     const completedAction = action.value
-    emit('stored', result, adopted.entries)
+    emit('stored', result, adopted.entries, adopted.avatars)
     const completed = lastRecord
     closeEditor()
     emit('notice', completedAction === 'delete' ? '条目已移入保险库回收站。' : completedAction === 'restore' ? '条目已恢复。' : '条目已加密保存到服务器。')
@@ -369,13 +370,13 @@ defineExpose({ flushDraft, hasUnsafeDraft, save })
         <template v-if="editor">
           <p role="status" class="vault-draft-caption">{{ pumping ? '正在加密暂存本机草稿…' : draftError ? '最新草稿未能暂存' : '草稿已加密暂存在此浏览器，尚未保存服务器' }}</p>
           <AAlert v-if="pending" type="warning" show-icon role="status" message="保存结果尚未确认，输入暂时冻结；重试使用同一密文与操作标识。" class="vault-inline-alert" />
-          <div v-if="conflicted" class="vault-conflict"><AAlert type="warning" show-icon role="note" message="核对服务器内容与当前草稿，再继续编辑。" /><AButton :disabled="saving" @click="emit('reload')">重新读取并保留草稿</AButton><details v-if="baseVersion !== snapshot.version"><summary>查看服务器当前条目</summary><template v-if="serverEntry"><p v-if="serverEntry.deletedAt">该条目已在保险库回收站。</p><VaultEntryFields :model-value="serverEntry" prefix="vault-server" @notice="emit('notice', $event)" /></template><p v-else>服务器当前没有此条目。</p></details><AButton v-if="baseVersion !== snapshot.version" :disabled="saving" @click="rebase">核对后以当前版本继续编辑</AButton></div>
+          <div v-if="conflicted" class="vault-conflict"><AAlert type="warning" show-icon role="note" message="核对服务器内容与当前草稿，再继续编辑。" /><AButton :disabled="saving" @click="emit('reload')">重新读取并保留草稿</AButton><details v-if="baseVersion !== snapshot.version"><summary>查看服务器当前条目</summary><template v-if="serverEntry"><p v-if="serverEntry.deletedAt">该条目已在保险库回收站。</p><VaultEntryFields :avatars="avatars" :model-value="serverEntry" prefix="vault-server" @notice="emit('notice', $event)" /></template><p v-else>服务器当前没有此条目。</p></details><AButton v-if="baseVersion !== snapshot.version" :disabled="saving" @click="rebase">核对后以当前版本继续编辑</AButton></div>
           <AForm :model="editor" layout="vertical" class="vault-editor-form" @finish="save">
-            <div class="vault-form-scroll"><p v-if="action !== 'edit'" class="vault-lifecycle-caption">待执行：{{ actionLabel }}“{{ editor.name }}”。内容已加密暂存，尚未确认完成。</p><VaultEntryFields v-model="editor" :editing="action === 'edit'" :disabled="saving || !!pending" @notice="emit('notice', $event)" /></div>
+            <div class="vault-form-scroll"><p v-if="action !== 'edit'" class="vault-lifecycle-caption">待执行：{{ actionLabel }}“{{ editor.name }}”。内容已加密暂存，尚未确认完成。</p><VaultEntryFields :avatars="avatars" v-model="editor" :editing="action === 'edit'" :disabled="saving || !!pending" @notice="emit('notice', $event)" /></div>
             <footer class="vault-edit-actions"><AButton type="text" danger :disabled="saving" @click="discard">放弃草稿</AButton><span class="vault-action-spacer" /><AButton :disabled="saving" @click="keepEditor">关闭编辑并保留草稿</AButton><AButton type="primary" html-type="submit" :loading="saving" :disabled="conflicted">{{ pending ? '重试确认保存' : actionLabel }}</AButton></footer>
           </AForm>
         </template>
-        <div v-else-if="selected" class="vault-detail-scroll"><AAlert v-if="selected.deletedAt" type="warning" show-icon :message="`已于 ${new Date(selected.deletedAt).toLocaleString('zh-CN')} 移入保险库回收站，可恢复完整内容。`" /><h2 class="sr-only">{{ selected.type === 'secure-note' ? '安全笔记详情' : '登录条目详情' }}</h2><VaultEntryFields :model-value="selected" @notice="emit('notice', $event)" /></div>
+        <div v-else-if="selected" class="vault-detail-scroll"><AAlert v-if="selected.deletedAt" type="warning" show-icon :message="`已于 ${new Date(selected.deletedAt).toLocaleString('zh-CN')} 移入保险库回收站，可恢复完整内容。`" /><h2 class="sr-only">{{ selected.type === 'secure-note' ? '安全笔记详情' : '登录条目详情' }}</h2><VaultEntryFields :avatars="avatars" :model-value="selected" @notice="emit('notice', $event)" /></div>
         <AEmpty v-else class="vault-entry-empty" description="选择条目查看详情，或新建登录账号和安全笔记">
           <template #image><div class="vault-empty-icon"><FileKey2 :size="36" :stroke-width="1.4" aria-hidden="true" /></div></template>
           <AButton type="primary" :disabled="!storageReady || saving" @click="begin()"><Plus :size="16" aria-hidden="true" />新增条目</AButton>

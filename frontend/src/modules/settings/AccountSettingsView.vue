@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button as AButton, Table as ATable, Tag as ATag } from 'ant-design-vue'
+import { Button as AButton, Table as ATable, Tag as ATag, Tabs as ATabs, TabPane as ATabPane } from 'ant-design-vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RefreshCw, ShieldOff } from 'lucide-vue-next'
 import { api, ApiError } from '../../shared/api/client'
@@ -8,6 +8,7 @@ import AppPagination from '../../shared/AppPagination.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import PasswordGenerator from '../vault/PasswordGenerator.vue'
 import EnglishWebhookSettings from '../english/EnglishWebhookSettings.vue'
+import AppearanceSettings from './AppearanceSettings.vue'
 
 interface LoginSession { id: string; current: boolean; createdAt: string; expiresAt: string }
 const emit = defineEmits<{ sessionExpired: [] }>()
@@ -72,11 +73,14 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(feedbackTimer) })
 <template>
   <section class="settings-content" aria-labelledby="settings-title">
     <header class="settings-heading">
-      <div><h1 id="settings-title">账户设置</h1><p>管理网页登录会话，同步助手的授权请在同步中心管理。</p></div>
+      <div><h1 id="settings-title">设置</h1><p>管理当前浏览器的外观偏好与账户安全。</p></div>
       <AButton :disabled="loading || revoking" :aria-busy="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'message-loading': loading }" aria-hidden="true" />{{ loading ? '正在刷新…' : '刷新会话' }}</AButton>
     </header>
     <AppMessage :notice="feedback" @close="feedback = undefined" />
     <p v-if="error" class="error-message" role="alert">{{ error }} <AButton v-if="expired" @click="emit('sessionExpired')">重新登录</AButton></p>
+    <ATabs>
+    <ATabPane key="appearance" tab="外观"><AppearanceSettings /></ATabPane>
+    <ATabPane key="account" tab="账户安全">
     <section class="home-card account-sessions" aria-labelledby="sessions-title">
       <header class="home-card-heading"><h2 id="sessions-title">网页登录会话</h2><span>共 {{ sessions.length }} 个有效会话</span></header>
       <p class="field-help">按登录时间核对其他会话。撤销后，该会话下次访问私有接口时会被拒绝；当前会话请通过左侧“退出登录”结束。时间以北京时间显示。</p>
@@ -97,8 +101,10 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(feedbackTimer) })
         <AppPagination v-model:page="page" :pages="pages" :total="sessions.length" :page-size="pageSize" :disabled="loading || revoking" />
       </nav>
     </section>
-    <EnglishWebhookSettings />
-    <PasswordGenerator />
+    </ATabPane>
+    <ATabPane key="webhook" tab="Webhook"><EnglishWebhookSettings /></ATabPane>
+    <ATabPane key="tools" tab="密码工具"><PasswordGenerator /></ATabPane>
+    </ATabs>
     <ConfirmDialog v-if="target" title="撤销登录会话" :message="`确定撤销 ${time(target.createdAt)} 建立的会话吗？该会话下次访问私有内容时需要重新登录。`" confirm-label="确认撤销" @answer="revoke" />
   </section>
 </template>

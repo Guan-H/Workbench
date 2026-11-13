@@ -1,11 +1,11 @@
-import { parseEntryAvatar, type EntryAvatar } from './entry-avatar'
+import { parseEntryAvatar, type CustomEntryAvatar, type EntryAvatar } from './entry-avatar'
 
 export interface VaultField { id: string; label: string; value: string; hidden: boolean }
 interface VaultEntryBase { id: string; name: string; tags: string[]; favorite: boolean; createdAt: string; updatedAt: string; deletedAt?: string; icon?: EntryAvatar }
 export interface VaultLogin extends VaultEntryBase { type: 'login'; urls: string[]; username: string; password: string; notes: string; fields: VaultField[] }
 export interface VaultSecureNote extends VaultEntryBase { type: 'secure-note'; body: string }
 export type VaultEntry = VaultLogin | VaultSecureNote
-export interface VaultContent { format: 'private-space-vault-content'; version: 1; entries: VaultEntry[] }
+export interface VaultContent { format: 'private-space-vault-content'; version: 1; entries: VaultEntry[]; avatars?: CustomEntryAvatar[] }
 export interface VaultDraft {
   format: 'private-space-vault-draft-content'; version: 1; baseVersion: string; entry: VaultEntry; original: VaultEntry | null
 }
@@ -65,11 +65,21 @@ export function parseEntry(input: unknown, incomplete = false): VaultEntry {
     ...(Object.hasOwn(value, 'deletedAt') ? { deletedAt: date(value.deletedAt) } : {}), ...icon(value) }
 }
 export function parseContent(input: unknown): VaultContent {
-  const value = object(input, ['format', 'version', 'entries'])
+  const value = object(input, ['format', 'version', 'entries'], ['avatars'])
   if (value.format !== 'private-space-vault-content' || value.version !== 1 || !Array.isArray(value.entries)) invalid()
   const entries = value.entries.map(entry => parseEntry(entry))
   if (new Set(entries.map(entry => entry.id)).size !== entries.length) invalid()
-  return { format: 'private-space-vault-content', version: 1, entries }
+  if (value.avatars !== undefined && !Array.isArray(value.avatars)) invalid()
+  const avatars: CustomEntryAvatar[] = []
+  const seen = new Set<string>()
+  // Import avatars from older entry-only snapshots on their next successful save.
+  for (const input of [...(value.avatars ?? []), ...entries.flatMap(entry => typeof entry.icon === 'object' ? [entry.icon] : [])]) {
+    let avatar: EntryAvatar
+    try { avatar = parseEntryAvatar(input) } catch { return invalid() }
+    if (typeof avatar !== 'object') invalid()
+    if (!seen.has(avatar.dataUrl)) { seen.add(avatar.dataUrl); avatars.push(avatar) }
+  }
+  return { format: 'private-space-vault-content', version: 1, entries, ...(avatars.length ? { avatars } : {}) }
 }
 export function parseDraft(input: unknown): VaultDraft {
   const value = object(input, ['format', 'version', 'baseVersion', 'entry', 'original'])

@@ -5,6 +5,7 @@ import { createVault, createBackup, openBackup, unlockVault, parseEnvelope, rewr
 import { summarizeDraft, type VaultContent, type VaultDraft, type VaultDraftSummary, type VaultEntry } from './entries'
 import { parseBackup, type VaultBackup, type BackupSummary } from './backup'
 import { expiredTrash, type ExpiredTrashItem } from './retention'
+import type { CustomEntryAvatar } from './entry-avatar'
 
 export type VaultCommand = { kind: 'recovery-generate'; currentPassword: string }
   | { kind: 'recovery-confirm'; token: string; secret: string }
@@ -25,7 +26,7 @@ export type VaultReply = { kind: 'recovery-generated'; token: string; secret: st
   | { kind: 'recovery-reset'; envelope: VaultEnvelope }
   | { kind: 'recovery-cleared' | 'recovery-rejected' }
   | { kind: 'created' | 'rewrapped' | 'sealed'; envelope: VaultEnvelope }
-  | { kind: 'unlocked' | 'adopted' | 'inspected'; entries: VaultEntry[] }
+  | { kind: 'unlocked' | 'adopted' | 'inspected'; entries: VaultEntry[]; avatars: CustomEntryAvatar[] }
   | { kind: 'draft'; envelope: EncryptedDraft } | { kind: 'opened-draft'; draft: VaultDraft } | { kind: 'locked' } | { kind: 'error' }
   | { kind: 'draft-summary'; summary: VaultDraftSummary }
   | { kind: 'backup-exported'; backup: VaultBackup }
@@ -145,10 +146,10 @@ self.onmessage = async (event: MessageEvent<VaultCommand>) => {
       } else {
         const next = await parseEnvelope(command.envelope)
         if (next.vaultId !== envelope.vaultId || next.keyId !== envelope.keyId) throw new Error('VAULT_IDENTITY_MISMATCH')
-        const entries = readContent(next, key).entries
+        const content = readContent(next, key)
         if (expected !== generation) return
         if (command.kind === 'adopt') envelope = next
-        self.postMessage({ kind: command.kind === 'adopt' ? 'adopted' : 'inspected', entries } satisfies VaultReply)
+        self.postMessage({ kind: command.kind === 'adopt' ? 'adopted' : 'inspected', entries: content.entries, avatars: content.avatars ?? [] } satisfies VaultReply)
       }
       return
     }
@@ -165,7 +166,11 @@ self.onmessage = async (event: MessageEvent<VaultCommand>) => {
     if (expected !== generation) { sodium.memzero(result.key); return }
     key = result.key
     envelope = activeEnvelope
-    self.postMessage('envelope' in result ? { kind: 'created', envelope: result.envelope } satisfies VaultReply : { kind: 'unlocked', entries: readContent(envelope, key).entries } satisfies VaultReply)
+    if ('envelope' in result) self.postMessage({ kind: 'created', envelope: result.envelope } satisfies VaultReply)
+    else {
+      const content = readContent(envelope, key)
+      self.postMessage({ kind: 'unlocked', entries: content.entries, avatars: content.avatars ?? [] } satisfies VaultReply)
+    }
   } catch {
     if (command.kind.startsWith('recovery-')) { recoveryStage = undefined; self.postMessage({ kind: 'recovery-rejected' } satisfies VaultReply) }
     else if (command.kind.startsWith('backup-')) { restore = undefined; self.postMessage({ kind: 'backup-rejected' } satisfies VaultReply) }

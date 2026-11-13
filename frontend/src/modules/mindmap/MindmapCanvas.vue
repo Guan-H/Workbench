@@ -25,7 +25,7 @@ const menuItems = computed<MapMenuItem[]>(() => context.value?.node ? [
   { key: 'sibling', label: '插入同级节点', shortcut: 'Enter', disabled: props.disabled || rootSelected.value },
   { key: 'parent', label: '插入父节点', shortcut: 'Ctrl+Enter', disabled: props.disabled || rootSelected.value },
   { key: 'edit', label: '编辑节点文字', shortcut: 'F2', disabled: props.disabled },
-  { key: 'fold', label: folded.value ? '展开分支' : '折叠分支', disabled: props.disabled || !hasChildren.value },
+  { key: 'fold', label: rootSelected.value ? (folded.value ? '展开全部分支' : '收起全部分支') : (folded.value ? '展开分支' : '折叠分支'), disabled: props.disabled || !hasChildren.value },
   { key: 'delete', label: '删除节点', shortcut: 'Delete', danger: true, disabled: props.disabled || rootSelected.value },
 ] : [
   { key: 'root-child', label: '添加主分支', disabled: props.disabled },
@@ -53,12 +53,17 @@ function position() {
     }
   })
 }
+function isFolded(value: NodeObj | undefined) {
+  if (!value) return false
+  if (value.id === mind?.nodeData.id) return !!value.children?.length && value.children.every(child => child.expanded === false)
+  return value.expanded === false
+}
 function selection() {
   const topics = mind?.currentNodes.filter(topic => topic.isConnected) ?? []
   single.value = topics.length === 1
   rootSelected.value = !topics.length || topics.some(topic => topic.nodeObj.id === mind?.nodeData.id)
   hasChildren.value = !!mind?.currentNode?.nodeObj.children?.length
-  folded.value = mind?.currentNode?.nodeObj.expanded === false
+  folded.value = isFolded(mind?.currentNode?.nodeObj)
   position()
 }
 function changed() {
@@ -82,6 +87,16 @@ function currentTopic(): Topic | undefined {
   if (topic?.isConnected) return topic
   const root = mind.findEle(mind.nodeData.id); mind.selectNode(root); return root
 }
+function setExpanded(topic: Topic, expanded: boolean, all = false) {
+  if (!mind) return
+  const id = topic.nodeObj.id
+  if (all || id === mind.nodeData.id) {
+    // The root has no single-branch expander. Bulk expansion rebuilds the DOM and emits no save event.
+    mind.expandNodeAll(topic, expanded)
+    mind.selectNode(mind.findEle(id))
+    changed(); selection()
+  } else mind.expandNode(topic, expanded)
+}
 async function action(value: MapAction) {
   context.value = undefined; floating.value = undefined
   if (!mind) return
@@ -100,8 +115,8 @@ async function action(value: MapAction) {
     } else if (value === 'parent' && !root) await mind.insertParent(topic)
     else if (value === 'edit') await mind.beginEdit(topic)
     else if (value === 'delete' && !rootSelected.value) await mind.removeNodes([...mind.currentNodes])
-    else if (value === 'fold' && hasChildren.value) mind.expandNode(topic, folded.value)
-    else if (value === 'expand-all' || value === 'collapse-all') mind.expandNodeAll(mind.findEle(mind.nodeData.id), value === 'expand-all')
+    else if (value === 'fold' && hasChildren.value) setExpanded(topic, folded.value)
+    else if (value === 'expand-all' || value === 'collapse-all') setExpanded(mind.findEle(mind.nodeData.id), value === 'expand-all', true)
     await nextTick(); selection()
   } catch (cause) { emit('error', cause instanceof Error ? cause.message : '节点操作失败，请重试。') }
 }
@@ -138,10 +153,10 @@ function navigate(key: string) {
   const value = topic.nodeObj
   let target: NodeObj | undefined
   if (key === 'ArrowRight') {
-    if (value.expanded === false) mind.expandNode(topic, true)
+    if (isFolded(value)) setExpanded(topic, true)
     else target = value.children?.[0]
   } else if (key === 'ArrowLeft') {
-    if (value.children?.length && value.expanded !== false) mind.expandNode(topic, false)
+    if (value.children?.length && !isFolded(value)) setExpanded(topic, false)
     else target = value.parent
   } else {
     const siblings = value.parent?.children ?? [], index = siblings.findIndex(item => item.id === value.id)
@@ -252,7 +267,7 @@ onBeforeUnmount(() => { resize?.disconnect(); cancelAnimationFrame(resizeFrame);
     <div ref="frame" class="mindmap-frame" @pointerdown="pointerDown" @pointerup="pointerUp">
       <div ref="host" class="mindmap-canvas" tabindex="0" aria-label="思维导图画布" @contextmenu.capture="showContext" @blur.capture="position" />
       <div v-if="floating&&!context" class="mindmap-floating" role="toolbar" aria-label="当前节点快捷操作" :style="{left:floating.left+'px',top:floating.top+'px'}" @pointerdown.stop>
-        <AButton type="text" aria-label="添加子节点" title="添加子节点（Tab）" @click="action('child')"><Plus :size="17" /></AButton><AButton type="text" aria-label="编辑当前节点" title="编辑当前节点（F2）" @click="action('edit')"><Pencil :size="16" /></AButton><AButton type="text" :disabled="!hasChildren" :aria-label="folded?'展开当前分支':'收起当前分支'" :title="folded?'展开分支':'收起分支'" @click="action('fold')"><ChevronsUpDown v-if="folded" :size="16" /><ChevronsDownUp v-else :size="16" /></AButton><AButton type="text" aria-label="更多节点操作" title="更多节点操作" @click="nodeMenu"><MoreHorizontal :size="18" /></AButton>
+        <AButton type="text" aria-label="添加子节点" title="添加子节点（Tab）" @click="action('child')"><Plus :size="17" /></AButton><AButton type="text" aria-label="编辑当前节点" title="编辑当前节点（F2）" @click="action('edit')"><Pencil :size="16" /></AButton><AButton type="text" :disabled="!hasChildren" :aria-label="rootSelected ? (folded ? '展开全部分支' : '收起全部分支') : (folded ? '展开当前分支' : '收起当前分支')" :title="rootSelected ? (folded ? '展开全部分支' : '收起全部分支') : (folded ? '展开分支' : '收起分支')" @click="action('fold')"><ChevronsUpDown v-if="folded" :size="16" /><ChevronsDownUp v-else :size="16" /></AButton><AButton type="text" aria-label="更多节点操作" title="更多节点操作" @click="nodeMenu"><MoreHorizontal :size="18" /></AButton>
       </div>
       <div class="mindmap-view-controls" role="toolbar" aria-label="画布视图控制" @pointerdown.stop><AButton type="text" aria-label="缩小画布" title="缩小" :disabled="zoom<=20" @click="scale(-.1)"><Minus :size="16" /></AButton><AButton type="text" class="mindmap-zoom" aria-label="恢复 100% 缩放" title="恢复 100%" @click="action('reset')">{{ zoom }}%</AButton><AButton type="text" aria-label="放大画布" title="放大" :disabled="zoom>=250" @click="scale(.1)"><Plus :size="16" /></AButton><AButton type="text" aria-label="适应画布" title="适应画布" @click="action('fit')"><Maximize :size="16" /></AButton><AButton type="text" aria-label="回到中心主题" title="回到中心主题" @click="action('center')"><Crosshair :size="17" /></AButton></div>
       <span class="mindmap-count">{{ count }} 个节点</span>

@@ -1,30 +1,34 @@
 :root {
-  color: #252a28;
-  background: #fafaf8;
+  color: #302f2d;
+  background: #f7f6f3;
   font-family:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
     sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
-  --color-background: #fafaf8;
+  --color-background: #f7f6f3;
   --color-surface: #ffffff;
-  --color-sidebar: #f2f3f0;
-  --color-primary: #39765b;
-  --color-primary-hover: #2e624a;
-  --color-selection: #e7efe9;
+  --color-sidebar: #efeee9;
+  --color-primary: #526b83;
+  --color-primary-hover: #40566d;
+  --color-selection: #e9edf2;
   --color-editor-selection: #bfdcca;
   --color-editor-active-line: #39765b0a;
-  --color-text: #252a28;
-  --color-text-muted: #66706a;
-  --color-border: #e1e6e1;
+  --color-text: #302f2d;
+  --color-text-muted: #716e68;
+  --color-border: #e7e5df;
+  --color-paper-tint: #f5f0e8;
+  --color-accent-soft: #edf1f6;
+  --color-accent-warm: #8b5f47;
+  --color-card-shadow: #302b2110;
   --color-warning: #b66a13;
   --color-danger: #b54747;
   --color-heading-highlight: #fff0b3;
   --color-heading-highlight-border: #946000;
 }
 
-/* Shared surfaces follow the confirmed light workspace palette in PRD 5.3. */
+/* The Craft-inspired workspace palette is defined in PRD 5.3; reader themes remain independent. */
 .ant-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: auto; min-height: 32px; }
 .ant-btn.icon-button { width: 32px; flex-shrink: 0; padding: 6px; }
 :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
@@ -174,7 +178,7 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .tree-scroll { overflow: auto; flex: 1; }
 .file-tree { list-style: none; padding: 0; margin: 0; }
 .tree-row, .result-row { display: flex; width: calc(100% - 12px); margin: 2px 6px; justify-content: flex-start; gap: 7px; border: 0; background: transparent; border-radius: 4px; min-height: 34px; font-size: 12px; }
-.tree-row > span:last-child, .result-row > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tree-row > span:last-child, .result-row > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tree-row svg { color: var(--color-text-muted); }
 .tree-row.selected { background: var(--color-selection); color: var(--color-primary); }
 .tree-row.selected svg { color: var(--color-primary); }
@@ -286,7 +290,6 @@ kbd { white-space: nowrap; font-size: 10px; font-family: inherit; }
 .outline-sidebar > p { color: var(--color-text-muted); font-size: 11px; line-height: 1.8; padding: 0 8px; }
 .outline-sidebar .saved-time { margin-top: 40px; border-top: 1px solid var(--color-border); padding-top: 14px; }
 .workspace-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; }
-.empty-icon { display: grid; place-items: center; color: var(--color-primary); border: 1px solid var(--color-border); border-radius: 12px; width: 74px; height: 74px; margin-bottom: 22px; }
 .workspace-empty h1 { font-size: 25px; font-weight: 550; margin: 8px 0 0; letter-spacing: -.6px; }
 .workspace-empty > p:not(.eyebrow) { font-size: 13px; line-height: 1.8; color: var(--color-text-muted); }
 .workspace-empty .primary { margin-top: 18px; padding: 11px 18px; }

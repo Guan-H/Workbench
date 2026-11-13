@@ -2,7 +2,8 @@
 import { Button as AButton, Tree as ATree } from 'ant-design-vue'
 
 import { computed, ref, watch } from 'vue'
-import { ChevronRight, ChevronDown, Folder, FileText, Paperclip } from 'lucide-vue-next'
+import { ChevronRight, ChevronDown } from 'lucide-vue-next'
+import FileTypeIcon from '../../shared/FileTypeIcon.vue'
 import type { Note } from '../../shared/api/client'
 import { fileNodes } from './file-tree'
 
@@ -54,7 +55,7 @@ watch(() => props.revealPath, () => {
       <AButton type="text" class="tree-row" :class="{ selected: selected === note.id, 'drop-target': dropTarget === note.id }" :data-file-id="note.id" :data-file-path="note.path" :title="note.type === 'folder' ? `${note.path}（双击展开或收起）` : note.path" :aria-pressed="selected === note.id" :aria-expanded="note.type === 'folder' ? expanded.has(note.id) : undefined" aria-haspopup="menu"
         @click.stop="note.type === 'folder' ? emit('folder', note.path) : emit('open', note)" @dblclick.stop="note.type === 'folder' && toggle(note.id)" @contextmenu="context($event, note)" @keydown="contextKey($event, note)"
         draggable="true" @dragstart="drag($event, note)" @dragover="dragOver($event, note)" @drop="drop($event, note)" @dragleave="dropTarget = ''" @dragend="dropTarget = ''">
-        <component :is="note.type === 'folder' ? Folder : note.type === 'note' ? FileText : Paperclip" :size="16" /><span>{{ note.path.split('/').at(-1) }}</span>
+        <FileTypeIcon :path="note.path" :type="note.type" :expanded="expanded.has(note.id)" /><span>{{ note.path.split('/').at(-1) }}</span>
       </AButton>
     </template>
   </ATree>
