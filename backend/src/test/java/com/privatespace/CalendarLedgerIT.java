@@ -34,7 +34,7 @@ class CalendarLedgerIT {
         try (var context = start()) {
             browser(context, "play");
             var jdbc = context.getBean(JdbcTemplate.class);
-            assertThat(jdbc.queryForObject("SELECT version FROM calendar_opening_balance WHERE id=1", Long.class)).isEqualTo(1L);
+            assertThat(jdbc.queryForObject("SELECT version FROM calendar_opening_balance WHERE id=1", Long.class)).isEqualTo(2L);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM calendar_record WHERE kind='time-off'",Integer.class)).isGreaterThan(0);
 
         }

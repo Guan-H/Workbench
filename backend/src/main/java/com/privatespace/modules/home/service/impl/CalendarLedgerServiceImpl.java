@@ -26,7 +26,7 @@ public class CalendarLedgerServiceImpl implements CalendarLedgerService {
     public CalendarLedgerServiceImpl(CalendarLedgerMapper ledger, CalendarRecordMapper records, ObjectMapper json) {
         this.ledger = ledger; this.records = records; this.json = json;
     }
-    private ApiException invalid() { return new ApiException(400,"INVALID_CALENDAR_BALANCE","请检查月份、起算日期及非负整分钟期初余额。"); }
+    private ApiException invalid() { return new ApiException(400,"INVALID_CALENDAR_BALANCE","请检查月份、起算日期及正负8760000小时范围内的整分钟期初余额。"); }
     private ApiException changed() { return new ApiException(409,"CALENDAR_BALANCE_CHANGED","记录或期初设置已变化，请保留输入并重新预览确认。"); }
     public Summary summary(String month) {
         YearMonth period;
@@ -44,10 +44,10 @@ public class CalendarLedgerServiceImpl implements CalendarLedgerService {
     }
     private LocalDate validate(Change request) {
         try {
-            if (request==null || request.openingMinutes()==null || request.openingMinutes()<0 || !request.baseVersion().matches("0|[1-9][0-9]{0,17}") || !request.recordsRevision().matches("0|[1-9][0-9]{0,17}")) throw invalid();
+            if (request==null || request.openingMinutes()==null || !request.baseVersion().matches("0|[1-9][0-9]{0,17}") || !request.recordsRevision().matches("0|[1-9][0-9]{0,17}")) throw invalid();
             LocalDate date=LocalDate.parse(request.startDate());
             if (!date.toString().equals(request.startDate()) || date.getYear()<1900 || date.getYear()>2100) throw invalid();
-            if (request.openingMinutes()>525600000L) throw invalid(); // Bounded input also keeps the browser's integer arithmetic exact.
+            if (request.openingMinutes() < -525600000L || request.openingMinutes()>525600000L) throw invalid(); // Bounded input also keeps the browser's integer arithmetic exact.
             return date;
         } catch (RuntimeException error) { throw invalid(); }
     }

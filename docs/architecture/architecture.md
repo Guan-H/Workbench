@@ -1,5 +1,7 @@
 # 私有空间技术架构
 
+2026-11-16 工时统计更新：弹窗内可独立选择月份，无需退出切换日历；累计和余额口径不随所选月份变化。期初余额允许负数表示此前已透支调休，前后端范围统一为正负8760000小时、整分钟，沿用预览确认、版本检查与幂等保存；无需数据库迁移。
+
 版本：v1.0
 
 确认日期：2026-10-27
@@ -1735,4 +1737,4 @@ MindmapCanvas 在原节点模型上提供分组工具栏、插入菜单、选中
 
 CalendarLedgerService读事务使用一致性快照；期初预览与确认携带baseVersion和recordsRevision，保存沿用记录锁及原操作收据。确认前记录或期初变化拒绝旧请求；原请求成功但响应丢失时优先回读同编号收据，不重复保存。设置只影响起算日及以后记录的余额口径，不改写记录；更早记录始终留在累计/历史。前端CalendarWorkStats按月/记录变化刷新，历史10个月分页，头部与分页不滚动；期初采用预览再确认，保留按账户sessionStorage的未知请求，保存后返回历史面板，不叠加两个业务弹窗。
 
-接口：GET /api/v1/home/calendar/ledger?month=YYYY-MM 返回monthly/cumulative、opening、recordsRevision与netMinutes；opening的version为数字，其余操作中的版本为字符串。GET /ledger/history?page=1 返回items（月、加班分钟、调休分钟）、total月份数和page。POST /ledger/opening-preview及PUT /ledger/opening均提交{baseVersion,recordsRevision,startDate,openingMinutes}；PUT另需UUID Idempotency-Key。同操作不同内容或旧版本409，非法值400。期初为非负整分钟，技术输入上限525600000分钟；所有API沿用网页认证/CSRF/Origin。原记录写入新增可选timeOffMinutes，Item/Preview新增timeOffMinutes，Day新增timeOffs/timeOffMinutes；旧记录新值为0。
+接口：GET /api/v1/home/calendar/ledger?month=YYYY-MM 返回monthly/cumulative、opening、recordsRevision与netMinutes；opening的version为数字，其余操作中的版本为字符串。GET /ledger/history?page=1 返回items（月、加班分钟、调休分钟）、total月份数和page。POST /ledger/opening-preview及PUT /ledger/opening均提交{baseVersion,recordsRevision,startDate,openingMinutes}；PUT另需UUID Idempotency-Key。同操作不同内容或旧版本409，非法值400。期初为有符号整分钟，技术输入范围为-525600000至525600000分钟，负值表示此前透支调休；所有API沿用网页认证/CSRF/Origin。原记录写入新增可选timeOffMinutes，Item/Preview新增timeOffMinutes，Day新增timeOffs/timeOffMinutes；旧记录新值为0。
