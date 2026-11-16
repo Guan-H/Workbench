@@ -4,7 +4,7 @@ export interface WordChoice { id: number; label: string }
 export type WordGameMode = 'matching' | 'spelling'
 interface WordGameBase {
   id: string
-  batchId: string
+  batchId: string | null
   revision: string
   sourceCount: number
   eligibleCount: number
@@ -17,6 +17,7 @@ interface WordGameBase {
   mistakes: Word[]
   elapsedSeconds: number
   feedback: { wordId: number; meaningId: number; correct: boolean } | null
+  vocabulary?: Word[]
 }
 
 export type WordGame = WordGameBase & (
@@ -42,7 +43,7 @@ export function resolveWordGame(value: WordGameResponse, expectedMode: WordGameM
 }
 
 export type WordGameOperation =
-  | { kind: 'create'; id: string; body: { batchId: string; mode: WordGameMode; reviewOf?: string; studyPlanId?: string } }
+  | { kind: 'create'; id: string; body: { batchId: string | null; mode: WordGameMode; reviewOf?: string; studyPlanId?: string } }
   | { kind: 'answer'; id: string; gameId: string; body: { baseRevision: string; wordId: number; meaningId: number } }
   | { kind: 'spelling'; id: string; gameId: string; body: { baseRevision: string; wordId: number; spelling: string } }
 

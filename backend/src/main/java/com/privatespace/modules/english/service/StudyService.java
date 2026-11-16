@@ -9,7 +9,8 @@ public interface StudyService {
     com.privatespace.modules.english.dto.StudyDtos.Plan createPlan(String operation);
     com.privatespace.modules.english.dto.StudyDtos.Plan plan(long id);
     com.privatespace.modules.english.dto.StudyDtos.Task translation(String id,com.privatespace.modules.english.dto.StudyDtos.SaveTranslation request,String operation);
-    record Round(long planId,long batchId,String activeGame,java.util.List<com.privatespace.modules.english.entity.StudyEntities.Item> items) {}
+    record Round(long planId,Long batchId,String activeGame,java.util.List<com.privatespace.modules.english.entity.StudyEntities.Item> items) {}
+    java.util.List<com.privatespace.modules.english.dto.EnglishDtos.Word> vocabulary();
     Round round(long planId,String mode);
     void attach(String gameId,long planId,java.util.List<com.privatespace.modules.english.dto.EnglishDtos.Word> words,String mode);
     Long gamePlan(String gameId);

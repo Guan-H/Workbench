@@ -22,6 +22,9 @@ public interface StudyMapper {
     @Insert("INSERT IGNORE INTO english_study_item(id,kind,name,meaning,payload) VALUES(#{id},#{kind},#{name},#{meaning},#{payload})") void insertItem(Item item);
     @Insert("INSERT IGNORE INTO english_study_source(item_id,batch_id,article_index) VALUES(#{id},#{batchId},#{articleIndex})") void source(String id,long batchId,int articleIndex);
     @Select(ITEM + " WHERE id=#{id}") Item item(String id);
+    @Select(ITEM + " WHERE kind='word' ORDER BY id") List<Item> vocabulary();
+    @Select("SELECT manually_imported FROM english_study_item WHERE id=#{id}") boolean imported(String id);
+    @Update("UPDATE english_study_item SET manually_imported=TRUE WHERE id=#{id}") void markImported(String id);
     @Select("SELECT i.id,i.kind,i.name,i.meaning,i.payload" + FILTER + " ORDER BY i.name,i.id LIMIT 10 OFFSET #{offset}")
     List<Item> items(String kind,String query,boolean wrong,int offset);
     @Select("SELECT COUNT(*)" + FILTER) long total(String kind,String query,boolean wrong);

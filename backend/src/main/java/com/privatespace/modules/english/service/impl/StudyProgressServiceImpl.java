@@ -29,7 +29,7 @@ public class StudyProgressServiceImpl implements StudyProgressService {
         mapper.saveProgress(new Progress(id,mode,stage,mistakes,today,wrong,today.plusDays(intervals[stage])));
     }
     @Transactional
-    public void wordAnswer(String gameId,int choiceId,String mode,boolean correct,com.privatespace.modules.english.dto.EnglishDtos.Word word,long batchId) {
+    public void wordAnswer(String gameId,int choiceId,String mode,boolean correct,com.privatespace.modules.english.dto.EnglishDtos.Word word,Long batchId) {
         String id=mapper.gameItem(gameId,choiceId);
         if(id==null) id=catalog.word(word,batchId);
         record(id,mode,correct);

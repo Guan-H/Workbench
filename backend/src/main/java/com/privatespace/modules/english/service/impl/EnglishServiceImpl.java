@@ -79,7 +79,14 @@ public class EnglishServiceImpl implements EnglishService {
                 }
             }
         }
-        for(Word w:input.words()){if(w==null)throw invalid();text(w.word(),100,true);text(w.phonetic(),200,false);text(w.meaning(),2000,true);text(w.example(),4000,false);}
+        for (Word word : input.words()) {
+            if (word == null) throw invalid();
+            text(word.word(), 100, true); text(word.phonetic(), 200, false);
+            text(word.meaning(), 2000, true); text(word.example(), 4000, false);
+            text(word.exampleTranslation(), 4000, false);
+            if (word.exampleTranslation() != null && !word.exampleTranslation().isBlank()
+                    && (word.example() == null || word.example().isBlank())) throw invalid();
+        }
         return input;
     }
     public Receipt receive(String token, byte[] body) {

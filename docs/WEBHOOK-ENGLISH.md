@@ -40,7 +40,8 @@
       "word": "achieve",
       "phonetic": "/əˈtʃiːv/",
       "meaning": "实现；达到",
-      "example": "You can achieve your goal."
+      "example": "You can achieve your goal.",
+      "exampleTranslation": "你可以实现自己的目标。"
     }
   ]
 }
@@ -51,6 +52,10 @@
 `date` 可省略，默认首次成功接收时的北京时间日期；显式提供时必须为有效的 `YYYY-MM-DD`。文章 `title`、`text` 必填，`translation` 可省略。单词 `word`、`meaning` 必填，`phonetic`、`example` 可省略。articles、words 两个数组均必填，可以为空，但合计至少一项。
 
 `sentences` 可省略；提供时须为非空数组，每篇最多 2000 对，每对的 text、translation 必填，各最多 4000 个 Java 字符。按顺序拼接各句后，须分别与全文 text、translation 一致（比较忽略 Unicode 空白差异）。不一致返回 `400 SENTENCE_TEXT_MISMATCH`，不接收半篇对照。全文和整个请求仍受下方原限制约束。旧全文记录保持可读，没有对照数据时明确显示未提供，不自动切句、翻译或猜测对应关系；补充对照须使用新 requestId，不能改写旧收据。
+
+`words[].exampleTranslation` 为可选的例句译文，最多 4000 个 Java 字符；非空时须提供非空 `example`。单词列表和词库默认隐藏译文，点击“查看例句译文”后展开，再次点击收起。旧推送无需补字段，缺少译文时显示“尚未提供例句译文”，不自动翻译；补充内容须推送新 requestId，不能改写旧批次。词库仍按词形与释义归并并保留首次收录例句，可从来源查看后续批次的例句与译文，不覆盖历史词条。
+
+文章阅读提供原文、译文、逐句对照、全文对照。全文对照直接使用 `text` 和完整 `translation`，不要求 `sentences`；桌面左右两栏，手机上下排版，缺译文时如实提示。
 
 **每次请求是完整快照。** 只推送 words 而让 articles 为空时，最新展示中就没有文章。它不会和当天旧批次合并。当天最新以首次成功入库顺序确定，旧批次保留。重复请求返回原批次，不改变当前最新内容；相同 requestId 换内容返回 409。省略日期的重试需继续省略，不能改为显式日期。
 
@@ -79,7 +84,46 @@
 - `POST /api/v1/home/english/webhook`：提交 `baseRevision` 和 `action`，action 为 `rotate`、`disable`、`enable`；旧 revision 返回 409，避免迟到操作覆盖新配置。只有 rotate 响应带新 token。
 - `GET /api/v1/home/english/webhook/logs?page=1`：分页读取接收记录，每页 10 条。
 
-## 单词挑战
+## 原创课程库（独立于 Webhook，2026-11-16）
+
+学习页布局：头部导航/筛选与底部分页固定，只有文章或列表体滚动；分页显示当前/总页数及数量，切页回到列表顶部。推送单词与个人词库为响应式卡片，常规桌面4列、大屏5列、手机2列；词库的学习记录与来源按需展开。接口和每页条数保持原契约。
+
+### 添加文章与同步来源（2026-11-16 后续追加）
+
+阅读页可“添加文章”或打开“内容来源”。新增内容只进入阅读库，不生成推送批次、词库或课程题目。未提供译文/句子解析时明确提示。手动文章来源链接为元数据，不触发网络读取。
+
+- `POST /api/v1/home/english/courses`：Cookie/Origin/CSRF 认证及 UUID `Idempotency-Key`。JSON `{title,text,translation?,sourceUrl?}`，标题与原文非空，标题最多200、正文和译文各100000个Java字符，来源链接最多2000字符，只允许无用户信息的HTTP(S)地址。服务端生成稳定 `manual-<操作号>` ID，同号同请求返回已保存文章，同号不同内容409；网络结果未知时网页保留完整原请求到当前账户的 sessionStorage，刷新后从添加弹窗重试。正文按纯文本展示，不执行HTML。已保存文章可朗读、收藏；不自动生成题目。
+- 列表摘要新增 `kind=original|manual|nasa`，来源文章不标成入门或四级。详情新增可空 `origin={kind,url,publishedAt,provider,licenseUrl}`。旧记录没有此字段仍可读。新文章按入库时间倒序，原入门材料的顺序保持。
+- `GET /api/v1/home/english/courses/sources`：单个已支持来源状态 `{id,name,revision,enabled,running,lastAttemptAt,lastSuccessAt,added,skipped,error,retryAfterAt}`，时间为UTC偏移时间串。来源429/503时保存Retry-After退避时间，缺少有效时间时等待15分钟；等待期不访问来源，界面显示可重试时间。
+- `PUT /api/v1/home/english/courses/sources/nasa`：JSON `{baseRevision,enabled}` 条件更新自动同步开关，旧版本409，未知结果须重新读取核对；默认 false，开启后后台每6小时检查近期内容，暂停不删除文章。
+- `POST /api/v1/home/english/courses/sources/nasa/sync`：启动后台同步并立即返回状态；并发触发合并，客户端读取状态确认结束，HTTP成功仅表示任务接收。单后台线程、2分钟可恢复运行标记；关闭弹窗不取消后台任务。失败保留已有文章，错误与部分新增数量可查询。
+
+NASA 固定[官方RSS](https://www.nasa.gov/feed/)地址在服务端维护，每批处理近期最多5项、2MiB响应、25秒请求期限，禁用跳转和任意网址参数。只读取RSS内嵌完整正文，不拿摘要冒充全文；XML禁止DTD/外部实体，正文去除HTML/脚本/样式、图片不下载。无有效文本、超限、非官方链接及带明确第三方保留版权标识的条目跳过；只允许www.nasa.gov和science.nasa.gov的出处链接，这些链接本身不被再次抓取。保存来源/发布时间及[官方使用说明](https://www.nasa.gov/nasa-brand-center/images-and-media/)，不声称已逐篇完成版权审查。按RSS GUID摘要唯一去重，保留首次正文，来源后续修改不覆盖本库记录。只查近期5篇，不是完整历史归档，不保证每批一定新增。
+
+本机REST探测HTTP200并取得2026-11-12的正文，但实际Java联调返回429，未将探测成功当作后台接通；改验证专用RSS订阅入口，实际取得10条记录，最新2026-11-16，含完整content:encoded。实际Java同步结果另记进度，不以探测或缓存样本代替。Wikinews候选最新停在2026年5月，未采用；Simple Wikipedia可访问但本轮未接入。网络证据在忽略目录 `data/reading-source-probe/`，生产服务器可达性未验证。
+
+网络配置：`PRIVATE_SPACE_READING_PROXY_URL` 可设置不含凭据的HTTP代理地址，仅影响阅读来源请求。Windows本地启动脚本在该变量未设置时读取已有系统代理，不修改系统设置；来源验证脚本同样遵循这一路径。生产Compose默认直连，可通过同名环境变量配置容器能访问的代理，容器中的127.0.0.1不是宿主机。Java直连与本机探测代理路径不同时，可出现不同结果；不得用单一路径的成功代替另一环境的真实验证。429/503需遵守退避，不自动换地址或反复请求。
+
+同日形态调整：页面入口改为“阅读 / 短句 / 我的积累”，保留内部 courses 路径和已有记录。V26 将五课改为无序号的文章标题；页面不再要求完成整课，可自由阅读和选题。`finish` 仅保留兼容早期接口，不再由网页调用，旧 completed 字段不阻止继续阅读。
+
+- 列表新增可选 `filter=all|favorite|review`，默认 all。筛选在服务端分页前执行。
+- 摘要新增 `favorite`；写请求新增 `action=favorite`，提供布尔 `favorite`，仍需 baseRevision 和幂等键；旧进度缺省 false。这个新请求字段为 null 时不参与序列化，保留旧请求摘要。
+- 新增 `GET /api/v1/home/english/courses/sentences?page=1&markedOnly=false`，返回 items/total/page，每页10句；每项含 courseId/title/sentenceIndex/text/marked。可直接定位原文的句子，也能只查看已标记的句子。阅读“换一篇”从当前页其余材料中选择，不调用推荐模型。
+
+### 内容来源实测（2026-11-16，本机只读验证）
+
+已实测 [VOA 官方 RSS 入口](https://learningenglish.voanews.com/rssfeeds) 的科技与语法两个订阅，各 HTTP200 / text/xml、20条记录；完整解析20条发布日期后，最新分别为2025-03-17和2025-03-20。每条订阅抽查一篇文章均 HTTP200，正文容器实际提取约482/803词。订阅的 description 只是短摘要，不能当全文。证据保存于忽略目录 `data/learning-source-check/result.json`、原始 XML/HTML 与提取文本。生产服务器可达性、持续更新和完整转载适用性尚未验证；没有向业务库导入样例或配置自动抓取。
+
+因此该候选目前只可考虑历史素材，不作为每日新内容保证。其[官方使用说明](https://learningenglish.voanews.com/p/6021.html)区分 VOA 独立制作内容和第三方授权材料，后续接入必须识别来源并保留出处，不能把全站材料统一视为可转载。当前材料仍为五篇原创入门短文；自动获取、动态翻译/解析以及独立 AI 模块均未实现。
+
+学习页“课程学习”提供 5 课原创基础/四级准备材料（AI 辅助编写，非真题）。内容由数据库迁移保存，读取与答题均走真实后端，推送端无需新增请求。每课包含短文、词语、3 个重点句和 3 道理解题。词义/词形/结构/译文按需展开；理解题提交后返回参考答案、解析和原文依据。标记句子与答错题保留为待复习清单，重新答对或明确标记已理解后移出。完成本课要求全部题目已提交，不要求全部答对，不宣称已掌握。此清单独立于原每日计划，不自动安排复习日期。
+
+- `GET /api/v1/home/english/courses?page=1`：课程摘要（id/title/focus/source/revision/position/completed/answered/reviewCount），每页 10 课及 total/page。
+- `GET /api/v1/home/english/courses/{id}`：summary、article、sentences（text/translation/vocabulary/forms/structure）、words、questions、marked 和 wrong。questions 的 selected/answer/explanation/evidence 在该题未提交时为 null；已提交题目返回已选值及参考内容。marked/wrong 为从 0 开始的句子/题目索引。
+- `PUT /api/v1/home/english/courses/{id}/progress`：网页 Cookie/Origin/CSRF 认证，`Idempotency-Key` 为小写 UUID。JSON 必填 baseRevision/action；position 操作提供 position（article、sentence-0/1/2、practice），answer 提供 index/choice（从 0 开始），mark 提供 index/marked，finish 无额外字段。成功返回完整课程详情与新 revision。答错加入 wrong，正确清除该错题；句子标记独立保存。课程不存在404，非法位置/索引400，旧版本或未完成所有题目却申请完成409。
+- 幂等键按课程隔离，同号同请求返回首次结果，不重复增加版本；同号换内容返回409。网页保存原待确认操作到当前标签页 sessionStorage，断线后可重试，冲突须确认重新读取。普通已保存进度跨浏览器读取；未提交选项不保证刷新保留，阅读位置为课程章节级，非滚动像素位置。
+
+## 单词挑战操作
 
 配对时点击未消除的英文卡片即朗读一遍，每次点击重新读，不因重复点词增加答题次数。拼写答对后先保留本题、显示正确英文并读一遍，正常读完再切到下一题，最后一题读完显示结果；发音固定一次，不受朗读设置的重复次数影响。答题继续沿用后台顺序保存，声音不代表成绩已同步。朗读失败或缺少英语声音时提供重听和手动继续，不假装读完，也不会卡住；关闭或切换仍停止播放。原主动发音提示可继续使用。
 
@@ -131,6 +175,16 @@ Chrome/蓝牙耳机兼容：朗读前会尝试静音预热输出，首次可能�
 - 计划词汇沿用 `/api/v1/home/english/word-games` 创建，额外传 `studyPlanId`（计划 ID）和计划的 batchId。可能返回该计划该模式已有活动轮次，响应 id 不保证等于本次操作编号；普通批次契约保持不变。
 
 前端、Java 与 V21 新表需配套发布；V21 只新增学习表，不改写原始批次/收据或保险库。生产已于 2026-11-12 更新到 V21，旧文章没有逐句配对时仍需推送方使用新编号提供数据。
+
+## 个人词库导入（2026-11-16，本地新增）
+
+入口：学习→词库与计划→个人词库→导入单词。粘贴一行一个“单词：释义”，支持中英文冒号、忽略空行。示例：`convenient：方便的；便利的`。每批最多500行、文本100000字符；英文单词/短语最多100字符，允许字母、空格、连字符和撇号；释义最多4000字符。先预览，有错误时修正后重新预览，确认才入库。
+
+- `POST /api/v1/home/english/study/words/import-preview`，请求 `{ "text":"improve：提高；改善\nput off: 推迟" }`；返回 `entries:[{line,word,meaning,status,message}]` 和 `newWords/duplicates/invalid`。status为new/duplicate/invalid；不导入本次输入，沿用历史推送索引同步。
+- `POST /api/v1/home/english/study/words/import`，相同请求，另带UUID `Idempotency-Key`；返回 `{added,skipped}`。格式错误整批400无部分导入；同词同释义跳过，原例句和进度不覆盖。相同操作与原文返回原结果，不同原文409。确认时按实际库状态重新去重，所以新增数可能少于预览。
+- `/study/items` 的Item增加 `manuallyImported` 布尔值，与原sources并存。全库挑战创建省略或传空batchId，无studyPlanId时取全部个人词库，不受搜索/分页限制；计划挑战保留studyPlanId及计划的可空batchId。Snapshot的batchId可空，新增vocabulary为本轮选中词条，供即时反馈使用。服务端仍逐次判题、幂等保存与累计模式进度，普通批次挑战契约保持。
+
+前后端须配套V28更新。手动导入不建立english_batch，不影响每日推送摘要/历史；新词参与下一份计划，既有当日任务不变。待确认操作按账户在当前标签页sessionStorage暂存，刷新后重新打开导入弹窗可重试；不承诺关闭标签页后的恢复。
 
 ## 人工核对
 

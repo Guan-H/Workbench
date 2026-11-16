@@ -147,7 +147,7 @@ public class SecurityConfiguration {
                     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                             throws ServletException, IOException {
                         if (Set.of("POST", "PUT", "PATCH", "DELETE").contains(request.getMethod())
-                                && !allowed.contains(request.getHeader("Origin"))) {
+                                && (request.getHeader("Origin") == null || !allowed.contains(request.getHeader("Origin")))) {
                             problem(response, json, 403, "FORBIDDEN", "请求来源未获允许。");
                             return;
                         }

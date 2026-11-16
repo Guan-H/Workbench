@@ -11,7 +11,14 @@ public final class EnglishDtos {
             List<Sentence> sentences) {
         public Article(String title, String text, String translation) { this(title, text, translation, null); }
     }
-    public record Word(String word, String phonetic, String meaning, String example) {}
+    /** Omit absent translations so historical webhook request digests remain unchanged. */
+    public record Word(String word, String phonetic, String meaning, String example,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+            String exampleTranslation) {
+        public Word(String word, String phonetic, String meaning, String example) {
+            this(word, phonetic, meaning, example, null);
+        }
+    }
     public record Submission(String requestId, String date, List<Article> articles, List<Word> words) {}
     public record Status(String revision, boolean configured, boolean enabled) {}
     public record Change(String baseRevision, String action) {}

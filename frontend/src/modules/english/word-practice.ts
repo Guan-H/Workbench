@@ -23,7 +23,7 @@ export class WordPractice {
   private readonly generation = sessionGeneration()
   private readonly storageKey: string
 
-  constructor(owner: string, readonly batchId: string, readonly mode: WordGameMode, private readonly vocabulary: Word[], private readonly planId?: string) {
+  constructor(owner: string, readonly batchId: string | null, readonly mode: WordGameMode, private readonly vocabulary: Word[], private readonly planId?: string) {
     this.storageKey = `workbench-word-practice:${encodeURIComponent(owner)}:${batchId}:${mode}${planId ? ':study:'+planId : ''}`
     try {
       const stored = JSON.parse(sessionStorage.getItem(this.storageKey) || 'null')
@@ -58,7 +58,7 @@ export class WordPractice {
   answer(operation: WordAnswerOperation) {
     if (!this.active() || !this.game.value || this.conflict.value || this.storageFailed.value) return
     const previous = this.game.value
-    const expected = projectWordAnswer(previous, operation, this.vocabulary, this.elapsed())
+    const expected = projectWordAnswer(previous, operation, previous.vocabulary ?? this.vocabulary, this.elapsed())
     this.queue.value = [...this.queue.value, { operation, expected }]
     // Persist the exact operation before showing its result or sending it.
     if (!this.persist()) { this.queue.value = this.queue.value.slice(0, -1); return }
@@ -136,7 +136,7 @@ export class WordPractice {
   }
 }
 
-export function wordPractice(owner: string, batchId: string, mode: WordGameMode, vocabulary: Word[], planId?: string) {
+export function wordPractice(owner: string, batchId: string | null, mode: WordGameMode, vocabulary: Word[], planId?: string) {
   const prefix = `${sessionGeneration()}:`
   for (const key of practices.keys()) if (!key.startsWith(prefix)) practices.delete(key)
   const key = `${prefix}${owner}:${batchId}:${mode}:${planId ?? ''}`

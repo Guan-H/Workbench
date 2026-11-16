@@ -11,7 +11,7 @@ import ReadAloudButton from './ReadAloudButton.vue'
 import SpeechSettings from './SpeechSettings.vue'
 import { playEnglishSpeech, stopEnglishSpeech } from './speech'
 
-const props = defineProps<{ username: string; batchId: string; wordCount: number; vocabulary: Word[]; studyPlanId?: string; matchingGame?: string | null; spellingGame?: string | null }>()
+const props = defineProps<{ username: string; batchId: string | null; wordCount: number; vocabulary: Word[]; studyPlanId?: string; matchingGame?: string | null; spellingGame?: string | null; compact?: boolean }>()
 const emit=defineEmits<{ stored: [] }>()
 const titleId=useId()
 const opened = ref(false), mode = ref<WordGameMode>('matching'), ticking = ref(0), confirmation = ref(false)
@@ -119,9 +119,9 @@ onBeforeUnmount(() => { clearInterval(timer); clearReadback(); stopEnglishSpeech
 </script>
 
 <template>
-  <aside class="word-challenge" :aria-labelledby="titleId">
+  <aside class="word-challenge" :class="{'word-challenge-compact':compact}" :aria-labelledby="titleId">
     <span class="word-challenge-icon"><Puzzle :size="21" aria-hidden="true" /></span>
-    <div><h3 :id="titleId">单词挑战</h3><p>{{ mode === 'spelling' ? '看释义，练英文拼写。' : '把英文和释义配成一对。' }}</p><small>{{ studyPlanId ? '本计划' : '本批次' }} {{ wordCount }} 个词 · 每轮最多 6 {{ mode === 'spelling' ? '题' : '对' }}</small></div>
+    <div class="word-challenge-copy"><h3 :id="titleId">单词挑战</h3><p>{{ mode === 'spelling' ? '看释义，练英文拼写。' : '把英文和释义配成一对。' }}</p><small>{{ studyPlanId ? '本计划' : batchId ? '本批次' : '全部词库' }} {{ wordCount }} 个词 · 每轮最多 6 {{ mode === 'spelling' ? '题' : '对' }}</small></div>
     <ARadioGroup v-model:value="mode" size="small" aria-label="单词挑战模式" :disabled="blocked"><ARadioButton value="matching">配对</ARadioButton><ARadioButton value="spelling">拼写</ARadioButton></ARadioGroup>
     <AButton type="primary" :disabled="wordCount === 0 || busy" @click="open">{{ game && !game.completed ? '继续挑战' : '开始挑战' }}</AButton>
   </aside>
@@ -159,16 +159,17 @@ onBeforeUnmount(() => { clearInterval(timer); clearReadback(); stopEnglishSpeech
             <div class="word-game-result-actions"><AButton v-if="game.mistakes.length" type="primary" :disabled="blocked || pending" @click="start(game.id)"><RotateCcw :size="15" />再练错词（{{ game.mistakes.length }}）</AButton><AButton :disabled="blocked || pending" @click="start()">再来一轮</AButton></div>
           </div>
         </template>
-        <p v-else-if="busy" class="word-game-loading" role="status">正在从当前批次准备单词…</p>
+        <p v-else-if="busy" class="word-game-loading" role="status">正在准备本轮单词…</p>
         <div v-else-if="!error" class="word-game-loading" role="status"><p>练习尚未就绪，请重新开始。</p><AButton @click="start()">重新开始</AButton></div>
       </div>
-      <footer class="word-game-footer"><span role="status">{{ pending ? `待同步 ${practice.queue.value.length} 次答题${syncing ? " · 正在保存" : " · 尚未保存服务器"}` : game ? "本轮答题已同步" : "单词来自当前选中的推送批次" }}</span><AButton :disabled="busy" @click="opened = false">{{ game?.completed ? '完成' : '暂时关闭' }}</AButton></footer>
+      <footer class="word-game-footer"><span role="status">{{ pending ? `待同步 ${practice.queue.value.length} 次答题${syncing ? " · 正在保存" : " · 尚未保存服务器"}` : game ? "本轮答题已同步" : studyPlanId ? "单词来自当前学习计划" : batchId ? "单词来自当前选中的推送批次" : "单词来自个人词库" }}</span><AButton :disabled="busy" @click="opened = false">{{ game?.completed ? '完成' : '暂时关闭' }}</AButton></footer>
     </section>
   </AppDialog>
   <ConfirmDialog v-if="confirmation" message="采用服务器当前进度，并放弃本机尚未确认的答题？已在服务器保存的答题不会撤销。" confirm-label="采用服务器进度" @answer="adoptServer" />
 </template>
 
 <style scoped>
+.word-challenge.word-challenge-compact{flex-direction:row;align-items:center;flex-wrap:wrap;padding:10px 12px;gap:10px}.word-challenge-compact .word-challenge-icon,.word-challenge-compact h3,.word-challenge-compact p{display:none}.word-challenge.word-challenge-compact>.word-challenge-copy{flex:1;min-width:180px}.word-challenge.word-challenge-compact :deep(.ant-radio-group){flex:none;min-width:0}.word-challenge-compact small{font-size:12px;white-space:nowrap}@media(max-width:600px){.word-challenge-compact>.word-challenge-copy{display:none}.word-challenge.word-challenge-compact{padding:6px;gap:6px}}
 .word-spelling-readback{padding:16px;margin-top:16px;background:var(--color-selection);border-radius:6px}.word-spelling-readback>strong{font-size:22px;overflow-wrap:anywhere}.word-spelling-readback p{font-size:13px;line-height:1.7}.word-spelling-readback>div{display:flex;flex-wrap:wrap;gap:8px}
 .word-challenge { display: flex; flex-direction: column; align-items: start; gap: 12px; padding: 16px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-selection); }
 .word-challenge-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: var(--color-primary); background: var(--color-surface); }

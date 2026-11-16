@@ -48,10 +48,10 @@ public class WordGameServiceImpl implements WordGameService {
         int sourceCount;
         int eligibleCount;
         String mode = request.mode() == null ? "matching" : request.mode();
-        long batchId = Long.parseLong(request.batchId());
+        Long batchId = request.batchId() == null ? null : Long.parseLong(request.batchId());
         Long planId = request.studyPlanId()==null?null:Long.parseLong(request.studyPlanId());
         String requestHash=com.privatespace.modules.english.util.StudyIdentity.hash("word-round\n"+json.writeValueAsString(request));
-        if(planId!=null) {
+        if(planId!=null || batchId==null) {
             String receipt=study.roundReceipt(operation,requestHash);
             if(receipt!=null) return read(receipt);
         }
@@ -59,7 +59,7 @@ public class WordGameServiceImpl implements WordGameService {
             var round=study.round(planId,mode);
             String receipt=study.roundReceipt(operation,requestHash);
             if(receipt!=null) return read(receipt);
-            if(round.batchId()!=batchId) throw new ApiException(409,"STUDY_CHANGED","计划来源已变化，请刷新学习计划。");
+            if(!Objects.equals(round.batchId(),batchId)) throw new ApiException(409,"STUDY_CHANGED","计划来源已变化，请刷新学习计划。");
             if(round.activeGame()!=null) {
                 study.roundReceipt(operation,requestHash,round.activeGame());
                 return read(round.activeGame());
@@ -67,7 +67,7 @@ public class WordGameServiceImpl implements WordGameService {
             source=round.items().stream().map(item->json.readValue(item.payload(),Word.class)).toList();
             sourceCount=source.size();source=unique(source);eligibleCount=source.size();
         } else if (request.reviewOf() == null) {
-            source = english.batchContent(batchId).words();
+            source = batchId == null ? study.vocabulary() : english.batchContent(batchId).words();
             sourceCount = source.size();
             source = unique(source);
             eligibleCount = source.size();
@@ -75,7 +75,7 @@ public class WordGameServiceImpl implements WordGameService {
             WordGameEntity previous = require(mapper.find(request.reviewOf()));
             WordGameState state = state(previous);
             if(!Objects.equals(planId,study.gamePlan(previous.id()))) throw new ApiException(409,"WORD_REVIEW_MODE_CHANGED","错词重练须保留原计划范围。");
-            if (previous.batchId() != batchId || state.finishedSeconds() == null) {
+            if (!Objects.equals(previous.batchId(),batchId) || state.finishedSeconds() == null) {
                 throw new ApiException(409, "WORD_REVIEW_NOT_READY", "请先完成这一轮，再练错词。");
             }
             if (request.mode() == null) mode = mode(state);
@@ -86,7 +86,7 @@ public class WordGameServiceImpl implements WordGameService {
             sourceCount = source.size();
             eligibleCount = source.size();
         }
-        if (source.isEmpty()) throw new ApiException(409, "NO_PRACTICE_WORDS", "当前批次没有可练习的单词。");
+        if (source.isEmpty()) throw new ApiException(409, "NO_PRACTICE_WORDS", "当前范围没有可练习的单词。");
         var pairs = new ArrayList<>(source);
         Collections.shuffle(pairs);
         List<Word> selected = List.copyOf(pairs.subList(0, Math.min(6, pairs.size())));
@@ -95,7 +95,7 @@ public class WordGameServiceImpl implements WordGameService {
         // The operation UUID is the round ID, so a lost create response can be retried without another round.
         int inserted=mapper.create(new WordGameEntity(operation, batchId, request.reviewOf(), 0, json.writeValueAsString(initial)));
         WordGameEntity saved = require(mapper.lock(operation));
-        if (saved.batchId() != batchId || !Objects.equals(saved.reviewOf(), request.reviewOf()) || !mode(state(saved)).equals(mode)) {
+        if (!Objects.equals(saved.batchId(),batchId) || !Objects.equals(saved.reviewOf(), request.reviewOf()) || !mode(state(saved)).equals(mode)) {
             throw new ApiException(409, "WORD_GAME_OPERATION_CHANGED", "同一操作不能用于不同批次或练习。");
         }
         if(planId!=null) {
@@ -103,6 +103,7 @@ public class WordGameServiceImpl implements WordGameService {
             if(!Objects.equals(study.gamePlan(operation),planId)) throw new ApiException(409,"STUDY_CHANGED","该操作已用于其他范围。");
             study.roundReceipt(operation,requestHash,operation);
         } else if(study.gamePlan(operation)!=null) throw new ApiException(409,"STUDY_CHANGED","该操作属于学习计划。");
+        if (planId == null && batchId == null) study.roundReceipt(operation,requestHash,operation);
         return view(saved);
     }
 
@@ -208,13 +209,13 @@ public class WordGameServiceImpl implements WordGameService {
 
     private Snapshot view(WordGameEntity row) {
         WordGameState state = state(row);
-        return new Snapshot(row.id(), Long.toString(row.batchId()), Long.toString(row.revision()),
+        return new Snapshot(row.id(), row.batchId() == null ? null : row.batchId().toString(), Long.toString(row.revision()),
                 state.sourceCount(), state.eligibleCount(),
                 state.wordOrder().stream().map(i -> new Choice(i, state.pairs().get(i).word())).toList(),
                 state.meaningOrder().stream().map(i -> new Choice(i, state.pairs().get(i).meaning())).toList(),
                 state.matched(), state.attempts(), state.streak(), state.bestStreak(),
                 state.mistakes().stream().map(state.pairs()::get).toList(), state.finishedSeconds() != null,
                 elapsed(state), state.lastOperation() == null ? null : state.lastOperation().feedback(),
-                mode(state), spellingPrompt(state));
+                mode(state), spellingPrompt(state), state.pairs());
     }
 }

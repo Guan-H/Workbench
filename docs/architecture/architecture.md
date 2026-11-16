@@ -1636,6 +1636,24 @@ AppDialog 增加可选 width，未指定时原 500/900px 行为保持；只有 W
 无后端代码、接口、依赖或数据库迁移变更。类型检查及生产构建通过，6 项前端判定/响应兼容单元检查通过；真实隔离 Spring/MySQL/Chrome 验证延迟下连续答题、最终成绩、已提交响应丢失后的刷新与幂等回读、真实版本冲突的取消/确认、收藏连续切换和实际拒绝回退，以及历史缓存和手动刷新。仅向隔离预览投递虚构内容，重启其 8188 后端加载既有拼写接口，未触及开发主库和生产。390px 挑战与 375px 收藏待同步布局截图已查看，未代替真机或实际英文语音。故障注入针对真实请求/响应，不模拟业务结果；本次没有执行无关全量回归。日志、已知边界及未发布状态见 docs/PROGRESS.md 的同日记录。
 
 
+### 例句译文与全文对照（2026-11-16，本地追加）
+
+个人词库导入沿用english模块：WordImportParser仅读取显式“单词：释义”，WordImportService复用目录状态锁、StudyIdentity和操作回执；确认时重新校验并在同一事务追加，错误不部分写入，重复不覆盖payload/progress。预览不导入输入内容，但会沿用已有历史推送索引同步。V28只在english_study_item增加manually_imported标记，并允许english_word_game.batch_id为空，不生成假批次或新增业务表。空batchId且无studyPlanId表示全部词库挑战，带planId时仍须匹配固定计划的可空anchor。游戏保存抽样快照及完整选中词条，在首次创建与重试中使用同一回执；前端按服务端轮次vocabulary做本地反馈，后台仍逐条校验。旧批次/计划接口兼容，来源链接与进度保留，空批次不会写入伪造的study_source。
+
+学习布局使用多层flex的min-height:0约束：LearningView外壳overflow:hidden，DailyEnglishCard正文、CourseLearning列表/正文及StudyDialog内容体各自滚动，工具栏/筛选与分页flex-shrink:0。嵌入StudyDialog的动态div包装也必须参与flex约束，避免包装高度将分页撑出视口。AppPagination新增可选showPageSummary（默认false），学习页显式启用，不改变其他模块分页显示。单词采用4/5列响应式网格，手机2列，保证完整内容可展开；不修改后端分页契约或数据。
+
+来源网络最终采用固定官方RSS入口，使用标准JDK安全XML解析（禁用DTD/外部实体），从content:encoded读取完整正文，每批至多5项；GUID摘要作为去重身份。429/503保存Retry-After退避，缺省15分钟，不在等待期访问来源。Reading专用可选代理来自PRIVATE_SPACE_READING_PROXY_URL；Windows启动脚本仅为该变量读取已有系统代理，生产容器默认直连。HTML清洗先移除脚本/样式容器，再交给JDK解析器输出纯文本，不将远端HTML交给浏览器。此段覆盖开发初期REST/数字编号方案，具体最终实现与接口见WEBHOOK-ENGLISH.md。
+
+阅读内容接入沿用 english 模块：V27 为 english_course 增加 origin_kind/origin_key/request_hash/created_at 和来源唯一索引，新增 english_reading_source 单来源状态表，未修改旧正文/进度。手动创建按 UUID 定位稳定ID与请求摘要，用真实数据库去重；Content/Detail 可空 origin 保存出处与时间，Summary.kind 缺省 original，兼容旧快照。固定NASA官方RSS使用标准 Java HttpClient（无跳转、25秒、2MiB BodySubscriber上限），安全XML及标准HTML解析器只提取内嵌惰性文本，无新依赖。单独单线程执行网络读取，调度只派发已开启且超过6小时的来源；2分钟数据库运行标记及本机互斥合并并发，GUID摘要唯一约束防止重复入库。记录实际新增/跳过/错误，部分写入不回滚此前已保存文章，不声称HTTP接收即完成。默认关闭自动同步，手动同步独立于开关；不调用AI，不抓任意用户URL，不下载图片音频。
+
+后续轻量阅读调整：CourseLearning 按阅读/短句/积累三种入口使用，保留内部 Course 命名和现有数据身份，避免无收益的存储重构。V26 仅更新五篇材料标题和 article.title，保留原进度及幂等收据；旧完成状态仍可读取，UI 不再提供整课完成或以此限制阅读。State/Summary 增加 favorite，旧 JSON 缺省为 false；Change 新增的可选 favorite 为 null 时不参与序列化，保持旧待确认请求摘要兼容。列表在 MySQL JOIN 中筛选 favorite/review 后分页，短句用 JSON_TABLE 展开并按10项分页；标记筛选在数据库执行，非前端筛选当前页。新收藏仍经进度行锁/操作回执条件保存，无新增表、依赖或服务。学习页推送组件首次访问才加载，原批次、计划和来源回跳入口保留。
+
+真实来源仅做网络可用性、XML解析和样例正文提取检查，不提供运行时拉取接口或定时任务。候选 VOA RSS 的最新条目停在2025年3月，未将其配置为每日新内容来源；详情与边界见 WEBHOOK-ENGLISH.md。
+
+课程扩展沿用 english 模块，V25 新增 english_course、english_course_progress、english_course_operation 三表，独立于 english_batch 和原学习计划。迁移保存 5 课带来源标识的原创内容 JSON，后台真实读取和判题；学习位置、答案、待复习句子/错题及完成状态保存为有版本的进度。每课进度行锁与同事务操作回执支持并发幂等和条件更新，不替换其他页面进度。提交前 QuestionView 不含答案/解析/原文依据，提交后只返回已答题目的内容；这不是防作弊考试。CourseLearning 使用真实接口与已有文章/语音组件，普通待确认请求保留在按账户/课程隔离的 sessionStorage，跨页可重试原操作，版本冲突经确认后重新读取。复习是课程内持久清单，保持原计划调度不变；没有逐像素阅读位置、自动真题抓取或 AI 调用。AI 将另行作为独立模块设计，未预设新服务或依赖。
+
+EnglishDtos.Word 增加可选 exampleTranslation，复用批次/词库 JSON 的真实持久化，不新增表或翻译服务。为 null 时不参与序列化，保持历史 requestId 摘要及幂等重试兼容；保留旧四参数构造。接收端限制译文 4000 字符，非空译文须有英文例句。词库仍保留首次收录的例句，不改写历史词条和来源。WordExample 统一每日单词、词库的显式展开/收起交互，切换词条时重置隐藏状态，缺译文时提示；按钮支持键盘及 aria-expanded。ArticleReading 新增全文对照，使用完整 text/translation，以桌面两栏、600px 以下单栏显示，不依赖逐句配对，不推断或生成译文。推送示例与可复制说明已同步。
+
 ### 双语阅读与每日学习（2026-11-12，本地未发布）
 
 沿用 english 业务模块和现有 Spring/MyBatis/MySQL，不新增服务或依赖。Article 的可选 sentences 保存推送端提供的英中配对；字段省略时不参与序列化，保留旧全文 payload 与 requestId 摘要。配对必须与全文忽略空白后一致，旧全文不自动拆分。ArticleReading 负责三种显示和现有原生朗读入口。

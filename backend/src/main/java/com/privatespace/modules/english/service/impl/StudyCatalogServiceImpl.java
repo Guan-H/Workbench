@@ -21,14 +21,14 @@ public class StudyCatalogServiceImpl implements StudyCatalogService {
     private final ObjectMapper json;
     public StudyCatalogServiceImpl(EnglishMapper english,StudyMapper study,ObjectMapper json) { this.english=english;this.study=study;this.json=json; }
     @Transactional
-    public String word(Word word,long batchId) {
+    public String word(Word word,Long batchId) {
         String id=wordId(word);
         // Most answers refer to an indexed item: avoid taking item/source write locks again.
         // Missing items use the same lock order as history indexing. Later indexing fills all sources.
         if(study.item(id)!=null) return id;
         study.lockState();
         study.insertItem(new Item(id,"word",word.word(),word.meaning(),json.writeValueAsString(word)));
-        study.source(id,batchId,-1);
+        if (batchId != null) study.source(id,batchId,-1);
         return id;
     }
     @Transactional

@@ -46,6 +46,8 @@ management:
       path: ${PRIVATE_SPACE_STORAGE_PATH:../data/objects}
 
 private-space:
+  reading:
+    proxy-url: ${PRIVATE_SPACE_READING_PROXY_URL:}
   office:
     enabled: ${PRIVATE_SPACE_OFFICE_ENABLED:false}
     server-url: ${PRIVATE_SPACE_OFFICE_SERVER_URL:http://127.0.0.1:8082}

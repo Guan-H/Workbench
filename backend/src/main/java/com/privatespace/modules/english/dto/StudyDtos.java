@@ -12,7 +12,7 @@ public final class StudyDtos {
             @Min(1) @Max(100) int reviewLimit, @Min(1) @Max(20) int sentenceLimit) {}
     public record Source(String batchId, String date, int articleIndex) {}
     public record Progress(String mode, int stage, int mistakes, String nextDate) {}
-    public record Item(String id, String kind, String name, String meaning, Word word, List<Source> sources, List<Progress> progress) {}
+    public record Item(String id, String kind, String name, String meaning, Word word, List<Source> sources, List<Progress> progress, boolean manuallyImported) {}
     public record Items(List<Item> items, long total, int page) {}
     public record Task(String id, String itemId, String mode, String kind, boolean completed,
             String revision, String prompt, String reference, String answer, boolean submitted, String rating, String gameId,List<Source> sources) {}

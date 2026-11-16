@@ -21,7 +21,7 @@ try{
     catch(error){return{status:error.status,code:error.code}}
   },{path,method,body,operation})
   const study='/home/english/study',games='/home/english/word-games'
-  const openStudy=async()=>{await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByRole('button',{name:'今日学习与词库',exact:true}).click();await learning().locator('.study-summary').waitFor()}
+  const openStudy=async()=>{await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByRole('button',{name:'词库与计划',exact:true}).click();await learning().locator('.study-summary').waitFor()}
   const learning=()=>page.getByRole('region',{name:'英语学习',exact:true})
   const closeStudy=()=>learning().getByRole('button',{name:'返回每日文章',exact:true}).click()
   const chooseRadio=(root,name)=>root.locator('.ant-radio-button-wrapper').filter({hasText:new RegExp('^'+name+'$')}).click()
@@ -37,6 +37,9 @@ try{
     assert.deepEqual(dashboard.plan.tasks,saved.plan.tasks)
     assert.equal((await call(games+'/'+saved.gameId)).value.completed,true)
     assert.equal((await push(saved.legacy,saved.token)).value.duplicate,true)
+    assert.equal((await push(saved.payload,saved.token)).value.duplicate,true)
+    const persisted=(await call('/home/english?date='+saved.plan.date+'&batch='+saved.batchId)).value.latest.content
+    assert.equal(persisted.words[0].exampleTranslation,'今天我们使用 apple。')
     await openStudy();await studyTab('短句练习')
     await learning().getByText('自评已保存：需要改进。后续复习已安排。',{exact:true}).waitFor()
     console.log('PASS study restart: exact persisted plan/tasks, self-assessments, word game and old-format receipt survived a real backend restart')
@@ -61,15 +64,40 @@ try{
     const legacy={requestId:'study-old',date:'2000-01-01',articles:[{title:'Legacy article',text:'Keep learning.',translation:'坚持学习。'}],words}
     assert.equal((await push(legacy,credential.token)).status,200)
     const sentences=[{text:'Learning takes time.',translation:'学习需要时间。'},{text:'Small steps help.',translation:'小小的进步也有帮助。'}]
-    const payload={requestId:'study-paired',articles:[{title:'Paired article',text:'Learning takes time. Small steps help.',translation:'学习需要时间。小小的进步也有帮助。',sentences}],words:[...words,{word:'apple',phonetic:null,meaning:'另一种释义',example:'Another apple.'}]}
+    const payload={requestId:'study-paired',articles:[{title:'Paired article',text:'Learning takes time. Small steps help.',translation:'学习需要时间。小小的进步也有帮助。',sentences}],words:[...words.map((word,index)=>index===0?{...word,exampleTranslation:'今天我们使用 apple。'}:word),{word:'apple',phonetic:null,meaning:'另一种释义',example:'Another apple.',exampleTranslation:'另一个苹果。'}]}
     const received=await push(payload,credential.token);assert.equal(received.status,200)
     assert.equal((await push(legacy,credential.token)).value.duplicate,true)
     assert.equal((await push({...payload,requestId:'bad-pair',articles:[{...payload.articles[0],text:'Unrelated full text.'}]},credential.token)).value.code,'SENTENCE_TEXT_MISMATCH')
-    await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await page.getByText('Paired article',{exact:true}).waitFor()
-    await chooseRadio(page,'双语对照')
+    assert.equal((await push({...payload,requestId:'long-example-translation',words:[{...words[0],exampleTranslation:'译'.repeat(4001)}]},credential.token)).status,400)
+    assert.equal((await push({...payload,requestId:'orphan-example-translation',words:[{...words[0],example:null,exampleTranslation:'无英文例句'}]},credential.token)).status,400)
+    await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'学习',exact:true}).click();await chooseRadio(page,'推送文章');await page.getByText('Paired article',{exact:true}).waitFor()
+    await chooseRadio(page,'逐句对照')
     assert.equal(await page.getByLabel('逐句英中对照').locator('li').count(),2)
     assert.equal(await page.getByRole('button',{name:'朗读第 1 句',exact:true}).count(),1)
     await page.screenshot({path:output+'/bilingual.png'})
+    await chooseRadio(page,'全文对照')
+    const full=page.getByLabel('全文英中对照')
+    assert.equal(await full.getByLabel('全文原文').locator('p').innerText(),payload.articles[0].text)
+    assert.equal(await full.getByLabel('全文译文').locator('p').innerText(),payload.articles[0].translation)
+    assert.equal(await full.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),2)
+    await page.screenshot({path:output+'/full-bilingual-desktop.png'})
+    await page.setViewportSize({width:375,height:844})
+    assert.equal(await full.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),1)
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+    await page.screenshot({path:output+'/full-bilingual-mobile.png'})
+    await page.setViewportSize({width:1440,height:1000})
+    await chooseRadio(page,'单词')
+    const firstExample=page.locator('.english-words .word-example').first()
+    assert.equal(await firstExample.locator('.word-example-translation').count(),0)
+    await firstExample.getByRole('button',{name:'查看例句译文',exact:true}).click()
+    assert.equal(await firstExample.locator('.word-example-translation').innerText(),payload.words[0].exampleTranslation)
+    await firstExample.getByRole('button',{name:'收起例句译文',exact:true}).focus()
+    await page.keyboard.press('Enter')
+    assert.equal(await firstExample.locator('.word-example-translation').count(),0)
+    assert.ok(await page.locator('.word-example-missing').count()>0)
+    await firstExample.getByRole('button',{name:'查看例句译文',exact:true}).click()
+    await page.screenshot({path:output+'/word-example-translation.png'})
+    await chooseRadio(page,'文章 / 句子')
     const dashboard=(await call(study)).value
     assert.equal(dashboard.words,7);assert.equal(dashboard.sentences,2)
     assert.equal(dashboard.settings.newLimit,10);assert.equal(dashboard.settings.reviewLimit,20);assert.equal(dashboard.settings.sentenceLimit,3)
@@ -77,6 +105,7 @@ try{
     const emptyVocabulary=(await call(study+'/items')).value
     assert.ok(emptyVocabulary.items.some(item=>item.sources.length===2))
     assert.equal(emptyVocabulary.total,7)
+    assert.equal(emptyVocabulary.items.find(item=>item.meaning==='另一种释义').word.exampleTranslation,'另一个苹果。')
     await openStudy()
     await learning().getByRole('button',{name:'生成今日计划',exact:true}).click()
     await learning().getByRole('heading',{name:/词汇任务 0 \/ 4/}).waitFor()
@@ -157,7 +186,7 @@ try{
     assert.equal((await anon.request.get(`http://127.0.0.1:${port}/api/v1${study}`,{headers:{Authorization:'Bearer '+credential.token}})).status(),401)
     await anon.close()
     await context.storageState({path:output+'/browser.json'})
-    await writeFile(output+'/result.json',JSON.stringify({plan,gameId:game.id,legacy,token:credential.token}))
+    await writeFile(output+'/result.json',JSON.stringify({plan,gameId:game.id,legacy,payload,batchId:received.value.id,token:credential.token}))
     console.log('PASS real study: aligned/legacy articles, old receipts, historical senses/sources, fixed daily plan, matching/spelling resume, persistent drafts, self-assessment, lost-response retry, cumulative mistakes and narrow layout')
   }
   assert.deepEqual(errors,[])

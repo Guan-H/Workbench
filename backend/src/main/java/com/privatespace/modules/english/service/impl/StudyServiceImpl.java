@@ -47,7 +47,7 @@ public class StudyServiceImpl implements StudyService {
         var items=mapper.items(kind,query,wrong,(page-1)*10).stream().map(item->new StudyDtos.Item(item.id(),item.kind(),item.name(),item.meaning(),
                 item.kind().equals("word")?json.readValue(item.payload(),Word.class):null,
                 mapper.sources(item.id()).stream().map(source->new StudyDtos.Source(Long.toString(source.batchId()),source.date(),source.articleIndex())).toList(),
-                mapper.progress(item.id()).stream().map(p->new StudyDtos.Progress(p.mode(),p.stage(),p.mistakes(),p.nextDate()==null?null:p.nextDate().toString())).toList())).toList();
+                mapper.progress(item.id()).stream().map(p->new StudyDtos.Progress(p.mode(),p.stage(),p.mistakes(),p.nextDate()==null?null:p.nextDate().toString())).toList(),mapper.imported(item.id()))).toList();
         return new StudyDtos.Items(items,mapper.total(kind,query,wrong),page);
     }
     @Transactional
@@ -146,6 +146,10 @@ public class StudyServiceImpl implements StudyService {
         }
     }
     public Long gamePlan(String gameId) { return mapper.gamePlan(gameId); }
+    public List<Word> vocabulary() {
+        catalog.synchronize();
+        return mapper.vocabulary().stream().map(item -> json.readValue(item.payload(), Word.class)).toList();
+    }
     public String roundReceipt(String operation,String hash) {
         var receipt=mapper.operation(operation);
         if(receipt==null) return null;

@@ -32,7 +32,7 @@
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
-- 当前源码迁移最高为 V24，新增独立导图、日历记录与共享背景主题存储。执行时重新核对 `database/migrations/` 和服务器实际迁移状态。
+- 当前源码迁移最高为 V28，包含独立导图、日历记录、共享背景主题及学习素材库。V25增加内容/进度/回执，V26调整标题，V27增加手动文章/来源身份索引与阅读来源状态表；V28增加词库手动导入标记，并允许词库/纯导入计划的练习无推送批次，前后端需配套发布。保留旧正文、进度、收据及推送批次。NASA自动同步默认关闭，开启后每6小时检查近期最多5篇；生产是否能访问该公开来源需部署时实测，暂不依赖AI服务。执行时重新核对 `database/migrations/` 和服务器实际迁移状态；源码新增不代表生产已经升级。
 
 ### 功能与部署边界
 

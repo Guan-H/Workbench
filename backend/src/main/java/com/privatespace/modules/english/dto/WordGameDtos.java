@@ -12,7 +12,7 @@ public final class WordGameDtos {
     private WordGameDtos() {}
     public static final String UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
-    public record Create(@NotNull @Pattern(regexp = "[1-9][0-9]{0,17}") String batchId,
+    public record Create(@Pattern(regexp = "[1-9][0-9]{0,17}") String batchId,
             @Pattern(regexp = UUID_PATTERN) String reviewOf,
             @Pattern(regexp = "matching|spelling") String mode,
             @Pattern(regexp = "[1-9][0-9]{0,17}") String studyPlanId) {
@@ -29,5 +29,5 @@ public final class WordGameDtos {
     public record Snapshot(String id, String batchId, String revision, int sourceCount, int eligibleCount,
             List<Choice> words, List<Choice> meanings, List<Integer> matched, int attempts, int streak,
             int bestStreak, List<Word> mistakes, boolean completed, long elapsedSeconds, Feedback feedback,
-            String mode, SpellingPrompt spellingPrompt) {}
+            String mode, SpellingPrompt spellingPrompt, List<Word> vocabulary) {}
 }

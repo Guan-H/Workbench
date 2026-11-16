@@ -38,6 +38,15 @@ if (-not (Test-Path -LiteralPath $setupPath)) {
     [IO.File]::WriteAllText($setupPath, $setupCredential, [Text.UTF8Encoding]::new($false))
 }
 $env:PRIVATE_SPACE_SETUP_TOKEN = [IO.File]::ReadAllText($setupPath).Trim()
+if ($IsWindows -and -not $env:PRIVATE_SPACE_READING_PROXY_URL) {
+    # Only reading-source traffic follows the existing Windows proxy; local Office/API traffic is unchanged.
+    $readingTarget = [Uri]'https://www.nasa.gov/feed/'
+    $readingProxy = [Net.WebRequest]::GetSystemWebProxy().GetProxy($readingTarget)
+    if ($readingProxy -and $readingProxy.AbsoluteUri -ne $readingTarget.AbsoluteUri -and
+            $readingProxy.Scheme -eq 'http' -and -not $readingProxy.UserInfo) {
+        $env:PRIVATE_SPACE_READING_PROXY_URL = $readingProxy.GetLeftPart([UriPartial]::Authority)
+    }
+}
 $officePath = Join-Path $projectRoot 'deploy/office.local'
 if (Test-Path -LiteralPath $officePath) {
     foreach ($officeLine in Get-Content -LiteralPath $officePath) {
