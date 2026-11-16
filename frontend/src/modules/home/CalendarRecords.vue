@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, Checkbox as ACheckbox, Input as AInput, InputNumber as AInputNumber, RadioButton as ARadioButton, RadioGroup as ARadioGroup, Tag as ATag } from 'ant-design-vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { CheckCheck, Clock3, Pencil, Plus, Trash2, X } from 'lucide-vue-next'
+import { CheckCheck, Pencil, Plus, Trash2, X } from 'lucide-vue-next'
 import AppDialog from '../../shared/AppDialog.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import AppMessage, { type Notice } from '../../shared/AppMessage.vue'
@@ -9,7 +9,7 @@ import { ApiError } from '../../shared/api/client'
 import { deleteRecord, durationLabel, loadRecords, saveRecord, type CalendarRecord, type RecordDay, type RecordPage, type RecordWrite } from './calendar-records'
 
 const props = defineProps<{ month: string; date: string }>()
-const emit = defineEmits<{ days: [days: RecordDay[]] }>()
+const emit = defineEmits<{ days: [days: RecordDay[]]; changed: [] }>()
 const records = ref<RecordPage>(), loading = ref(false), loadError = ref(''), page = ref(1), allMonth = ref(false)
 const recordList = ref<HTMLElement>()
 const appendError = ref('')
@@ -17,6 +17,7 @@ interface EditorBase { id: string; baseVersion: string; title: string; notes: st
 type RecordEditor = EditorBase & (
   | { kind: 'todo'; date: string; time: string; completed: boolean }
   | { kind: 'other'; date: string; time: string }
+  | { kind: 'time-off'; date: string; amount: number; unit: 'hours' | 'days' }
   | { kind: 'overtime'; start: string; end: string; overtimeHours: number }
 )
 const editor = ref<RecordEditor>()
@@ -67,14 +68,16 @@ function open(item?: CalendarRecord) {
   pending.value = undefined; error.value = ''; conflict.value = false
   if (!item) editor.value = { id: crypto.randomUUID(), baseVersion: '0', kind: 'todo', date: props.date, title: '', notes: '', time: '', completed: false }
   else if (item.kind === 'overtime') editor.value = { id: item.id, baseVersion: item.version, kind: item.kind, title: item.title, notes: item.notes, start: item.start, end: item.end, overtimeHours: item.overtimeMinutes / 60 }
+  else if (item.kind === 'time-off') editor.value = { id:item.id,baseVersion:item.version,kind:item.kind,title:item.title,notes:item.notes,date:item.date,amount:item.timeOffMinutes/60,unit:'hours' }
   else if (item.kind === 'todo') editor.value = { id: item.id, baseVersion: item.version, kind: item.kind, title: item.title, notes: item.notes, date: item.date, time: item.time ?? '', completed: item.completed }
   else editor.value = { id: item.id, baseVersion: item.version, kind: item.kind, title: item.title, notes: item.notes, date: item.date, time: item.time ?? '' }
 }
 function changeKind(kind: string) {
   const value = editor.value
-  if (!value || value.baseVersion !== '0' || !['todo', 'overtime', 'other'].includes(kind)) return
+  if (!value || value.baseVersion !== '0' || !['todo', 'overtime', 'other', 'time-off'].includes(kind)) return
   const common = { id: value.id, baseVersion: value.baseVersion, title: value.title, notes: value.notes }
   if (kind === 'overtime') editor.value = { ...common, kind, start: props.date + 'T18:00', end: props.date + 'T20:00', overtimeHours: 2 }
+  else if (kind === 'time-off') editor.value = {...common,title:common.title || '调休',kind,date:props.date,amount:4,unit:'hours'}
   else if (kind === 'todo') editor.value = { ...common, kind, date: props.date, time: '', completed: false }
   else if (kind === 'other') editor.value = { ...common, kind, date: props.date, time: '' }
 }
@@ -88,6 +91,10 @@ async function submit() {
       const overtimeMinutes = Math.round(value.overtimeHours * 60)
       if (!Number.isFinite(value.overtimeHours) || overtimeMinutes <= 0 || elapsedMinutes.value <= 0 || overtimeMinutes > elapsedMinutes.value) { error.value = '结束时间须晚于开始时间，加班时长须大于 0 且不能超过开始至结束的时间跨度。'; return }
       pending.value = { id: value.id, operation: crypto.randomUUID(), value: { baseVersion: value.baseVersion, kind: value.kind, date: value.start.slice(0, 10), title: value.title, notes: value.notes, time: null, completed: false, start: value.start, end: value.end, overtimeMinutes } }
+    } else if (value.kind === 'time-off') {
+      const minutes=value.amount*(value.unit==='days'?480:60)
+      if (!Number.isFinite(minutes) || minutes<=0 || Math.abs(minutes-Math.round(minutes))>0.000001 || minutes>2147483647) { error.value='请填写大于0的调休时长，精确到整分钟。';return }
+      pending.value={id:value.id,operation:crypto.randomUUID(),value:{baseVersion:value.baseVersion,kind:value.kind,date:value.date,title:value.title,notes:value.notes,time:null,completed:false,start:null,end:null,overtimeMinutes:null,timeOffMinutes:Math.round(minutes)}}
     } else if (value.kind === 'todo') {
       pending.value = { id: value.id, operation: crypto.randomUUID(), value: { baseVersion: value.baseVersion, kind: value.kind, date: value.date, title: value.title, notes: value.notes, time: value.time || null, completed: value.completed, start: null, end: null, overtimeMinutes: null } }
     } else {
@@ -99,7 +106,7 @@ async function submit() {
     const request = pending.value
     await saveRecord(request.id, request.value, request.operation)
     if (disposed) return
-    editor.value = undefined; pending.value = undefined; notify('日历记录已保存。'); await refresh()
+    editor.value = undefined; pending.value = undefined; notify('日历记录已保存。'); await refresh(); emit('changed')
   } catch (cause) {
     if (disposed) return
     conflict.value = cause instanceof ApiError && cause.status === 409
@@ -112,15 +119,15 @@ async function toggle(item: CalendarRecord) {
   workingId.value = item.id
   try {
     await saveRecord(item.id, { baseVersion: item.version, kind: item.kind, date: item.date, title: item.title, notes: item.notes, time: item.time, completed: !item.completed, start: null, end: null, overtimeMinutes: null }, crypto.randomUUID())
-    if (!disposed) { notify(item.completed ? '待办已标记为未完成。' : '待办已完成。'); await refresh() }
-  } catch (cause) { if (!disposed) { notify(cause instanceof Error ? cause.message : '完成状态未确认，请重新读取核对。', 'error'); await refresh() } }
+    if (!disposed) { notify(item.completed ? '待办已标记为未完成。' : '待办已完成。'); await refresh(); emit('changed') }
+  } catch (cause) { if (!disposed) { notify(cause instanceof Error ? cause.message : '完成状态未确认，请重新读取核对。', 'error'); await refresh(); emit('changed') } }
   finally { workingId.value = '' }
 }
 async function remove(accepted: boolean) {
   const item = deleting.value; deleting.value = undefined
   if (!accepted || !item) return
   workingId.value = item.id
-  try { await deleteRecord(item, crypto.randomUUID()); if (!disposed) { notify('日历记录已删除。'); await refresh() } }
+  try { await deleteRecord(item, crypto.randomUUID()); if (!disposed) { notify('日历记录已删除。'); await refresh(); emit('changed') } }
   catch (cause) { if (!disposed) notify(cause instanceof Error ? cause.message : '删除结果未确认，请重新读取核对。', 'error') }
   finally { workingId.value = '' }
 }
@@ -130,16 +137,16 @@ onBeforeUnmount(() => { disposed = true; serial++; clearTimeout(noticeTimer) })
 <template>
   <section class="calendar-records" aria-label="日历记录" :aria-busy="loading">
     <header class="calendar-records-heading"><h3><CheckCheck :size="16" aria-hidden="true" />日历记录</h3><AButton size="small" @click="open()"><Plus :size="14" aria-hidden="true" />添加记录</AButton></header>
-    <p class="calendar-month-summary" data-testid="overtime-summary"><Clock3 :size="14" aria-hidden="true" />{{ month }} 加班合计 <strong>{{ records?.month === month ? durationLabel(records.overtimeMinutes) : '—' }}</strong></p>
+
     <div class="calendar-records-filter"><span>{{ allMonth ? '本月全部记录' : date }}</span><AButton type="link" size="small" @click="page = 1; allMonth = !allMonth">{{ allMonth ? '查看当天' : '本月记录' }}</AButton></div>
     <AAlert v-if="loadError" type="error" :message="loadError" show-icon><template #action><AButton size="small" @click="refresh()">重试</AButton></template></AAlert>
     <div v-else ref="recordList" class="calendar-record-list" tabindex="0" aria-label="日历记录列表" @scroll="onScroll">
       <p v-if="loading && !records" role="status">正在读取记录…</p>
       <p v-else-if="!records?.items.length" class="calendar-record-empty">{{ allMonth ? '本月暂无记录' : '当天暂无记录' }}</p>
       <article v-for="item in records?.items" :key="item.id" class="calendar-record" :data-record-id="item.id">
-        <div class="calendar-record-title"><ACheckbox v-if="item.kind === 'todo'" :checked="item.completed" :disabled="!!workingId || loading" :aria-label="`${item.completed ? '取消完成' : '完成'} ${item.title}`" @change="toggle(item)" /><ATag v-else-if="item.kind === 'overtime'" color="blue">加班</ATag><ATag v-else>其他</ATag><strong :class="{ completed: item.kind === 'todo' && item.completed }">{{ item.title }}</strong><AButton type="text" size="small" :aria-label="`编辑 ${item.title}`" :title="`编辑 ${item.title}`" :disabled="!!workingId || loading" @click="open(item)"><Pencil :size="14" aria-hidden="true" /></AButton><AButton type="text" size="small" :aria-label="`删除 ${item.title}`" :title="`删除 ${item.title}`" :disabled="!!workingId || loading" @click="deleting = item"><Trash2 :size="14" aria-hidden="true" /></AButton></div>
+        <div class="calendar-record-title"><ACheckbox v-if="item.kind === 'todo'" :checked="item.completed" :disabled="!!workingId || loading" :aria-label="`${item.completed ? '取消完成' : '完成'} ${item.title}`" @change="toggle(item)" /><ATag v-else-if="item.kind === 'overtime'" color="blue">加班</ATag><ATag v-else-if="item.kind === 'time-off'" color="purple">调休</ATag><ATag v-else>其他</ATag><strong :class="{ completed: item.kind === 'todo' && item.completed }">{{ item.title }}</strong><AButton type="text" size="small" :aria-label="`编辑 ${item.title}`" :title="`编辑 ${item.title}`" :disabled="!!workingId || loading" @click="open(item)"><Pencil :size="14" aria-hidden="true" /></AButton><AButton type="text" size="small" :aria-label="`删除 ${item.title}`" :title="`删除 ${item.title}`" :disabled="!!workingId || loading" @click="deleting = item"><Trash2 :size="14" aria-hidden="true" /></AButton></div>
         <p v-if="item.kind === 'overtime'">{{ item.start.replace('T', ' ') }} → {{ item.end.replace('T', ' ') }}<br />加班 {{ durationLabel(item.overtimeMinutes) }}</p>
-        <p v-else>{{ item.date }}{{ item.time ? ' · ' + item.time : ' · 全天' }}<template v-if="item.kind === 'todo'"> · {{ item.completed ? '已完成' : '待完成' }}</template></p>
+        <p v-else-if="item.kind === 'time-off'">{{ item.date }} · 调休 {{ durationLabel(item.timeOffMinutes) }}</p><p v-else>{{ item.date }}{{ item.time ? ' · ' + item.time : ' · 全天' }}<template v-if="item.kind === 'todo'"> · {{ item.completed ? '已完成' : '待完成' }}</template></p>
         <p v-if="item.notes" class="calendar-record-notes">{{ item.notes }}</p>
       </article>
       <p v-if="loading && records" class="calendar-record-empty" role="status">正在读取更多记录…</p>
@@ -147,14 +154,14 @@ onBeforeUnmount(() => { disposed = true; serial++; clearTimeout(noticeTimer) })
     </div>
   </section>
   <AppDialog v-if="editor" label="日历记录" :width="560"><form class="modal calendar-record-dialog" novalidate @submit.prevent="submit"><header><h2>{{ editor.baseVersion === '0' ? '添加记录' : '编辑记录' }}</h2><AButton type="text" class="icon-button" aria-label="关闭日历记录" :disabled="saving" @click="editor = undefined"><X :size="18" /></AButton></header>
-    <div class="calendar-record-form"><fieldset :disabled="saving || !!pending"><legend class="sr-only">记录内容</legend><ARadioGroup :value="editor.kind" :disabled="editor.baseVersion !== '0' || saving || !!pending" aria-label="记录类型" @update:value="changeKind"><ARadioButton value="todo">待办</ARadioButton><ARadioButton value="overtime">加班</ARadioButton><ARadioButton value="other">其他</ARadioButton></ARadioGroup>
+    <div class="calendar-record-form"><fieldset :disabled="saving || !!pending"><legend class="sr-only">记录内容</legend><ARadioGroup :value="editor.kind" :disabled="editor.baseVersion !== '0' || saving || !!pending" aria-label="记录类型" @update:value="changeKind"><ARadioButton value="todo">待办</ARadioButton><ARadioButton value="overtime">加班</ARadioButton><ARadioButton value="time-off">调休</ARadioButton><ARadioButton value="other">其他</ARadioButton></ARadioGroup>
       <label for="calendar-record-title">标题</label><AInput id="calendar-record-title" v-model:value="editor.title" :maxlength="200" required />
-      <template v-if="editor.kind !== 'overtime'"><label for="calendar-record-date">日期</label><AInput id="calendar-record-date" v-model:value="editor.date" type="date" min="1900-01-01" max="2100-12-31" required /><label for="calendar-record-time">时间（可选）</label><AInput id="calendar-record-time" v-model:value="editor.time" type="time" /><ACheckbox v-if="editor.kind === 'todo'" v-model:checked="editor.completed">已完成</ACheckbox></template>
-      <template v-else><label for="calendar-record-start">开始时间（北京时间）</label><AInput id="calendar-record-start" v-model:value="editor.start" type="datetime-local" min="1900-01-01T00:00" max="2100-12-31T23:59" required /><label for="calendar-record-end">结束时间（可选次日）</label><AInput id="calendar-record-end" v-model:value="editor.end" type="datetime-local" min="1900-01-01T00:00" max="2100-12-31T23:59" required /><label for="calendar-record-overtime">加班时长（小时）</label><AInputNumber id="calendar-record-overtime" v-model:value="editor.overtimeHours" :min="0.25" :step="0.5" :precision="2" inputmode="decimal" /><p class="field-help">开始至结束共 {{ durationLabel(elapsedMinutes) }}。整条记录归开始日，计入开始日所在月份。</p></template>
+      <template v-if="editor.kind !== 'overtime' && editor.kind !== 'time-off'"><label for="calendar-record-date">日期</label><AInput id="calendar-record-date" v-model:value="editor.date" type="date" min="1900-01-01" max="2100-12-31" required /><label for="calendar-record-time">时间（可选）</label><AInput id="calendar-record-time" v-model:value="editor.time" type="time" /><ACheckbox v-if="editor.kind === 'todo'" v-model:checked="editor.completed">已完成</ACheckbox></template>
+      <template v-else-if="editor.kind === 'time-off'"><label for="calendar-time-off-date">调休日期</label><AInput id="calendar-time-off-date" v-model:value="editor.date" type="date" min="1900-01-01" max="2100-12-31" required /><label for="calendar-time-off-amount">调休时长</label><AInputNumber id="calendar-time-off-amount" v-model:value="editor.amount" :min="0" :max="editor.unit==='days'?4473924:35791394" :step="0.5" :precision="2" /><ARadioGroup v-model:value="editor.unit" aria-label="调休时长单位"><ARadioButton value="hours">小时</ARadioButton><ARadioButton value="days">天（8小时）</ARadioButton></ARadioGroup><p class="field-help">1天=8小时。整条计入所选日期；跨月调休可分日记录。</p></template><template v-else><label for="calendar-record-start">开始时间（北京时间）</label><AInput id="calendar-record-start" v-model:value="editor.start" type="datetime-local" min="1900-01-01T00:00" max="2100-12-31T23:59" required /><label for="calendar-record-end">结束时间（可选次日）</label><AInput id="calendar-record-end" v-model:value="editor.end" type="datetime-local" min="1900-01-01T00:00" max="2100-12-31T23:59" required /><label for="calendar-record-overtime">加班时长（小时）</label><AInputNumber id="calendar-record-overtime" v-model:value="editor.overtimeHours" :min="0.25" :step="0.5" :precision="2" inputmode="decimal" /><p class="field-help">开始至结束共 {{ durationLabel(elapsedMinutes) }}。整条记录归开始日，计入开始日所在月份。</p></template>
       <label for="calendar-record-notes">备注（可选）</label><AInput.TextArea id="calendar-record-notes" v-model:value="editor.notes" :maxlength="4000" :rows="3" /></fieldset>
       <AAlert v-if="error" type="error" :message="error" show-icon role="alert" /><p v-if="pending && !saving" class="field-help">保存结果未确认，重试会提交同一操作。关闭前请保留输入以便核对。</p><AButton v-if="conflict" @click="refresh()">重新读取列表（保留当前输入）</AButton>
     </div><footer><AButton :disabled="saving" @click="editor = undefined">关闭</AButton><AButton type="primary" html-type="submit" :loading="saving" :disabled="conflict">{{ pending ? '重试保存' : '保存记录' }}</AButton></footer></form></AppDialog>
-  <ConfirmDialog v-if="deleting" title="删除日历记录" :message="`确定删除“${deleting.title}”？删除后不再计入列表和加班汇总。`" confirm-label="删除" @answer="remove" />
+  <ConfirmDialog v-if="deleting" title="删除日历记录" :message="`确定删除“${deleting.title}”？删除后不再计入列表和加班/调休统计。`" confirm-label="删除" @answer="remove" />
   <AppMessage :notice="notice" @close="notice = undefined" />
 </template>
 

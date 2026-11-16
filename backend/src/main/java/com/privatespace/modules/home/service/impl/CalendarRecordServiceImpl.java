@@ -41,12 +41,12 @@ public class CalendarRecordServiceImpl implements CalendarRecordService {
     }
     private Item item(CalendarRecordEntity row) {
         return new Item(row.id(), Long.toString(row.version()), row.kind(), row.eventDate().toString(), row.title(), row.notes(), row.taskTime(), row.completed(),
-                row.startedAt() == null ? null : MINUTE.format(row.startedAt()), row.endedAt() == null ? null : MINUTE.format(row.endedAt()), row.overtimeMinutes(), row.deleted());
+                row.startedAt() == null ? null : MINUTE.format(row.startedAt()), row.endedAt() == null ? null : MINUTE.format(row.endedAt()), row.overtimeMinutes(), row.deleted(), row.timeOffMinutes());
     }
     private Preview preview(CalendarRecordEntity row) {
         return new Preview(row.kind(), row.title(), row.taskTime(), row.completed(),
                 row.startedAt() == null ? null : MINUTE.format(row.startedAt()),
-                row.endedAt() == null ? null : MINUTE.format(row.endedAt()), row.overtimeMinutes());
+                row.endedAt() == null ? null : MINUTE.format(row.endedAt()), row.overtimeMinutes(), row.timeOffMinutes());
     }
     @Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public Page list(String month, String date, int page) {
@@ -61,7 +61,7 @@ public class CalendarRecordServiceImpl implements CalendarRecordService {
                 .collect(Collectors.groupingBy(CalendarRecordEntity::eventDate, Collectors.mapping(this::preview, Collectors.toList())));
         var summaries = mapper.days(monthFrom, monthTo);
         var days = summaries.stream().map(day -> new Day(day.date(), day.todos(), day.pending(), day.others(), day.overtimes(), day.overtimeMinutes(),
-                previews.getOrDefault(LocalDate.parse(day.date()), List.of()))).toList();
+                previews.getOrDefault(LocalDate.parse(day.date()), List.of()), day.timeOffs(), day.timeOffMinutes())).toList();
         return new Page(month, days, summaries.stream().mapToLong(DaySummary::overtimeMinutes).sum(), mapper.list(from, to, (page - 1) * 10).stream().map(this::item).toList(), mapper.total(from, to), page);
     }
     private String hash(Object value) {
@@ -89,7 +89,8 @@ public class CalendarRecordServiceImpl implements CalendarRecordService {
         id(id);
         if (request == null || request.baseVersion() == null || request.title() == null || request.title().isBlank() || request.title().length() > 200 || request.notes() == null || request.notes().length() > 4000) throw invalid();
         var day = date(request.date());
-        LocalDateTime start = null, end = null; String time = null; int minutes = 0;
+        LocalDateTime start = null, end = null; String time = null; int minutes = 0, timeOff = 0;
+        if (!"time-off".equals(request.kind()) && request.timeOffMinutes() != null) throw invalid();
         if ("todo".equals(request.kind()) || "other".equals(request.kind())) {
             if (request.start() != null || request.end() != null || request.overtimeMinutes() != null || ("other".equals(request.kind()) && request.completed())) throw invalid();
             if (request.time() != null) {
@@ -102,19 +103,23 @@ public class CalendarRecordServiceImpl implements CalendarRecordService {
             start = minute(request.start()); end = minute(request.end());
             long duration = Duration.between(start, end).toMinutes();
             if (!start.toLocalDate().equals(day) || duration <= 0 || minutes <= 0 || minutes > duration) throw invalid();
+        } else if ("time-off".equals(request.kind())) {
+            if (request.start() != null || request.end() != null || request.time() != null || request.completed() || request.overtimeMinutes() != null || request.timeOffMinutes() == null) throw invalid();
+            try { timeOff = request.timeOffMinutes().intValueExact(); } catch (ArithmeticException error) { throw invalid(); }
+            if (timeOff <= 0) throw new ApiException(400, "INVALID_TIME_OFF", "调休时长须大于0，按整分钟记录。");
         } else throw invalid();
         String hash = hash(List.of("save", id, request));
         var previous = begin(operation, hash); if (previous != null) return previous;
-        var row = new CalendarRecordEntity(id, request.kind(), day, request.title().trim(), request.notes(), time, request.completed(), start, end, 0, minutes, 1, false);
+        var row = new CalendarRecordEntity(id, request.kind(), day, request.title().trim(), request.notes(), time, request.completed(), start, end, 0, minutes, 1, false, timeOff);
         if (mapper.find(id) == null && "0".equals(request.baseVersion())) mapper.create(row);
         else { required(id, request.baseVersion()); mapper.save(row); }
-        return finish(id, operation, hash);
+        mapper.changed(); return finish(id, operation, hash);
     }
     @Transactional
     public Item delete(String id, Version request, String operation) {
         id(id); if (request == null || request.baseVersion() == null) throw invalid();
         String hash = hash(List.of("delete", id, request.baseVersion()));
         var previous = begin(operation, hash); if (previous != null) return previous;
-        required(id, request.baseVersion()); mapper.delete(id); return finish(id, operation, hash);
+        required(id, request.baseVersion()); mapper.delete(id); mapper.changed(); return finish(id, operation, hash);
     }
 }

@@ -1727,3 +1727,12 @@ MindmapCanvas 在原节点模型上提供分组工具栏、插入菜单、选中
 外观偏好由 `settings/appearance-preferences.ts` 维护，使用带版本的 `workbench-appearance-v1` 浏览器 `localStorage` 记录笔记和导图各自的 `paper / soft` 值；读取失败、旧值或非法值回退到默认纸张模式。设置组件只更新该本地状态，Workspace 根节点据此增加模块级 class，样式层再按所在模块改变表面透明度。该状态不进入 Pinia、后端接口、数据库、导图 JSON、笔记正文或保险库密文，不构成跨设备设置。
 
 透景只改变视觉层级：笔记的目录与主外框可以显示背景，编辑/预览正文、工具栏、大纲和行号区保留高不透明度；导图主区和画布可更透明，但节点、编辑输入、工具栏、浮动操作及菜单继续使用可读实体表面。窄屏通过媒体查询提高内容不透明度，不为透明效果下载额外资源或创建渲染副本。Mind Elixir 仍保存原纯文本节点与折叠结构，`--bgcolor` 覆盖只作用于当前 DOM，保存协议和版本控制不变。
+
+
+## 日历工时与可选期初余额（2026-11-16）
+
+沿用home模块，V29为calendar_record增加time_off_minutes（默认0），calendar_record_lock增加revision，并新增单行calendar_opening_balance，起算日期与期初时长默认均NULL，保留原有记录。调休使用kind=time-off及日期/正整分钟，其他类型拒绝携带调休字段；原DTO新可选字段NON_NULL保证旧待确认操作摘要不变。每次真实记录新增/编辑/删除在同事务增加revision，幂等回读不增加。累计和月统计从未删除记录聚合，按1:1抵扣、480分钟/天展示，不从假期表推算，负值不截断。
+
+CalendarLedgerService读事务使用一致性快照；期初预览与确认携带baseVersion和recordsRevision，保存沿用记录锁及原操作收据。确认前记录或期初变化拒绝旧请求；原请求成功但响应丢失时优先回读同编号收据，不重复保存。设置只影响起算日及以后记录的余额口径，不改写记录；更早记录始终留在累计/历史。前端CalendarWorkStats按月/记录变化刷新，历史10个月分页，头部与分页不滚动；期初采用预览再确认，保留按账户sessionStorage的未知请求，保存后返回历史面板，不叠加两个业务弹窗。
+
+接口：GET /api/v1/home/calendar/ledger?month=YYYY-MM 返回monthly/cumulative、opening、recordsRevision与netMinutes；opening的version为数字，其余操作中的版本为字符串。GET /ledger/history?page=1 返回items（月、加班分钟、调休分钟）、total月份数和page。POST /ledger/opening-preview及PUT /ledger/opening均提交{baseVersion,recordsRevision,startDate,openingMinutes}；PUT另需UUID Idempotency-Key。同操作不同内容或旧版本409，非法值400。期初为非负整分钟，技术输入上限525600000分钟；所有API沿用网页认证/CSRF/Origin。原记录写入新增可选timeOffMinutes，Item/Preview新增timeOffMinutes，Day新增timeOffs/timeOffMinutes；旧记录新值为0。

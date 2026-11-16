@@ -12,6 +12,8 @@ import LearningSummary from '../english/LearningSummary.vue'
 import ContentLoading from '../../shared/ContentLoading.vue'
 import { vContentMotion } from '../../shared/content-motion'
 import CalendarRecords from './CalendarRecords.vue'
+import CalendarWorkStats from './CalendarWorkStats.vue'
+import { timeLabel } from './calendar-ledger'
 import type { RecordDay } from './calendar-records'
 
 const props = defineProps<{ username: string; items: Note[]; loading: boolean; error: string }>()
@@ -27,6 +29,7 @@ const calendarLoading = ref(false)
 const requestedMonth = ref<string>()
 const selectedDate = ref('')
 const recordDays = ref<RecordDay[]>([])
+const workRevision = ref(0)
 const recordDayMap = computed(() => new Map(recordDays.value.map(day => [day.date, day])))
 let requestSerial = 0
 let dayTimer: ReturnType<typeof setInterval> | undefined
@@ -52,14 +55,15 @@ async function documentTabKey(event: KeyboardEvent) {
 }
 function dayLabel(day: CalendarDay) {
   const records = recordDayMap.value.get(day.date)
-  return `${day.date} ${dayKind(day)}${day.date === calendar.value?.today ? ' 今天' : ''}${calendar.value?.available ? '' : '，放假调休安排待确认'}${records ? `，待办 ${records.todos} 项、未完成 ${records.pending} 项，其他 ${records.others} 项${records.overtimeMinutes ? '，有加班记录' : ''}` : ''}`
+  return `${day.date} ${dayKind(day)}${day.date === calendar.value?.today ? ' 今天' : ''}${calendar.value?.available ? '' : '，放假调休安排待确认'}${records ? `，待办 ${records.todos} 项、未完成 ${records.pending} 项，其他 ${records.others} 项${records.overtimeMinutes ? '，有加班记录' : ''}${records.timeOffMinutes ? '，有个人调休记录' : ''}` : ''}`
 }
 function dayKind(day: CalendarDay) {
   return { holiday: day.holiday ? `${day.holiday}放假` : '放假', makeup: '调休上班', weekend: '周末', weekday: '平日' }[day.kind]
 }
-function recordCount(day: RecordDay) { return day.todos + day.others + day.overtimes }
-function previewKind(kind: string) { return kind === 'todo' ? '待办' : kind === 'overtime' ? '加班' : '其他' }
+function recordCount(day: RecordDay) { return day.todos + day.others + day.overtimes + (day.timeOffs ?? 0) }
+function previewKind(kind: string) { return kind === 'todo' ? '待办' : kind === 'overtime' ? '加班' : kind === 'time-off' ? '调休' : '其他' }
 function previewTime(item: RecordDay['previews'][number]) {
+  if (item.kind === 'time-off') return timeLabel(item.timeOffMinutes)
   if (item.kind === 'overtime') return item.start?.slice(11) + '–' + item.end?.slice(11)
   return item.time || '全天'
 }
@@ -121,10 +125,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
           </header>
           <div v-if="calendarError" class="home-list-message" role="alert"><p>{{ calendarError }}</p><AButton @click="refreshCalendar(requestedMonth)">重试日期信息</AButton></div>
           <template v-else-if="calendar">
-            <div class="home-holiday-summary" data-testid="holiday-summary">
-              <template v-if="calendar.nextHoliday"><span>{{ calendar.nextHoliday.daysUntil === 0 ? '假期进行中' : '下个假期' }}</span><strong>{{ calendar.nextHoliday.name }}<small>{{ calendar.nextHoliday.daysUntil === 0 ? '好好休息，慢慢记录。' : `还有 ${calendar.nextHoliday.daysUntil} 天` }}</small></strong><p>{{ calendar.nextHoliday.start }} 至 {{ calendar.nextHoliday.end }}</p></template>
-              <template v-else><strong>后续假期安排待补充</strong><p>已收录安排中暂无后续假期，不推算调休。</p></template>
-            </div>
+            <CalendarWorkStats :month="calendar.month" :revision="workRevision" :username="username" />
             <div class="home-month-controls"><AButton type="text" class="icon-button" aria-label="上个月" title="上个月" :disabled="calendarLoading || calendar.month === '1900-01'" @click="changeMonth(-1)"><ChevronLeft :size="18" /></AButton><h3 aria-live="polite">{{ monthLabel }}</h3><AButton type="text" class="icon-button" aria-label="下个月" title="下个月" :disabled="calendarLoading || calendar.month === '2100-12'" @click="changeMonth(1)"><ChevronRight :size="18" /></AButton><AButton :disabled="calendarLoading" @click="refreshCalendar(undefined, true)">本月</AButton></div>
             <ACalendar :value="calendarDate" :fullscreen="false" class="home-month" :valid-range="[dayjs(calendar.month + '-01'), dayjs(calendar.month + '-01').endOf('month')]" :aria-label="monthLabel + '月历'" @select="calendarSelect">
               <template #headerRender><span class="sr-only">{{ monthLabel }}</span></template>
@@ -149,7 +150,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
               <strong><time :datetime="selectedDay.date">{{ selectedDayLabel }}</time></strong><span>{{ dayKind(selectedDay) }}</span>
               <small v-if="!calendar.available">放假与调休安排待确认</small>
             </div>
-            <CalendarRecords v-if="selectedDate" :month="calendar.month" :date="selectedDate" @days="recordDays = $event" />
+            <CalendarRecords v-if="selectedDate" :month="calendar.month" :date="selectedDate" @days="recordDays = $event" @changed="workRevision++" />
           </template>
           <ContentLoading v-else skeleton label="正在读取日期与节假日…" />
         </section>

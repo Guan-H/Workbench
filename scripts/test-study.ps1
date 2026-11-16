@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidateSet('StudyIT', 'CourseIT', 'ReadingImportIT', 'LearningLayoutIT', 'WordImportIT')][string]$TestClass = 'StudyIT')
+param([ValidateSet('StudyIT', 'CourseIT', 'ReadingImportIT', 'LearningLayoutIT', 'WordImportIT', 'CalendarLedgerIT')][string]$TestClass = 'StudyIT')
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
