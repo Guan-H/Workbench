@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, Input as AInput, Textarea as ATextarea } from 'ant-design-vue'
 import { ref } from 'vue'
-import { X } from 'lucide-vue-next'
+import { FilePlus2, Link2, X } from 'lucide-vue-next'
 import AppDialog from '../../shared/AppDialog.vue'
 import { ApiError, write } from '../../shared/api/client'
 import type { CourseDetail } from './course-types'
@@ -44,22 +44,52 @@ async function save() {
 </script>
 
 <template>
-  <AppDialog label="添加阅读文章" :width="720">
-    <form class="reading-add" novalidate @submit.prevent="save">
-      <header><h2>添加文章</h2><AButton type="text" aria-label="关闭添加文章" :disabled="saving" @click="emit('close')"><X :size="18" /></AButton></header>
-      <AAlert v-if="error" type="error" show-icon :message="error" />
-      <div class="reading-add-fields">
-        <label for="reading-title">标题<AInput id="reading-title" v-model:value="title" :maxlength="200" :disabled="!!pending" required /></label>
-        <label for="reading-text">原文<ATextarea id="reading-text" v-model:value="text" :maxlength="100000" :rows="8" :disabled="!!pending" required placeholder="粘贴想阅读的正文" /></label>
-        <label for="reading-translation">译文（可选）<ATextarea id="reading-translation" v-model:value="translation" :maxlength="100000" :rows="4" :disabled="!!pending" placeholder="没有译文也能保存，不会自动翻译" /></label>
-        <label for="reading-source">来源链接（可选）<AInput id="reading-source" v-model:value="sourceUrl" :maxlength="2000" :disabled="!!pending" type="url" placeholder="https://…" /></label>
-        <p>来源链接仅作记录，不会自动读取网页；原文和译文按纯文本保存。暂不自动生成句子解析或练习。</p>
+  <AppDialog label="添加阅读文章" :width="800">
+    <form class="learning-dialog reading-add" novalidate @submit.prevent="save">
+      <header class="learning-dialog-header">
+        <span class="learning-dialog-icon"><FilePlus2 :size="22" aria-hidden="true" /></span>
+        <div class="learning-dialog-title"><h2>添加文章</h2><p>把想读的内容，收进自己的阅读列表。</p></div>
+        <AButton type="text" class="learning-dialog-close" aria-label="关闭添加文章" :disabled="saving" @click="emit('close')"><X :size="18" aria-hidden="true" /></AButton>
+      </header>
+      <div class="learning-dialog-body reading-add-fields">
+        <AAlert v-if="error" type="error" show-icon :message="error" />
+        <div class="reading-field">
+          <label for="reading-title">文章标题<span class="field-required">必填</span></label>
+          <AInput id="reading-title" v-model:value="title" :maxlength="200" :disabled="!!pending" required placeholder="给这篇文章起个名字" />
+        </div>
+        <div class="reading-text-columns">
+          <div class="reading-field">
+            <label for="reading-text">原文<span class="field-required">必填</span></label>
+            <ATextarea id="reading-text" v-model:value="text" :maxlength="100000" :rows="10" :disabled="!!pending" required placeholder="粘贴想阅读的英文正文…" />
+          </div>
+          <div class="reading-field">
+            <label for="reading-translation">译文<span>选填</span></label>
+            <ATextarea id="reading-translation" v-model:value="translation" :maxlength="100000" :rows="10" :disabled="!!pending" placeholder="有译文时可以一起保存，方便对照阅读。" />
+          </div>
+        </div>
+        <div class="reading-field">
+          <label for="reading-source"><Link2 :size="14" aria-hidden="true" />来源链接<span>选填</span></label>
+          <AInput id="reading-source" v-model:value="sourceUrl" :maxlength="2000" :disabled="!!pending" type="url" placeholder="https://…" />
+        </div>
+        <p class="learning-dialog-hint">仅保存粘贴的文字和出处，不自动抓取网页、翻译或生成练习。</p>
       </div>
-      <footer><AButton :disabled="saving" @click="emit('close')">关闭</AButton><AButton html-type="submit" type="primary" :loading="saving" :disabled="!title.trim() || !text.trim()">{{ pending ? '重试原保存' : '保存文章' }}</AButton></footer>
+      <footer class="learning-dialog-footer"><span class="learning-dialog-hint">保存后可在「阅读」中查看</span><AButton :disabled="saving" @click="emit('close')">取消</AButton><AButton html-type="submit" type="primary" :loading="saving" :disabled="!title.trim() || !text.trim()">{{ pending ? '重试原保存' : '保存文章' }}</AButton></footer>
     </form>
   </AppDialog>
 </template>
 
+<style scoped src="./reading-dialog.css"></style>
 <style scoped>
-.reading-add{display:flex;flex-direction:column;gap:16px;padding:8px;max-height:80dvh}.reading-add header,.reading-add footer{display:flex;align-items:center;justify-content:space-between;gap:12px}.reading-add h2{margin:0;font-size:20px}.reading-add-fields{display:grid;gap:16px;overflow:auto;padding:2px}.reading-add label{display:grid;gap:8px}.reading-add p{font-size:12px;color:var(--color-text-muted);line-height:1.8;margin:0}.reading-add footer{justify-content:flex-end;border-top:1px solid var(--color-border);padding-top:16px}@media(max-width:600px){.reading-add .ant-btn{min-height:44px}}
+.reading-add-fields { display: grid; gap: 20px; }
+.reading-field { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.reading-field label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.reading-field label span { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--color-text-muted); }
+.reading-field label .field-required { color: var(--color-primary); }
+.reading-field .ant-input { border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+.reading-field textarea { line-height: 1.8; resize: vertical; }
+.reading-text-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 600px) {
+  .reading-text-columns { grid-template-columns: minmax(0, 1fr); }
+  .reading-field textarea { height: 180px; }
+}
 </style>

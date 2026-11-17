@@ -55,7 +55,7 @@ async function documentTabKey(event: KeyboardEvent) {
 }
 function dayLabel(day: CalendarDay) {
   const records = recordDayMap.value.get(day.date)
-  return `${day.date} ${dayKind(day)}${day.date === calendar.value?.today ? ' 今天' : ''}${calendar.value?.available ? '' : '，放假调休安排待确认'}${records ? `，待办 ${records.todos} 项、未完成 ${records.pending} 项，其他 ${records.others} 项${records.overtimeMinutes ? '，有加班记录' : ''}${records.timeOffMinutes ? '，有个人调休记录' : ''}` : ''}`
+  return `${day.date} ${dayKind(day)}${day.date === calendar.value?.today ? ' 今天' : ''}${calendar.value?.available ? '' : '，放假调休安排待确认'}${records ? `，待办 ${records.todos} 项、未完成 ${records.pending} 项，其他 ${records.others} 项${records.overtimeMinutes ? '，加班 ' + timeLabel(records.overtimeMinutes) : ''}${records.timeOffMinutes ? '，个人调休 ' + timeLabel(records.timeOffMinutes) : ''}` : ''}`
 }
 function dayKind(day: CalendarDay) {
   return { holiday: day.holiday ? `${day.holiday}放假` : '放假', makeup: '调休上班', weekend: '周末', weekday: '平日' }[day.kind]
@@ -118,7 +118,7 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
           <header class="home-card-heading">
             <h2 id="home-calendar-title"><CalendarDays :size="18" aria-hidden="true" />日期与假期
               <ATooltip v-if="calendar && !calendarError" :trigger="['hover', 'focus', 'click']">
-                <template #title><div>{{ calendar.notice }}</div><div class="home-calendar-tooltip-legend">休：放假；班：调休上班；灰底为周末。</div></template>
+                <template #title><div>{{ calendar.notice }}</div><div class="home-calendar-tooltip-legend">右上角「休 / 班」：官方放假 / 调休上班；灰底为周末。下方「加 / 调休」：个人加班 / 个人调休；圆点表示待办或其他记录。</div></template>
                 <AButton type="text" class="home-calendar-info" aria-label="日期与假期说明"><CircleAlert :size="15" aria-hidden="true" /></AButton>
               </ATooltip>
             </h2>
@@ -135,14 +135,23 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
                     <template #title>
                       <div class="calendar-day-preview">
                         <strong>{{ day.date }} · 当天记录</strong>
+                        <div v-if="recordDayMap.get(day.date)?.overtimeMinutes || recordDayMap.get(day.date)?.timeOffMinutes" class="calendar-day-preview-totals"><span v-if="recordDayMap.get(day.date)?.overtimeMinutes">加班 {{ timeLabel(recordDayMap.get(day.date)!.overtimeMinutes) }}</span><span v-if="recordDayMap.get(day.date)?.timeOffMinutes">个人调休 {{ timeLabel(recordDayMap.get(day.date)!.timeOffMinutes) }}</span></div>
                         <div v-for="(item, index) in recordDayMap.get(day.date)?.previews" :key="index" class="calendar-day-preview-item"><span>{{ previewKind(item.kind) }} · {{ previewTime(item) }}</span><b>{{ item.title }}</b></div>
                         <small v-if="recordCount(recordDayMap.get(day.date)!) > (recordDayMap.get(day.date)?.previews.length ?? 0)">另有 {{ recordCount(recordDayMap.get(day.date)!) - (recordDayMap.get(day.date)?.previews.length ?? 0) }} 条，点击日期查看全部</small>
                         <small v-else>点击日期查看完整内容</small>
                       </div>
                     </template>
-                    <AButton type="text" :class="['home-calendar-day', day.kind, { today: day.date === calendar.today, selected: day.date === selectedDate }]" :aria-label="dayLabel(day)" :aria-pressed="day.date === selectedDate" :aria-current="day.date === calendar.today ? 'date' : undefined" :data-calendar-date="day.date" :disabled="calendarLoading" @click="selectDate(day.date)" @keydown.enter.stop @keydown.space.stop><span>{{ day.day }}</span><i class="calendar-record-dot" aria-hidden="true" /><small v-if="day.kind === 'holiday'">休</small><small v-else-if="day.kind === 'makeup'">班</small></AButton>
+                    <AButton type="text" :class="['home-calendar-day', day.kind, { today: day.date === calendar.today, selected: day.date === selectedDate }]" :aria-label="dayLabel(day)" :aria-pressed="day.date === selectedDate" :aria-current="day.date === calendar.today ? 'date' : undefined" :data-calendar-date="day.date" :disabled="calendarLoading" @click="selectDate(day.date)" @keydown.enter.stop @keydown.space.stop>
+                      <span class="calendar-day-number">{{ day.day }}</span>
+                      <span class="calendar-personal-marks" aria-hidden="true">
+                        <span v-if="recordDayMap.get(day.date)!.overtimes > 0" class="calendar-personal-mark calendar-overtime-mark">加</span>
+                        <span v-if="recordDayMap.get(day.date)!.timeOffs > 0" class="calendar-personal-mark calendar-time-off-mark">调休</span>
+                      </span>
+                      <i v-if="recordDayMap.get(day.date)!.todos || recordDayMap.get(day.date)!.others" class="calendar-record-dot" aria-hidden="true" />
+                      <small v-if="day.kind === 'holiday'" class="calendar-official-mark" aria-hidden="true">休</small><small v-else-if="day.kind === 'makeup'" class="calendar-official-mark" aria-hidden="true">班</small>
+                    </AButton>
                   </ATooltip>
-                  <AButton v-else-if="day" type="text" :class="['home-calendar-day', day.kind, { today: day.date === calendar.today, selected: day.date === selectedDate }]" :aria-label="dayLabel(day)" :aria-pressed="day.date === selectedDate" :aria-current="day.date === calendar.today ? 'date' : undefined" :data-calendar-date="day.date" :disabled="calendarLoading" @click="selectDate(day.date)" @keydown.enter.stop @keydown.space.stop><span>{{ day.day }}</span><small v-if="day.kind === 'holiday'">休</small><small v-else-if="day.kind === 'makeup'">班</small></AButton>
+                  <AButton v-else-if="day" type="text" :class="['home-calendar-day', day.kind, { today: day.date === calendar.today, selected: day.date === selectedDate }]" :aria-label="dayLabel(day)" :aria-pressed="day.date === selectedDate" :aria-current="day.date === calendar.today ? 'date' : undefined" :data-calendar-date="day.date" :disabled="calendarLoading" @click="selectDate(day.date)" @keydown.enter.stop @keydown.space.stop><span class="calendar-day-number">{{ day.day }}</span><span class="calendar-personal-marks" aria-hidden="true" /><small v-if="day.kind === 'holiday'" class="calendar-official-mark" aria-hidden="true">休</small><small v-else-if="day.kind === 'makeup'" class="calendar-official-mark" aria-hidden="true">班</small></AButton>
                 </template>
               </template>
             </ACalendar>
@@ -238,7 +247,22 @@ onBeforeUnmount(() => { requestSerial++; clearInterval(dayTimer); window.removeE
 .home-date-signature time { font-size: 12px; color: var(--color-text-muted); }
 .home-date-zone { font-size: 11px; color: var(--color-text-muted); }
 .home-columns { display: contents; }
-.calendar-record-dot { position: absolute; bottom: 3px; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.home-month .home-calendar-day {
+  position: relative;
+  flex-direction: column;
+  gap: 1px;
+  height: 36px;
+  line-height: 1;
+}
+.calendar-day-number { line-height: 16px; font-variant-numeric: tabular-nums; }
+.calendar-personal-marks { display: flex; justify-content: center; gap: 2px; min-height: 14px; white-space: nowrap; }
+.calendar-personal-mark { font-size: 11px; line-height: 14px; font-weight: 500; border-radius: 3px; }
+.calendar-overtime-mark { color: var(--color-accent-warm); background: color-mix(in srgb, var(--color-accent-warm) 12%, var(--color-surface)); }
+.calendar-time-off-mark { color: var(--color-primary-hover); background: var(--color-accent-soft); }
+.home-month .home-calendar-day.selected .calendar-personal-mark { background: #ffffff26; color: #fff; }
+.home-month .home-calendar-day .calendar-official-mark { position: absolute; top: 1px; right: 1px; margin: 0; line-height: 11px; font-size: 10px; }
+.calendar-record-dot { position: absolute; top: 4px; left: 3px; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.calendar-day-preview-totals { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; }
 .calendar-day-preview { display: grid; min-width: 220px; max-width: 300px; gap: 8px; }
 .calendar-day-preview > strong { font-size: 13px; }
 .calendar-day-preview-item { display: grid; gap: 2px; padding-top: 7px; border-top: 1px solid #ffffff33; }

@@ -13,7 +13,7 @@ import AppMessage from '../../shared/AppMessage.vue'
 import { englishSpeechNotice, clearEnglishSpeechNotice, stopEnglishSpeech } from './speech'
 import { displayTime, type Daily } from './types'
 defineProps<{ username: string }>()
-const emit=defineEmits<{study:[]}>()
+const historyDetails=ref<HTMLDetailsElement>()
 const result=ref<Daily>(),date=ref(''),historyPage=ref(1),selectedBatch=ref<string>(),loading=ref(false),error=ref('')
 const tab=ref<'articles'|'words'>('articles'),articlePage=ref(1),wordPage=ref(1)
 const contentScroll=ref<HTMLElement>()
@@ -70,20 +70,23 @@ onMounted(()=>{void load()});onBeforeUnmount(()=>{disposed=true;++serial;control
 <template>
  <section class="home-card daily-english" aria-labelledby="daily-english-title" :aria-busy="loading">
   <AppMessage :notice="englishSpeechNotice" @close="clearEnglishSpeechNotice" />
-  <header class="home-card-heading"><h2 id="daily-english-title"><BookOpen :size="18" />每日文章</h2><AButton :loading="loading" aria-label="刷新每日文章" @click="load(undefined,true)"><RefreshCw :size="15" /></AButton></header>
-  <div class="english-study-controls"><AButton class="study-entry" @click="emit('study')">今日学习与词库</AButton><SpeechSettings /></div>
-  <details class="english-history"><summary>日期与历史 · {{ date || '加载中' }}</summary>
+  <header class="home-card-heading english-toolbar"><h2 id="daily-english-title"><BookOpen :size="18" />每日文章</h2>
+    <ARadioGroup v-if="result?.latest" v-model:value="tab" aria-label="英语内容类型" class="english-tabs"><ARadioButton value="articles">文章 / 句子</ARadioButton><ARadioButton value="words">单词</ARadioButton></ARadioGroup>
+    <div class="english-toolbar-actions">
+  <details ref="historyDetails" class="english-history"><summary :aria-label="'日期与历史 · '+(date||'加载中')">日期与历史 <time :datetime="date">{{ date?.slice(5) || '加载中' }}</time></summary><div class="english-history-panel"><header><strong>日期与历史</strong><AButton size="small" @click="historyDetails && (historyDetails.open=false)">收起</AButton></header>
   <div class="english-controls"><label>学习日期<AInput v-model:value="date" type="date" aria-label="英语学习日期" :disabled="loading" @change="changeDate" /></label><span>北京时间 · 可查看历史批次</span></div>
     <div v-if="result?.latest" class="english-batch"><label>接收批次<ASelect v-model:value="selectedBatch" aria-label="英语历史批次" :options="historyOptions" :disabled="loading" @change="()=>load(selectedBatch)" /></label><span>共 {{ result.total }} 批 · 当前批次 #{{ result.latest.id }}</span><AppPagination v-if="result.total>10" v-model:page="historyPage" :pages="Math.ceil(result.total/10)" :total="result.total" :page-size="10" :disabled="loading" show-page-summary @update:page="historyChange" /></div>
-  </details>
+  </div></details>
+    <SpeechSettings /><AButton :loading="loading" aria-label="刷新每日文章" @click="load(undefined,true)"><RefreshCw :size="15" /></AButton>
+    </div>
+  </header>
   <AAlert v-if="error" type="error" show-icon :message="error" />
   <p v-if="loading&&!result" role="status">正在读取每日文章…</p>
   <template v-else-if="result">
    <div v-if="!result.latest" class="english-empty">这一天还没有收到英语推送。可在设置中配置接收入口。</div>
    <template v-else>
-    <ARadioGroup v-model:value="tab" aria-label="英语内容类型" class="english-tabs"><ARadioButton value="articles">文章 / 句子</ARadioButton><ARadioButton value="words">单词</ARadioButton></ARadioGroup>
-    <div class="english-content" :class="{ 'english-content-words': tab === 'words' }"><div ref="contentScroll" class="english-scroll">
-     <template v-if="tab==='articles'"><ArticleReading v-if="article" :article="article" /><p v-else>本批次没有文章或句子。</p></template>
+    <div class="english-content" :class="{ 'english-content-words': tab === 'words' }"><div ref="contentScroll" class="english-scroll" :class="{'english-scroll-article':tab==='articles'}">
+     <template v-if="tab==='articles'"><ArticleReading v-if="article" :article="article" fixed-header /><p v-else>本批次没有文章或句子。</p></template>
      <template v-else><ul v-if="wordRows.length" class="english-words"><li v-for="(word,index) in wordRows" :key="index"><div><strong lang="en">{{ word.word }}</strong><span v-if="word.phonetic">{{ word.phonetic }}</span><ReadAloudButton kind="word" :text="word.word" :label="`朗读单词 ${word.word}`" compact /></div><p>{{ word.meaning }}</p><WordExample v-if="word.example" :word="word.word" :example="word.example" :translation="word.exampleTranslation" /></li></ul><p v-else>本批次没有单词。</p></template>
     </div><WordChallenge v-if="tab === 'words'" :key="result.latest.id" :username="username" :batch-id="result.latest.id" :word-count="words.length" :vocabulary="words" /></div>
     <footer v-if="tab==='articles'&&articles.length" class="english-pagination"><span>共 {{ articles.length }} 篇</span><AppPagination v-model:page="articlePage" :pages="articles.length" :total="articles.length" :page-size="1" show-page-summary /></footer>
@@ -93,6 +96,7 @@ onMounted(()=>{void load()});onBeforeUnmount(()=>{disposed=true;++serial;control
  </section>
 </template>
 <style scoped>
+.daily-english .english-content>.english-scroll-article{display:flex;overflow:hidden;padding-right:0;scrollbar-gutter:auto}
 .daily-english{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}.daily-english>*{flex-shrink:0}.english-content{display:flex;flex:1;min-height:0;overflow:hidden}.english-scroll{flex:1;min-height:0;max-height:none;overflow:auto}.english-tabs{align-self:flex-start}.english-pagination{flex-shrink:0;margin:12px 0 0!important;padding-top:12px}.english-study-controls,.english-history{margin-bottom:8px}.home-card-heading{flex-shrink:0}.english-content-words{grid-template-rows:minmax(0,1fr)}.english-content-words>.english-scroll{height:100%}.english-words strong{min-width:0;overflow-wrap:anywhere}
 .english-study-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .daily-english{min-width:0}.english-history{margin:8px 0 14px}.english-history>summary{font-size:12px;color:var(--color-text-muted);cursor:pointer;padding:4px 0}.english-controls,.english-batch,.english-pagination{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}.english-controls label,.english-batch label{display:grid;gap:6px;font-size:12px}.english-controls input{max-width:180px}.english-controls>span,.english-batch>span{color:var(--color-text-muted);font-size:12px}.english-batch label{flex:1;min-width:180px}.english-batch :deep(.ant-select){width:100%}.english-tabs{margin-bottom:16px}.english-scroll{font-size:14px;max-height:180px;overflow:auto;min-height:60px;line-height:1.9;overflow-wrap:anywhere}.english-article h3{margin:0 0 10px;font-size:16px}.english-article p{white-space:pre-wrap}.english-words{list-style:none;padding:0;margin:0}.english-words li{padding:14px 0;border-bottom:1px solid var(--color-border)}.english-words li>div{display:flex;gap:12px;flex-wrap:wrap}.english-words strong{font-size:19px}.english-words span{color:var(--color-text-muted)}.english-words p{margin:6px 0;white-space:pre-wrap}.english-empty{padding:14px 0;color:var(--color-text-muted)}.english-pagination{justify-content:space-between;border-top:1px solid var(--color-border);padding-top:12px;font-size:12px}
@@ -113,4 +117,9 @@ onMounted(()=>{void load()});onBeforeUnmount(()=>{disposed=true;++serial;control
   .english-content-words :deep(.word-challenge > div){flex:0 0 auto;min-width:0}
   .english-content-words :deep(.word-challenge h3){font-size:13px}
 }
+</style>
+
+<style scoped>
+.daily-english>.english-toolbar{display:flex;align-items:center;justify-content:flex-start;gap:10px 16px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--color-border)}.english-toolbar h2{margin:0;font-size:14px;white-space:nowrap}.english-toolbar .english-tabs{margin:0}.english-toolbar-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}.english-toolbar .english-history{position:relative;margin:0;border:0;padding:0}.english-history>summary{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 6px;list-style:none;border-radius:6px}.english-history>summary::before{content:'▸';font-size:10px}.english-history[open]>summary::before{content:'▾'}.english-history>summary::-webkit-details-marker{display:none}.english-history time{color:var(--color-text-muted)}.english-history-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:20;width:min(360px,calc(100vw - 64px));max-height:calc(100dvh - 220px);overflow:auto;padding:16px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:10px;box-shadow:0 8px 24px var(--color-card-shadow)}.english-history-panel>header{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}.english-history-panel .english-controls{margin:12px 0}.english-history-panel .english-batch{display:grid;margin:12px 0 0;gap:10px}.english-history-panel .english-batch label{min-width:0}.english-history-panel .english-batch :deep(.ant-select){min-width:0;width:100%}.english-toolbar-actions>button{min-width:32px}.english-content :deep(.article-mode){margin-bottom:8px}.english-content :deep(.english-article-fixed>.article-body>p:first-child){margin-top:0}
+@media(max-width:600px){.daily-english>.english-toolbar{gap:6px 10px;margin-bottom:8px;padding-bottom:8px}.english-toolbar-actions{flex-basis:100%;gap:6px;justify-content:flex-end}.english-toolbar-actions>button,.english-history>summary{min-height:44px}.english-toolbar .english-history{margin-right:auto}.english-history-panel{left:0;right:auto}.english-toolbar h2{font-size:13px}.english-toolbar :deep(.speech-settings-trigger){padding-inline:6px}.english-toolbar .english-tabs :deep(.ant-radio-button-wrapper){min-height:36px;display:inline-flex;align-items:center}}
 </style>

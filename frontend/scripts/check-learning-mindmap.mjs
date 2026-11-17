@@ -38,7 +38,7 @@ try{
     requests.length=0;await page.reload();await page.getByRole('region',{name:'学习摘要',exact:true}).getByText(/今日 1 篇文章 · 3 个单词/).waitFor()
     assert.equal(requests.some(url=>/\/api\/v1\/home\/english\?/.test(url)),false,'home summary must not fetch full articles')
     await page.getByRole('button',{name:'继续学习',exact:true}).click();await page.getByRole('heading',{name:'Aligned test article',exact:true}).waitFor()
-    await page.getByRole('button',{name:'今日学习与词库',exact:true}).click()
+    await page.getByRole('button',{name:'词库与计划',exact:true}).click()
     const learning=page.getByRole('region',{name:'英语学习',exact:true})
     await learning.locator('.study-summary').waitFor();assert.equal(await page.getByRole('dialog',{name:'英语学习',exact:true}).count(),0)
     await learning.getByRole('button',{name:'生成今日计划',exact:true}).click();await learning.getByRole('heading',{name:/词汇任务/}).waitFor()

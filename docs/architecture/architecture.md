@@ -1646,6 +1646,12 @@ AppDialog 增加可选 width，未指定时原 500/900px 行为保持；只有 W
 
 学习布局使用多层flex的min-height:0约束：LearningView外壳overflow:hidden，DailyEnglishCard正文、CourseLearning列表/正文及StudyDialog内容体各自滚动，工具栏/筛选与分页flex-shrink:0。嵌入StudyDialog的动态div包装也必须参与flex约束，避免包装高度将分页撑出视口。AppPagination新增可选showPageSummary（默认false），学习页显式启用，不改变其他模块分页显示。单词采用4/5列响应式网格，手机2列，保证完整内容可展开；不修改后端分页契约或数据。
 
+2026-11-17推送文章固定头部：ArticleReading新增可选fixedHeader，DailyEnglishCard显式启用；外层文章容器为受约束flex，标题/模式栏不收缩，article-body单独滚动并支持键盘聚焦，分页仍在外层固定。换文章时重置正文scrollTop；其他ArticleReading调用保留原有滚动行为。未改接口、数据或依赖。
+
+同日紧凑布局：LearningView桌面使用紧凑标题/导航同排，手机以grid保留词库按钮和整行导航。DailyEnglishCard工具栏合并栏目/类型/历史/语音/刷新，日期与批次继续原details交互，内容改为受限定位面板，显式收起且不撑高正文；移除重复词库入口及未再使用的study事件，保留顶层词库与计划。收紧ArticleReading周边标题与段首间距，不改接口或数据；历史选择器和旧导航专项同步调整。
+
+同日全文对照修正：fixedHeader且全文对照、视口宽于600px时，article-body只约束布局、不滚动；两栏使用minmax(0,1fr)及min-height:0，栏名不收缩，原文/译文p分别滚动并可键盘聚焦；换文章重置两栏scrollTop。600px及以下维持原上下排版，不改变其他ArticleReading调用。
+
 来源网络最终采用固定官方RSS入口，使用标准JDK安全XML解析（禁用DTD/外部实体），从content:encoded读取完整正文，每批至多5项；GUID摘要作为去重身份。429/503保存Retry-After退避，缺省15分钟，不在等待期访问来源。Reading专用可选代理来自PRIVATE_SPACE_READING_PROXY_URL；Windows启动脚本仅为该变量读取已有系统代理，生产容器默认直连。HTML清洗先移除脚本/样式容器，再交给JDK解析器输出纯文本，不将远端HTML交给浏览器。此段覆盖开发初期REST/数字编号方案，具体最终实现与接口见WEBHOOK-ENGLISH.md。
 
 阅读内容接入沿用 english 模块：V27 为 english_course 增加 origin_kind/origin_key/request_hash/created_at 和来源唯一索引，新增 english_reading_source 单来源状态表，未修改旧正文/进度。手动创建按 UUID 定位稳定ID与请求摘要，用真实数据库去重；Content/Detail 可空 origin 保存出处与时间，Summary.kind 缺省 original，兼容旧快照。固定NASA官方RSS使用标准 Java HttpClient（无跳转、25秒、2MiB BodySubscriber上限），安全XML及标准HTML解析器只提取内嵌惰性文本，无新依赖。单独单线程执行网络读取，调度只派发已开启且超过6小时的来源；2分钟数据库运行标记及本机互斥合并并发，GUID摘要唯一约束防止重复入库。记录实际新增/跳过/错误，部分写入不回滚此前已保存文章，不声称HTTP接收即完成。默认关闭自动同步，手动同步独立于开关；不调用AI，不抓任意用户URL，不下载图片音频。
@@ -1742,6 +1748,8 @@ CalendarLedgerService读事务使用一致性快照；期初预览与确认携�
 接口：GET /api/v1/home/calendar/ledger?month=YYYY-MM 返回monthly/cumulative、opening、recordsRevision与netMinutes；opening的version为数字，其余操作中的版本为字符串。GET /ledger/history?page=1 返回items（月、加班分钟、调休分钟）、total月份数和page。POST /ledger/opening-preview及PUT /ledger/opening均提交{baseVersion,recordsRevision,startDate,openingMinutes}；PUT另需UUID Idempotency-Key。同操作不同内容或旧版本409，非法值400。期初为有符号整分钟，技术输入范围为-525600000至525600000分钟，负值表示此前透支调休；所有API沿用网页认证/CSRF/Origin。原记录写入新增可选timeOffMinutes，Item/Preview新增timeOffMinutes，Day新增timeOffs/timeOffMinutes；旧记录新值为0。
 
 ## 独立 AI 聊天设计（2026-11-16，待实现）
+
+2026-11-17需求梳理：PRD 6.5已按确认范围、交互/上下文、保存/异常、验收、实施设计及待验证环境组织，首期功能和主要业务规则足以进入开发设计。原多服务商/DeepSeek、同会话切模型、仅末轮可重生成/改选、永久删除及凭据隔离保持；没有新增代码或选定新加密实现。上下文组装、断线回读、并发协调等应在既有规则下落实，不再作为重新确认产品范围的前置清单。新的加密或权限关键方案仍按项目规范处理；实际环境和模型能力通过真实联调验证。
 
 ### 范围与模块边界
 

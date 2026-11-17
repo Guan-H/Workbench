@@ -34,8 +34,8 @@ class LearningLayoutIT {
         try (var context = start()) {
             browser(context, "play");
             var jdbc = context.getBean(JdbcTemplate.class);
-            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM english_course WHERE origin_kind='manual'", Integer.class)).isEqualTo(11);
-            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM english_batch", Integer.class)).isEqualTo(11);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM english_course WHERE origin_kind='manual'", Integer.class)).isEqualTo("true".equals(System.getenv("LAYOUT_ARTICLE_ONLY")) ? 0 : 11);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM english_batch", Integer.class)).isEqualTo("true".equals(System.getenv("LAYOUT_ARTICLE_ONLY")) ? 1 : 11);
         }
     }
 
