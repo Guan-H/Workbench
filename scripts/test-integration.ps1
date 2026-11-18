@@ -1,7 +1,10 @@
 [CmdletBinding()]
-param([switch]$IncludeCrypto, [switch]$IncludeSync, [switch]$UsePackagedSync, [switch]$OnlyAccountSessions, [string]$FullDiskImage, [string]$ObsidianVault)
+param([switch]$IncludeCrypto, [switch]$IncludeSync, [switch]$UsePackagedSync, [switch]$OnlyAccountSessions, [switch]$OnlyAiSettings, [string]$FullDiskImage, [string]$ObsidianVault)
 
 $ErrorActionPreference = 'Stop'
+if ($OnlyAiSettings -and ($OnlyAccountSessions -or $IncludeCrypto -or $IncludeSync -or $UsePackagedSync -or $FullDiskImage -or $ObsidianVault)) {
+    throw 'OnlyAiSettings must be run separately from the other integration suites.'
+}
 if ($OnlyAccountSessions -and ($IncludeCrypto -or $IncludeSync -or $UsePackagedSync -or $FullDiskImage -or $ObsidianVault)) {
     throw 'OnlyAccountSessions must be run separately from the other integration suites.'
 }
@@ -16,6 +19,7 @@ if ($UsePackagedSync -and -not (Test-Path -LiteralPath (Join-Path $projectRoot '
     throw 'Run scripts/build-sync-prototype.ps1 before requesting packaged verification.'
 }
 $composeFile = Join-Path $projectRoot 'deploy/compose.integration.yml'
+$integrationProject = "workbench-integration-$PID"
 $mavenRepository = Join-Path $projectRoot '.m2-cache/repository'
 $env:IT_DB_PASSWORD = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
 $env:IT_ROOT_PASSWORD = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
@@ -26,18 +30,18 @@ if ($FullDiskImage) { $env:M0_FULL_DISK_IMAGE = $FullDiskImage }
 if ($ObsidianVault) { $env:M0_OBSIDIAN_VAULT = $ObsidianVault }
 
 try {
-    & docker compose -f $composeFile up -d --wait --wait-timeout 120
+    & docker compose -p $integrationProject -f $composeFile up -d --wait --wait-timeout 120
     if ($LASTEXITCODE -ne 0) { throw 'Integration MySQL failed to start.' }
-    $binding = & docker compose -f $composeFile port mysql 3306
+    $binding = & docker compose -p $integrationProject -f $composeFile port mysql 3306
     if ($LASTEXITCODE -ne 0 -or $binding -notmatch '^127\.0\.0\.1:(\d+)$') {
         throw 'Could not resolve the isolated integration database port.'
     }
     $env:IT_DB_URL = "jdbc:mysql://127.0.0.1:$($Matches[1])/private_space_it?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
     Push-Location "$projectRoot/backend"
     try {
-        $testSelection = if ($OnlyAccountSessions) { '-Dit.test=AuthSessionsIT' } elseif ($IncludeCrypto) { '-Dit.test=RuntimeIT,NotesIT,VaultCryptoIT' } else { '-Dit.test=RuntimeIT,NotesIT' }
+        $testSelection = if ($OnlyAiSettings) { '-Dit.test=AiSettingsIT' } elseif ($OnlyAccountSessions) { '-Dit.test=AuthSessionsIT' } elseif ($IncludeCrypto) { '-Dit.test=RuntimeIT,NotesIT,VaultCryptoIT' } else { '-Dit.test=RuntimeIT,NotesIT' }
         # The account suite uses compiled classes; it need not replace a locally running JAR.
-        $goals = if ($OnlyAccountSessions) { @('test', 'failsafe:integration-test', 'failsafe:verify') } else { @('verify') }
+        $goals = if ($OnlyAiSettings) { @('test-compile', 'failsafe:integration-test', 'failsafe:verify') } elseif ($OnlyAccountSessions) { @('test', 'failsafe:integration-test', 'failsafe:verify') } else { @('verify') }
         & mvn "-Dmaven.repo.local=$mavenRepository" -P integration $testSelection @goals --no-transfer-progress
         if ($LASTEXITCODE -ne 0) { throw 'Real MySQL/HTTP integration verification failed.' }
     } finally {
@@ -45,7 +49,7 @@ try {
     }
 } finally {
     # This project has no persistent volumes and never mounts the development database.
-    & docker compose -f $composeFile down
+    & docker compose -p $integrationProject -f $composeFile down
     if ($LASTEXITCODE -ne 0) { Write-Warning 'Integration containers require manual cleanup.' }
     Remove-Item Env:IT_DB_PASSWORD, Env:IT_ROOT_PASSWORD, Env:IT_DB_USERNAME, Env:IT_DB_URL, Env:IT_INCLUDE_SYNC, Env:IT_USE_PACKAGED_SYNC, Env:M0_FULL_DISK_IMAGE, Env:M0_OBSIDIAN_VAULT -ErrorAction SilentlyContinue
 }

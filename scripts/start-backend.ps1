@@ -38,6 +38,10 @@ if (-not (Test-Path -LiteralPath $setupPath)) {
     [IO.File]::WriteAllText($setupPath, $setupCredential, [Text.UTF8Encoding]::new($false))
 }
 $env:PRIVATE_SPACE_SETUP_TOKEN = [IO.File]::ReadAllText($setupPath).Trim()
+$aiKeyPath = Join-Path $projectRoot 'deploy/ai-encryption-key.local'
+if (-not $env:PRIVATE_SPACE_AI_ENCRYPTION_KEY -and (Test-Path -LiteralPath $aiKeyPath)) {
+    $env:PRIVATE_SPACE_AI_ENCRYPTION_KEY = [IO.File]::ReadAllText($aiKeyPath).Trim()
+}
 if ($IsWindows -and -not $env:PRIVATE_SPACE_READING_PROXY_URL) {
     # Only reading-source traffic follows the existing Windows proxy; local Office/API traffic is unchanged.
     $readingTarget = [Uri]'https://www.nasa.gov/feed/'

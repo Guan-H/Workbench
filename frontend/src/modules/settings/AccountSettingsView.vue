@@ -9,8 +9,11 @@ import ConfirmDialog from '../../shared/ConfirmDialog.vue'
 import PasswordGenerator from '../vault/PasswordGenerator.vue'
 import EnglishWebhookSettings from '../english/EnglishWebhookSettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
+import AiSettings from '../ai/AiSettings.vue'
 
 interface LoginSession { id: string; current: boolean; createdAt: string; expiresAt: string }
+const props = defineProps<{ initialTab?: string }>()
+const activeTab = ref(props.initialTab ?? 'appearance')
 const emit = defineEmits<{ sessionExpired: [] }>()
 const sessions = ref<LoginSession[]>([])
 const loading = ref(false)
@@ -78,7 +81,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(feedbackTimer) })
     </header>
     <AppMessage :notice="feedback" @close="feedback = undefined" />
     <p v-if="error" class="error-message" role="alert">{{ error }} <AButton v-if="expired" @click="emit('sessionExpired')">重新登录</AButton></p>
-    <ATabs>
+    <ATabs v-model:active-key="activeTab">
     <ATabPane key="appearance" tab="外观"><AppearanceSettings /></ATabPane>
     <ATabPane key="account" tab="账户安全">
     <section class="home-card account-sessions" aria-labelledby="sessions-title">
@@ -103,6 +106,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearTimeout(feedbackTimer) })
     </section>
     </ATabPane>
     <ATabPane key="webhook" tab="Webhook"><EnglishWebhookSettings /></ATabPane>
+    <ATabPane key="ai" tab="AI 服务"><AiSettings /></ATabPane>
     <ATabPane key="tools" tab="密码工具"><PasswordGenerator /></ATabPane>
     </ATabs>
     <ConfirmDialog v-if="target" title="撤销登录会话" :message="`确定撤销 ${time(target.createdAt)} 建立的会话吗？该会话下次访问私有内容时需要重新登录。`" confirm-label="确认撤销" @answer="revoke" />

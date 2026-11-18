@@ -38,6 +38,10 @@
 .workspace .private-label { color: var(--color-text-muted); font-size: 11px; }
 .workspace .ant-btn-link { color: var(--color-primary); }
 .workspace .file-sidebar { background: #f9f8f5; border-radius: 12px 0 0 12px; border: 1px solid var(--color-border); border-right: 0; }
+.note-files-viewport { --panel-width: 224px; }
+.outline-viewport { --panel-width: 160px; --panel-exit-offset: 8px; }
+@media (max-width: 1279px) { .outline-viewport { display: none; } }
+@media (max-width: 1023px) { .note-files-viewport { --panel-width: 200px; } }
 .workspace .note-main { border: 1px solid var(--color-border); border-radius: 0 12px 12px 0; overflow: hidden; }
 .workspace .outline-sidebar { background: var(--color-surface); }
 .workspace .search-field { border-radius: 8px; }
@@ -130,7 +134,27 @@
   .workspace > .home-main, .workspace .note-main { border: 0; border-radius: 0; }
   .workspace .workspace-topbar { min-height: 56px; padding-inline: 12px; }
   .workspace .global-sidebar { width: 176px; padding: 18px 10px 12px; background: var(--color-sidebar); }
-  .workspace .file-sidebar { left: 176px; width: min(224px, calc(100vw - 176px)); border-radius: 0; }
+  .workspace .file-sidebar { border-radius: 0; }
+  .note-files-viewport {
+    --panel-width: min(224px, calc(100vw - 176px));
+    position: fixed;
+    inset: 56px auto 0 176px;
+    z-index: 20;
+    width: var(--panel-width);
+    box-shadow: 8px 0 18px #252a2810;
+    transition: opacity var(--panel-duration) var(--panel-easing), translate var(--panel-duration) var(--panel-easing), visibility 0s;
+  }
+  .workspace:not(.mobile-nav-open) .note-files-viewport,
+  .note-files-viewport.is-collapsed {
+    --panel-duration: 160ms;
+    --panel-easing: cubic-bezier(.4, 0, 1, 1);
+    opacity: 0;
+    translate: -12px 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition-delay: 0s, 0s, var(--panel-duration);
+  }
+  .note-files-viewport.is-collapsed > .workspace-panel-card { opacity: 1; translate: none; }
   .workspace .reading-library-header, .workspace .mindmap-heading { padding: 20px 16px; }
   .global-sidebar nav > .ant-btn, .sidebar-bottom > .ant-btn { min-height: 44px; }
   .auth-page { display: block; }

@@ -83,6 +83,8 @@ Workbench/
 
 后端默认监听 `http://127.0.0.1:8080`，文件对象位于 `data/objects`。就绪检查为 `GET /api/system/health/readiness`。
 
+本地开发 AI 服务时，按[本地 AI 联调说明](docs/DEVELOPMENT.md#本地-ai-联调)准备独立加密密钥，再启动后端。服务商的 API Key 在网页“设置 → AI 服务”内填写。
+
 需要本地 Word/Excel 编辑时，先在项目根目录运行 `./scripts/start-office.ps1`，再启动或重启后端。该脚本生成不提交 Git 的 `deploy/office.local`，并启动本机 `8082` 端口上的文档服务。它需要额外的内存和镜像下载空间。
 
 ### 3. 启动前端并初始化账户
