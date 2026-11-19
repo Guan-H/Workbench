@@ -1,6 +1,14 @@
 import { api, apiResponse } from '../../shared/api/client'
 
 export interface AiModel { modelId: string; name: string }
+export interface AiProviderPreset { id: string; label: string; baseUrl: string; custom: boolean }
+export interface AiDefaultModel {
+  revision: number
+  providerId: string | null
+  modelId: string | null
+  connectionId: string | null
+}
+export const chatModelKey = (connectionId: string, modelId: string) => connectionId + ':' + modelId
 export interface AiSettings {
   revision: number
   providerName: string
@@ -10,6 +18,9 @@ export interface AiSettings {
   encryptionReady: boolean
   providerId: string
   providerLabel: string
+  connectionId: string
+  credentialRevision: number
+  available: boolean
 }
 export interface AiResult {
   provider: string
@@ -20,18 +31,41 @@ export interface AiResult {
   elapsedMs: number
 }
 type SettingsInput = Pick<AiSettings, 'revision' | 'providerName' | 'models'> & { apiKey?: string }
-type ProbeInput = { modelId: string; text: string; providerId: string }
+type ProbeInput = { modelId: string; text: string; providerId: string; connectionId: string }
+type ConnectionTarget = Pick<AiSettings, 'providerId' | 'connectionId'>
+const connectionParams = (target: ConnectionTarget) => new URLSearchParams({ provider: target.providerId, connection: target.connectionId })
 
 export function readAiProviders(signal: AbortSignal) {
   return api<AiSettings[]>('/ai/providers', { signal })
 }
 
-export function discoverAiModels(providerId: string, signal: AbortSignal) {
-  return api<AiModel[]>('/ai/models?provider=' + encodeURIComponent(providerId), { signal })
+export function readAiProviderPresets(signal: AbortSignal) {
+  return api<AiProviderPreset[]>('/ai/provider-presets', { signal })
 }
 
-export function saveAiSettings(providerId: string, value: SettingsInput, signal: AbortSignal) {
-  return api<AiSettings>('/ai/settings?provider=' + encodeURIComponent(providerId), { method: 'PUT', body: JSON.stringify(value), signal })
+export function createAiConnection(value: { providerId: string; name: string; apiKey: string; baseUrl?: string }, signal: AbortSignal) {
+  return api<AiSettings>('/ai/connections', { method: 'POST', body: JSON.stringify(value), signal })
+}
+
+export async function deleteAiConnection(target: AiSettings, signal: AbortSignal) {
+  const params = new URLSearchParams({ provider: target.providerId, revision: String(target.revision) })
+  await apiResponse(`/ai/connections/${encodeURIComponent(target.connectionId)}?${params}`, { method: 'DELETE', signal })
+}
+
+export function readDefaultModel(signal: AbortSignal) {
+  return api<AiDefaultModel>('/ai/default-model', { signal })
+}
+
+export function saveDefaultModel(value: AiDefaultModel, signal: AbortSignal) {
+  return api<AiDefaultModel>('/ai/default-model', { method: 'PUT', body: JSON.stringify(value), signal })
+}
+
+export function discoverAiModels(target: ConnectionTarget, signal: AbortSignal) {
+  return api<AiModel[]>('/ai/models?' + connectionParams(target), { signal })
+}
+
+export function saveAiSettings(target: ConnectionTarget, value: SettingsInput, signal: AbortSignal) {
+  return api<AiSettings>('/ai/settings?' + connectionParams(target), { method: 'PUT', body: JSON.stringify(value), signal })
 }
 
 export async function probeAi(value: ProbeInput, stream: boolean, signal: AbortSignal, append: (text: string) => void) {

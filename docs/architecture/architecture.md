@@ -1777,6 +1777,26 @@ V34 增加 `ai_provider_settings`，保存 OpenAI、Kimi、硅基流动和 OpenR
 
 会话已有历史且目的地不同于上次使用的服务商、或存在其他来源的已采用历史时，落库和外发前在会话行锁内检查修订号与 `confirmedProviderId`，不匹配返回 `AI_HISTORY_CONFIRMATION_REQUIRED`，不占用生成记录。混合来源历史后续仍会提示。浏览器确认弹窗显示实际目标域名和发送范围；重新生成不发送本轮其他回答版本。会话选中的模型按「服务商 ID + 模型 ID」区分，服务商配置修改不改写旧回答。
 
+### 新会话默认模型（2026-11-19）
+
+V35 新增单行 `ai_chat_preference` 保存默认服务商 ID、模型 ID 和修订号，旧实例保留自动选择。GET/PUT `/api/v1/ai/default-model` 复用后台登录与 CSRF；PUT 用修订号防止多端覆盖，要求两个 ID 同时存在（且服务商已保存凭据与该模型）或同时为空（恢复自动）。只检查已保存配置，不访问上游。新建会话时把默认组合写入该会话，不追溯修改历史会话；已存组合不匹配当前模型目录时清空前端选中状态并提示，不用其他服务商自动替代。
+
+### 同服务商多连接（2026-11-19）
+
+V36 用 `ai_provider_connection` 保存连接 ID、服务商预设、显示名称、模型和密文。旧 DeepSeek 和 V34 预设使用其服务商 ID 作为原连接 ID，原样迁移已保存配置和密文，并回填会话、回答和默认模型引用。新增连接使用 UUID，同一服务商下的连接名称唯一。新增连接的 AES-GCM 关联数据包含连接 ID，旧连接沿用原关联数据以便直接解密。配置修订号防止并发覆盖；凭据修订号在替换已经保存的 Key 时递增。已写入的回答保留当时的来源快照。
+
+GET `/api/v1/ai/provider-presets` 提供固定服务商选项；GET `/api/v1/ai/providers` 仅列出有凭据密文的连接。POST `/api/v1/ai/connections` 同时接受 `providerId`、`name` 和必填 `apiKey`，在同一事务内持久化配置和密文。同名未配置旧记录可以接续设置并保留已有模型；其他新增连接使用新 ID。设置及模型目录读取使用 `?provider=&connection=`；测试和默认模型保存接受 `connectionId`。旧客户端省略连接 ID 时只匹配服务商的原连接。官方 HTTPS 端点和外发限制沿用 V34。
+
+DELETE `/api/v1/ai/connections/{id}?provider=&revision=` 按当前配置修订号删除连接；过期修订拒绝，已删除的 ID 重试返回 204。删除原预设连接时同事务清除 V36 迁移时保留的旧表 Key 副本。会话、历史回答和默认模型引用保留，已删除的路由提示重新选择；同名重建使用不同 ID。此前已经受理的生成可继续完成。沿用 V36 表结构。
+
+发送及重新生成提交目标 `connectionId` 和 `credentialRevision`。后端在会话行锁内核对目标 Key 版本和历史来源：目标连接或 Key 已变化时，只有确认的 `confirmedConnectionId` 匹配当前目标才继续；提交时凭据版本已过期则返回 `AI_CONNECTION_CHANGED`。校验在新增回答和调用模型前执行。旧客户端的 `confirmedProviderId` 只适用于仍使用原凭据版本的原连接。
+
+### 自定义兼容地址（2026-11-19）
+
+V37 为连接增加可空 `base_url`。登录后的网页可向 `POST /api/v1/ai/connections` 提交 `providerId: "custom"`、`baseUrl`、名称和 API Key；后端从规范化地址派生 `custom-` 路由标识，在一个事务内保存地址及凭据密文。目录、连接测试、默认模型及聊天请求沿用实际服务标识和连接 ID。预设地址由 `GET /api/v1/ai/provider-presets` 提供；预设类型的创建请求不能另传地址。旧 V36 预设和部署登记连接的 `base_url` 为空，继续解析原服务或 `PRIVATE_SPACE_AI_CUSTOM_PROVIDERS`；撤下旧登记后，该方式创建的连接显示停用。
+
+预设服务沿用原传输。自定义服务使用 Spring Boot 管理版本的 Apache HttpClient 5，只接受公网 HTTPS 域名、443 端口和固定路径前缀。请求固定拼接 `/models` 或 `/chat/completions`，禁止代理、自动重定向及自动重试。DNS 解析中存在非公网地址即拒绝；客户端直接用校验结果建立连接，并按原域名校验 TLS。AES-GCM 关联数据绑定完整地址和连接 ID；设置更新不接受替换目的地。换地址需要新建连接，发送历史前仍核验具体连接与凭据版本。凭据通过 Bearer 请求头传递，关闭出站客户端的 wire 与 headers 调试级别。 [Apache HttpClient DNS 接口](https://hc.apache.org/httpcomponents-client-5.6.x/current/httpclient5/apidocs/org/apache/hc/client5/http/DnsResolver.html)
+
 ### 首批本地开发与交付检查（2026-11-18）
 
 首批从设置页到服务商打通一条可验证的调用路径。Java 代码按业务放在 `com.privatespace.modules.ai`，前端放在 `frontend/src/modules/ai/`。先实现服务商与模型的配置保存、回读及手动填写模型 ID，再用同一份已保存配置完成 DeepSeek 普通请求和流式请求。服务商列表只返回是否已配置凭据，编辑名称时保留原凭据。凭据加密封装及自定义地址的出站访问方案，在启用真实外部调用前完成技术确认。

@@ -40,10 +40,14 @@ class AiCredentialCipher {
     }
 
     byte[] encrypt(AiProvider provider, String plaintext) {
+        return encrypt(provider, provider.id, plaintext);
+    }
+
+    byte[] encrypt(AiProvider provider, String connectionId, String plaintext) {
         byte[] nonce = new byte[NONCE_BYTES];
         random.nextBytes(nonce);
         try {
-            byte[] ciphertext = cipher(Cipher.ENCRYPT_MODE, nonce, provider).doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
+            byte[] ciphertext = cipher(Cipher.ENCRYPT_MODE, nonce, provider, connectionId).doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
             return ByteBuffer.allocate(1 + nonce.length + ciphertext.length)
                     .put(FORMAT_VERSION).put(nonce).put(ciphertext).array();
         } catch (GeneralSecurityException ignored) {
@@ -56,6 +60,10 @@ class AiCredentialCipher {
     }
 
     String decrypt(AiProvider provider, byte[] payload) {
+        return decrypt(provider, provider.id, payload);
+    }
+
+    String decrypt(AiProvider provider, String connectionId, byte[] payload) {
         if (payload.length < 1 + NONCE_BYTES + 16 || payload[0] != FORMAT_VERSION) {
             throw unavailable();
         }
@@ -65,17 +73,21 @@ class AiCredentialCipher {
         byte[] ciphertext = new byte[buffer.remaining()];
         buffer.get(ciphertext);
         try {
-            return new String(cipher(Cipher.DECRYPT_MODE, nonce, provider).doFinal(ciphertext), StandardCharsets.UTF_8);
+            return new String(cipher(Cipher.DECRYPT_MODE, nonce, provider, connectionId).doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException ignored) {
             throw unavailable();
         }
     }
 
-    private Cipher cipher(int mode, byte[] nonce, AiProvider provider) throws GeneralSecurityException {
+    private Cipher cipher(int mode, byte[] nonce, AiProvider provider, String connectionId) throws GeneralSecurityException {
         if (key == null) throw unavailable();
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(mode, key, new GCMParameterSpec(128, nonce));
-        cipher.updateAAD(("workbench:ai:" + provider.id + ":api-key:v1").getBytes(StandardCharsets.US_ASCII));
+        // The built-in connection IDs retain the existing associated data so migration needs no plaintext key.
+        String context = "workbench:ai:" + provider.id
+                + (provider.id.equals(connectionId) ? "" : ":connection:" + connectionId)
+                + (provider.custom ? ":destination:" + provider.baseUrl : "") + ":api-key:v1";
+        cipher.updateAAD(context.getBytes(StandardCharsets.US_ASCII));
         return cipher;
     }
 

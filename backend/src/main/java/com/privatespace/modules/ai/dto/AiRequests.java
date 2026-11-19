@@ -13,8 +13,17 @@ public final class AiRequests {
         }
     }
     public record Settings(long revision, String providerName, String baseUrl, List<Model> models,
-                           boolean keyConfigured, boolean encryptionReady, String providerId, String providerLabel) {}
-    public record Probe(String modelId, String text, String providerId) {}
+                           boolean keyConfigured, boolean encryptionReady, String providerId, String providerLabel,
+                           String connectionId, long credentialRevision, boolean available) {}
+    public record ProviderPreset(String id, String label, String baseUrl, boolean custom) {}
+    public record CreateConnection(String providerId, String name, String apiKey, String baseUrl) {
+        @Override
+        public String toString() {
+            return "AiConnectionCreate[providerId=" + providerId + "]";
+        }
+    }
+    public record Probe(String modelId, String text, String providerId, String connectionId) {}
+    public record DefaultModel(long revision, String providerId, String modelId, String connectionId) {}
     public record Usage(Long inputTokens, Long outputTokens, Long totalTokens) {}
     public record Result(String provider, String model, String text, String finishReason, Usage usage, long elapsedMs) {}
 }

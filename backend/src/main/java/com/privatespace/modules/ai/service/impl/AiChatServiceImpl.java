@@ -9,6 +9,7 @@ import com.privatespace.modules.ai.dto.AiChat.Regenerate;
 import com.privatespace.modules.ai.dto.AiChat.Rename;
 import com.privatespace.modules.ai.dto.AiChat.Send;
 import com.privatespace.modules.ai.dto.AiChat.Turn;
+import com.privatespace.modules.ai.entity.AiConnectionEntity;
 import com.privatespace.modules.ai.mapper.AiChatMapper;
 import com.privatespace.modules.ai.service.AiChatService;
 import jakarta.annotation.PreDestroy;
@@ -72,7 +73,12 @@ public class AiChatServiceImpl implements AiChatService {
     @Override
     public Conversation create() {
         String id = UUID.randomUUID().toString();
-        mapper.create(id);
+        var preferred = ai.defaultModel();
+        String providerId = AiProviderCatalog.identity(preferred.providerId());
+        String connectionId = AiServiceImpl.connectionId(providerId, preferred.connectionId());
+        var connection = ai.findConnection(providerId, connectionId);
+        mapper.create(id, providerId, connectionId, connection == null ? 0 : connection.credentialRevision(),
+                preferred.modelId() == null ? "" : preferred.modelId());
         return mapper.find(id);
     }
 
@@ -142,9 +148,10 @@ public class AiChatServiceImpl implements AiChatService {
         String turnId = id(request.id());
         String text = required(request.text(), 8000);
         String model = required(request.modelId(), 160);
-        AiProvider provider = AiProvider.from(request.providerId());
-        return start(chatId, turnId, () -> replaySend(mapper.answer(chatId, turnId), text, model, provider),
-                chat -> prepare(chat, turnId, null, request.revision(), text, model, provider, request.confirmedProviderId()));
+        var route = ChatRoute.of(request.providerId(), request.connectionId(), request.credentialRevision(),
+                request.confirmedConnectionId(), request.confirmedProviderId());
+        return start(chatId, turnId, () -> replaySend(mapper.answer(chatId, turnId), text, model, route),
+                chat -> prepare(chat, turnId, null, request.revision(), text, model, route));
     }
 
     @Override
@@ -153,9 +160,10 @@ public class AiChatServiceImpl implements AiChatService {
         String target = id(turnId);
         String answerId = id(request.id());
         String model = required(request.modelId(), 160);
-        AiProvider provider = AiProvider.from(request.providerId());
-        return start(chatId, answerId, () -> replayRegenerate(mapper.answer(chatId, answerId), target, model, provider),
-                chat -> prepare(chat, answerId, target, request.revision(), null, model, provider, request.confirmedProviderId()));
+        var route = ChatRoute.of(request.providerId(), request.connectionId(), request.credentialRevision(),
+                request.confirmedConnectionId(), request.confirmedProviderId());
+        return start(chatId, answerId, () -> replayRegenerate(mapper.answer(chatId, answerId), target, model, route),
+                chat -> prepare(chat, answerId, target, request.revision(), null, model, route));
     }
 
     private Turn start(String chatId, String answerId, Supplier<Turn> replay, Function<Conversation, Prepared> prepare) {
@@ -183,7 +191,7 @@ public class AiChatServiceImpl implements AiChatService {
     }
 
     private Prepared prepare(Conversation chat, String answerId, String regenerateTurnId, int revision,
-                             String text, String model, AiProvider provider, String confirmedProvider) {
+                             String text, String model, ChatRoute route) {
         requireCurrent(chat, revision);
         String chatId = chat.id();
         List<Turn> history = mapper.turns(chatId);
@@ -193,22 +201,20 @@ public class AiChatServiceImpl implements AiChatService {
             requireLast(previous, regenerateTurnId);
             text = previous.prompt();
         }
-        // Check before a generation is inserted or any text can leave the server.
-        boolean crossesProvider = previous != null && (!provider.id.equals(chat.providerId())
-                || history.stream().anyMatch(turn -> !provider.id.equals(turn.providerId())));
-        if (crossesProvider && !provider.id.equals(confirmedProvider)) {
-            throw new ApiException(409, "AI_HISTORY_CONFIRMATION_REQUIRED", "请先确认将相关对话历史发送给 " + provider.label + "。");
-        }
+        AiConnectionEntity connection = ai.connection(route.providerId(), route.connectionId());
+        authorizeHistory(chat, history, route, connection);
         int position = regenerate ? previous.position() : previous == null ? 1 : previous.position() + 1;
         int version = regenerate ? mapper.lastVersion(regenerateTurnId) + 1 : 1;
         if (regenerate) history = history.subList(0, history.size() - 1);
         List<Message> messages = context(history, text);
-        var source = ai.chatSource(provider, model);
+        var source = ai.chatSource(connection, model);
         Turn next = new Turn(regenerate ? regenerateTurnId : answerId, chatId, position, text, "", source.provider(), model,
-                null, "generating", null, null, null, null, answerId, version, revision + 1, provider.id);
+                null, "generating", null, null, null, null, answerId, version, revision + 1, route.providerId(),
+                connection.id(), connection.credentialRevision());
         if (!regenerate) mapper.insertTurn(next);
         mapper.insertAnswer(next);
-        mapper.advance(chatId, model, provider.id, !regenerate && position == 1 ? title(text) : null);
+        mapper.advance(chatId, model, route.providerId(), connection.id(), connection.credentialRevision(),
+                !regenerate && position == 1 ? title(text) : null);
         return new Prepared(next, source, messages);
     }
 
@@ -229,7 +235,7 @@ public class AiChatServiceImpl implements AiChatService {
                 throw new ApiException(409, "AI_ANSWER_NOT_SELECTABLE", "只有已完成且有内容的回答可以用于后续对话。");
             }
             mapper.selectAnswer(turnId, selected.answerId());
-            mapper.advance(chatId, chat.modelId(), chat.providerId(), null);
+            mapper.touch(chatId);
         }
         return detail(chatId);
     }
@@ -402,20 +408,60 @@ public class AiChatServiceImpl implements AiChatService {
         return List.copyOf(messages);
     }
 
-    private static Turn replaySend(Turn turn, String text, String model, AiProvider provider) {
+    private static Turn replaySend(Turn turn, String text, String model, ChatRoute route) {
         if (turn != null && (turn.version() != 1 || !turn.prompt().equals(text) || !turn.modelId().equals(model)
-                || !turn.providerId().equals(provider.id))) {
+                || !route.matchesReceipt(turn))) {
             throw reused();
         }
         return turn;
     }
 
-    private static Turn replayRegenerate(Turn turn, String target, String model, AiProvider provider) {
+    private static Turn replayRegenerate(Turn turn, String target, String model, ChatRoute route) {
         if (turn != null && (turn.version() == 1 || !turn.id().equals(target) || !turn.modelId().equals(model)
-                || !turn.providerId().equals(provider.id))) {
+                || !route.matchesReceipt(turn))) {
             throw reused();
         }
         return turn;
+    }
+
+    private static void authorizeHistory(Conversation chat, List<Turn> history, ChatRoute route, AiConnectionEntity connection) {
+        // A different configured connection, or a Key replacement, may represent a different upstream account.
+        // Check the exact destination before persisting or scheduling any outbound request.
+        if (route.credentialRevision() != null && route.credentialRevision() != connection.credentialRevision()) {
+            throw new ApiException(409, "AI_CONNECTION_CHANGED", "连接的 API Key 已变化，请重新读取会话后再操作。");
+        }
+        boolean crossesAccount = !history.isEmpty() && (!sameAccount(connection, chat.connectionId(), chat.credentialRevision())
+                || history.stream().anyMatch(turn -> !sameAccount(connection, turn.connectionId(), turn.credentialRevision())));
+        if (crossesAccount && !route.confirmed(connection)) {
+            throw new ApiException(409, "AI_HISTORY_CONFIRMATION_REQUIRED",
+                    "请先确认将相关对话历史发送给连接「" + connection.providerName() + "」。");
+        }
+    }
+
+    private static boolean sameAccount(AiConnectionEntity connection, String id, long revision) {
+        return connection.id().equals(id) && connection.credentialRevision() == revision;
+    }
+
+    private record ChatRoute(String providerId, String connectionId, Long credentialRevision,
+                             String confirmedConnectionId, String legacyConfirmation) {
+        static ChatRoute of(String providerId, String connectionId, Long credentialRevision,
+                            String confirmedConnectionId, String legacyConfirmation) {
+            if (connectionId != null && (credentialRevision == null || credentialRevision < 0)) throw invalid();
+            String provider = AiProviderCatalog.identity(providerId);
+            return new ChatRoute(provider, AiServiceImpl.connectionId(provider, connectionId), credentialRevision,
+                    confirmedConnectionId, connectionId == null ? legacyConfirmation : null);
+        }
+
+        boolean matchesReceipt(Turn turn) {
+            return providerId.equals(turn.providerId()) && connectionId.equals(turn.connectionId())
+                    && (credentialRevision == null || turn.credentialRevision() == credentialRevision);
+        }
+
+        boolean confirmed(AiConnectionEntity destination) {
+            if (credentialRevision != null) return destination.id().equals(confirmedConnectionId);
+            return destination.credentialRevision() == 0 && providerId.equals(destination.id())
+                    && providerId.equals(legacyConfirmation);
+        }
     }
 
     private static ApiException reused() {

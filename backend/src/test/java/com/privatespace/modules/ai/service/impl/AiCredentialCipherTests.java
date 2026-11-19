@@ -34,4 +34,18 @@ class AiCredentialCipherTests {
         assertThatThrownBy(() -> cipher.decrypt(AiProvider.OPENAI, envelope)).isInstanceOf(ApiException.class)
                 .extracting(error -> ((ApiException) error).code()).isEqualTo("AI_KEY_UNAVAILABLE");
     }
+
+    @Test
+    void bindsNewCiphertextToAnExactConnectionWithoutBreakingLegacyCiphertext() {
+        byte[] serverKey = new byte[32];
+        new SecureRandom().nextBytes(serverKey);
+        var cipher = new AiCredentialCipher(Base64.getEncoder().encodeToString(serverKey));
+        byte[] legacy = cipher.encrypt("fixture-legacy");
+        byte[] connection = cipher.encrypt(AiProvider.DEEPSEEK, "work", "fixture-work");
+        assertThat(cipher.decrypt(AiProvider.DEEPSEEK, "deepseek", legacy)).isEqualTo("fixture-legacy");
+        assertThat(cipher.decrypt(AiProvider.DEEPSEEK, "work", connection)).isEqualTo("fixture-work");
+        assertThatThrownBy(() -> cipher.decrypt(AiProvider.DEEPSEEK, "other", connection))
+                .isInstanceOf(ApiException.class).extracting(error -> ((ApiException) error).code())
+                .isEqualTo("AI_KEY_UNAVAILABLE");
+    }
 }

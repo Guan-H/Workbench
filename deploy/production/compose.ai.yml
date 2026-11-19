@@ -1,0 +1,14 @@
+services:
+  backend:
+    secrets:
+      - source: ai_encryption_key
+        target: PRIVATE_SPACE_AI_ENCRYPTION_KEY
+    networks:
+      - ai_egress
+
+secrets:
+  ai_encryption_key:
+    file: ${PRIVATE_SPACE_AI_ENCRYPTION_KEY_FILE:?Set PRIVATE_SPACE_AI_ENCRYPTION_KEY_FILE to a private server file}
+
+networks:
+  ai_egress:

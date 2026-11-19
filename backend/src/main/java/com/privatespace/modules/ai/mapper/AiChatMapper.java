@@ -14,17 +14,22 @@ import java.util.List;
 
 @Mapper
 public interface AiChatMapper {
-    String CHAT = "id, title, model_id AS modelId, revision, updated_at AS updatedAt, pinned, provider_id AS providerId";
+    String CHAT = "id, title, model_id AS modelId, revision, updated_at AS updatedAt, pinned, provider_id AS providerId,"
+            + " connection_id AS connectionId, credential_revision AS credentialRevision";
     String TURN = """
             t.id, t.conversation_id AS conversationId, t.position, t.prompt, a.reply, a.provider, a.model_id AS modelId,
             a.actual_model AS actualModel, a.status, a.error_message AS errorMessage, a.finish_reason AS finishReason,
-            a.elapsed_ms AS elapsedMs, a.total_tokens AS totalTokens, a.id AS answerId, a.version, c.revision, a.provider_id AS providerId
+            a.elapsed_ms AS elapsedMs, a.total_tokens AS totalTokens, a.id AS answerId, a.version, c.revision,
+            a.provider_id AS providerId, a.connection_id AS connectionId, a.credential_revision AS credentialRevision
             """;
     String ANSWERS = " FROM ai_chat_turn t JOIN ai_conversation c ON c.id=t.conversation_id"
             + " JOIN ai_chat_answer a ON a.turn_id=t.id WHERE t.conversation_id=#{conversationId}";
 
-    @Insert("INSERT INTO ai_conversation (id,title,model_id,updated_at) VALUES (#{id},'新会话','',UTC_TIMESTAMP(6))")
-    void create(String id);
+    @Insert("""
+            INSERT INTO ai_conversation (id,title,provider_id,connection_id,credential_revision,model_id,updated_at)
+            VALUES (#{id},'新会话',#{providerId},#{connectionId},#{credentialRevision},#{modelId},UTC_TIMESTAMP(6))
+            """)
+    void create(String id, String providerId, String connectionId, long credentialRevision, String modelId);
 
     @Select("<script>SELECT " + CHAT + " " + """
             FROM ai_conversation
@@ -66,17 +71,21 @@ public interface AiChatMapper {
     void insertTurn(Turn turn);
 
     @Insert("""
-            INSERT INTO ai_chat_answer (id,turn_id,version,reply,provider,model_id,status,provider_id)
-            VALUES (#{answerId},#{id},#{version},'',#{provider},#{modelId},'generating',#{providerId})
+            INSERT INTO ai_chat_answer (id,turn_id,version,reply,provider,model_id,status,provider_id,connection_id,credential_revision)
+            VALUES (#{answerId},#{id},#{version},'',#{provider},#{modelId},'generating',#{providerId},#{connectionId},#{credentialRevision})
             """)
     void insertAnswer(Turn turn);
 
     @Update("""
             UPDATE ai_conversation SET model_id=#{modelId}, provider_id=#{providerId},
+            connection_id=#{connectionId}, credential_revision=#{credentialRevision},
             title=CASE WHEN NOT title_custom AND #{title,jdbcType=VARCHAR} IS NOT NULL THEN #{title,jdbcType=VARCHAR} ELSE title END,
             revision=revision+1, updated_at=UTC_TIMESTAMP(6) WHERE id=#{id}
             """)
-    void advance(String id, String modelId, String providerId, String title);
+    void advance(String id, String modelId, String providerId, String connectionId, long credentialRevision, String title);
+
+    @Update("UPDATE ai_conversation SET revision=revision+1, updated_at=UTC_TIMESTAMP(6) WHERE id=#{id}")
+    void touch(String id);
 
     @Update("UPDATE ai_conversation SET title=#{title}, title_custom=TRUE, revision=revision+1 WHERE id=#{id}")
     void rename(String id, String title);

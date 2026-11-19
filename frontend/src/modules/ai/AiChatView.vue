@@ -5,12 +5,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError } from '../../shared/api/client'
 import AppDialog from '../../shared/AppDialog.vue'
 import ConfirmDialog from '../../shared/ConfirmDialog.vue'
-import { readAiProviders, type AiSettings } from './ai-api'
+import { chatModelKey, readAiProviders, type AiSettings } from './ai-api'
 import { createConversation, listConversations, readConversation, streamChatTurn, sendChatTurn, stopChatTurn,
   readChatAnswer, regenerateChatAnswer, selectChatAnswer, renameConversation, pinConversation, deleteConversation,
   type ChatDetail, type ChatRegenerate, type ChatSend, type ChatTurn, type ChatVersion, type Conversation } from './chat-api'
 import AiChatReply from './AiChatReply.vue'
 import AiConversationList from './AiConversationList.vue'
+import AiProviderIcon from './AiProviderIcon.vue'
 
 const props = defineProps<{ username: string; navigationOpen: boolean }>()
 const emit = defineEmits<{ settings: []; toggleNavigation: [] }>()
@@ -22,7 +23,7 @@ const query = ref('')
 const listError = ref('')
 const [messages, MessageHolder] = message.useMessage()
 const detail = ref<ChatDetail>()
-const model = ref('')
+const model = ref<string>()
 const draft = ref('')
 const loading = ref(true)
 const busy = ref(false)
@@ -70,21 +71,32 @@ const displayedTurns = computed(() => detail.value?.turns.map(selected => {
   const versions = turnVersions.value.get(turn.id) ?? []
   return { turn, selected, versions }
 }) ?? [])
-const modelKey = (providerId: string, modelId: string) => providerId + ':' + modelId
-const availableProviders = computed(() => providers.value.filter(item => item.keyConfigured && item.encryptionReady && item.models.length))
-const providerOptions = computed(() => availableProviders.value.map(provider => ({
-  label: provider.providerName, value: provider.providerId,
-})))
+const availableProviders = computed(() => providers.value.filter(item => item.available && item.keyConfigured && item.encryptionReady && item.models.length))
 const models = computed(() => availableProviders.value.flatMap(provider =>
   provider.models.map(item => ({
     provider, modelId: item.modelId, label: item.name,
-    value: modelKey(provider.providerId, item.modelId),
+    value: chatModelKey(provider.connectionId, item.modelId),
   })),
 ))
 const selectedModel = computed(() => models.value.find(item => item.value === model.value))
-const selectedProviderId = computed(() => selectedModel.value?.provider.providerId)
-const providerModels = computed(() => models.value.filter(item => item.provider.providerId === selectedProviderId.value))
+const modelGroups = computed(() => availableProviders.value.map(provider => ({
+  key: provider.connectionId,
+  label: provider.providerName,
+  providerId: provider.providerId,
+  searchLabel: `${provider.providerName} ${provider.providerLabel}`,
+  options: provider.models.map(item => ({
+    value: chatModelKey(provider.connectionId, item.modelId),
+    label: item.name,
+    searchLabel: `${provider.providerName} ${provider.providerLabel} ${item.name} ${item.modelId}`,
+  })),
+})))
 const ready = computed(() => models.value.length > 0)
+const unavailableModel = computed(() => {
+  if (!detail.value?.conversation.modelId || selectedModel.value) return ''
+  return detail.value.turns.length
+    ? '此会话上次使用的模型不可用，请手动选择模型。'
+    : '此会话的默认模型不可用，请手动选择模型。'
+})
 const routingLocked = computed(() => busy.value || generating.value || pendingWrite.value)
 const disclosureText = computed(() => {
   const request = disclosure.value
@@ -94,7 +106,7 @@ const disclosureText = computed(() => {
     ? '本轮原问题，以及更早的提问和已采用回答'
     : '这条消息，以及当前会话此前的提问和已采用回答'
   const router = target.providerId === 'openrouter' ? ' OpenRouter 可能将请求转发给其上游模型提供商。' : ''
-  return `继续会把${content}发送给 ${target.providerLabel}（${new URL(target.baseUrl).hostname}）。${router}`
+  return `继续会把${content}发送给「${target.providerName}」连接（${target.providerLabel}，${target.baseUrl}）。${router}`
 })
 const statuses: Record<ChatTurn['status'], string> = {
   generating: '正在生成', complete: '已完成', truncated: '达到输出上限', failed: '生成失败', interrupted: '已中断', stopped: '已停止',
@@ -220,11 +232,11 @@ function apply(value: ChatDetail) {
   const previousId = detail.value?.conversation.id
   detail.value = value
   if (previousId !== value.conversation.id) viewed.value = {}
-  const chosen = modelKey(value.conversation.providerId, value.conversation.modelId)
+  const chosen = chatModelKey(value.conversation.connectionId, value.conversation.modelId)
   if (previousId !== value.conversation.id || !selectedModel.value) {
-    model.value = models.value.find(item => item.value === chosen)?.value
-      ?? models.value.find(item => item.provider.providerId === value.conversation.providerId)?.value
-      ?? models.value[0]?.value ?? ''
+    model.value = value.conversation.modelId
+      ? models.value.find(item => item.value === chosen)?.value
+      : models.value[0]?.value
   }
   remember(value.conversation.id)
   schedule()
@@ -233,15 +245,6 @@ function apply(value: ChatDetail) {
       if (scroll.value) scroll.value.scrollTop = scroll.value.scrollHeight
     })
   }
-}
-
-function chooseProvider(id: unknown) {
-  if (typeof id !== 'string' || id === selectedProviderId.value || routingLocked.value) return
-  const options = models.value.filter(item => item.provider.providerId === id)
-  const last = detail.value?.conversation
-  const preferred = last?.providerId === id ? options.find(item => item.modelId === last.modelId) : undefined
-  const next = preferred ?? options[0]
-  if (next) model.value = next.value
 }
 
 async function init() {
@@ -268,6 +271,7 @@ async function openChat(id?: string) {
   busy.value = true
   error.value = ''
   try {
+    if (!id) providers.value = await readAiProviders(controller.signal)
     const value = id ? await readConversation(id, controller.signal) : {
       conversation: await createConversation(controller.signal), turns: [], versions: [], activeAnswer: null,
     }
@@ -335,6 +339,8 @@ function recordAnswer(value: ChatDetail, turn: ChatTurn) {
   value.conversation.revision = turn.revision
   value.conversation.modelId = turn.modelId
   value.conversation.providerId = turn.providerId
+  value.conversation.connectionId = turn.connectionId
+  value.conversation.credentialRevision = turn.credentialRevision
   replaceAnswer(turn)
   pollError.value = ''
   schedule()
@@ -342,8 +348,10 @@ function recordAnswer(value: ChatDetail, turn: ChatTurn) {
 }
 
 function needsDisclosure(chat: ChatDetail, target: AiSettings, confirmed?: string, turnId?: string) {
-  if (!chat.turns.length || confirmed === target.providerId) return false
-  if (chat.conversation.providerId === target.providerId && chat.turns.every(turn => turn.providerId === target.providerId)) return false
+  if (!chat.turns.length || confirmed === target.connectionId) return false
+  const matches = (entry: { connectionId: string; credentialRevision: number }) =>
+    entry.connectionId === target.connectionId && entry.credentialRevision === target.credentialRevision
+  if (matches(chat.conversation) && chat.turns.every(matches)) return false
   disclosure.value = { destination: target, conversationId: chat.conversation.id, revision: chat.conversation.revision, turnId }
   return true
 }
@@ -352,25 +360,33 @@ function confirmDisclosure(accepted: boolean) {
   const request = disclosure.value
   disclosure.value = undefined
   if (!accepted || !request) return
+  const current = selectedModel.value?.provider
   if (detail.value?.conversation.id !== request.conversationId || detail.value.conversation.revision !== request.revision
-      || selectedModel.value?.provider.providerId !== request.destination.providerId) {
-    error.value = '会话或服务商已变化，请重新确认。'
+      || current?.connectionId !== request.destination.connectionId || current.credentialRevision !== request.destination.credentialRevision) {
+    error.value = '会话或连接已变化，请重新确认。'
     return
   }
-  if (request.turnId) void regenerate(request.turnId, request.destination.providerId)
-  else void send(request.destination.providerId)
+  if (request.turnId) void regenerate(request.turnId, request.destination.connectionId)
+  else void send(request.destination.connectionId)
 }
 
-async function send(confirmedProviderId?: string) {
+async function applyAfterConflict(id: string) {
+  const [value, catalog] = await Promise.all([readConversation(id, controller.signal), readAiProviders(controller.signal)])
+  providers.value = catalog
+  apply(value)
+}
+
+async function send(confirmedConnectionId?: string) {
   const active = detail.value
   const chosen = selectedModel.value
   if (!active || busy.value || generating.value || pendingRegeneration.value || versionReading.value
       || !chosen || !draft.value.trim()) return
   if (!pending.value) {
-    if (needsDisclosure(active, chosen.provider, confirmedProviderId)) return
+    if (needsDisclosure(active, chosen.provider, confirmedConnectionId)) return
     pending.value = {
       id: crypto.randomUUID(), revision: active.conversation.revision, modelId: chosen.modelId, text: draft.value,
-      providerId: chosen.provider.providerId, confirmedProviderId,
+      providerId: chosen.provider.providerId, connectionId: chosen.provider.connectionId,
+      credentialRevision: chosen.provider.credentialRevision, confirmedConnectionId,
     }
   }
   const request = pending.value
@@ -389,8 +405,8 @@ async function send(confirmedProviderId?: string) {
   } catch (cause) {
     if (controller.signal.aborted) return
     if (cause instanceof ApiError && cause.status < 500) pending.value = undefined
-    if (cause instanceof ApiError && cause.status === 409) {
-      try { apply(await readConversation(active.conversation.id, controller.signal)) } catch { /* Keep the current draft. */ }
+    if (cause instanceof ApiError && (cause.status === 409 || cause.code === 'AI_CONNECTION_NOT_FOUND')) {
+      try { await applyAfterConflict(active.conversation.id) } catch { /* Keep the current draft. */ }
     }
     error.value = pending.value ? '发送结果尚未确认。可以重新读取会话，或重试同一条消息。' : describe(cause)
   } finally { busy.value = false }
@@ -402,7 +418,8 @@ async function refresh() {
   busy.value = true
   error.value = ''
   try {
-    const value = await readConversation(id, controller.signal)
+    const [value, catalog] = await Promise.all([readConversation(id, controller.signal), readAiProviders(controller.signal)])
+    providers.value = catalog
     if (pending.value && value.turns.some(turn => turn.id === pending.value?.id)) {
       pending.value = undefined
       draft.value = ''
@@ -446,15 +463,16 @@ async function stop() {
   } finally { busy.value = false }
 }
 
-async function regenerate(turnId: string, confirmedProviderId?: string) {
+async function regenerate(turnId: string, confirmedConnectionId?: string) {
   const value = detail.value
   const chosen = selectedModel.value
   if (!value || latest.value?.id !== turnId || busy.value || generating.value || pending.value || versionReading.value
       || !chosen) return
-  if (!pendingRegeneration.value && needsDisclosure(value, chosen.provider, confirmedProviderId, turnId)) return
+  if (!pendingRegeneration.value && needsDisclosure(value, chosen.provider, confirmedConnectionId, turnId)) return
   const request = pendingRegeneration.value?.request ?? {
     id: crypto.randomUUID(), revision: value.conversation.revision, modelId: chosen.modelId,
-    providerId: chosen.provider.providerId, confirmedProviderId,
+    providerId: chosen.provider.providerId, connectionId: chosen.provider.connectionId,
+    credentialRevision: chosen.provider.credentialRevision, confirmedConnectionId,
   }
   pendingRegeneration.value = { turnId, request }
   busy.value = true
@@ -470,8 +488,8 @@ async function regenerate(turnId: string, confirmedProviderId?: string) {
   } catch (cause) {
     if (controller.signal.aborted) return
     if (cause instanceof ApiError && cause.status < 500) pendingRegeneration.value = undefined
-    if (cause instanceof ApiError && cause.status === 409) {
-      try { apply(await readConversation(value.conversation.id, controller.signal)) } catch { /* Keep the current view. */ }
+    if (cause instanceof ApiError && (cause.status === 409 || cause.code === 'AI_CONNECTION_NOT_FOUND')) {
+      try { await applyAfterConflict(value.conversation.id) } catch { /* Keep the current view. */ }
     }
     error.value = pendingRegeneration.value ? '重新生成的结果尚未确认。可以刷新会话，或重试原请求。' : describe(cause)
   } finally { busy.value = false }
@@ -576,6 +594,7 @@ onBeforeUnmount(() => {
       </header>
       <AAlert v-if="error" class="chat-alert" type="error" show-icon :message="error" />
       <AAlert v-if="pollError" class="chat-alert" type="warning" show-icon :message="pollError" />
+      <AAlert v-if="unavailableModel" class="chat-alert" type="warning" show-icon :message="unavailableModel" />
       <div ref="scroll" class="ai-transcript" aria-label="聊天记录" tabindex="0">
         <p v-if="loading" class="ai-empty" role="status">正在读取会话…</p>
         <div v-else-if="!detail?.turns.length" class="ai-empty">
@@ -631,15 +650,19 @@ onBeforeUnmount(() => {
           <div class="ai-composer-tools">
             <span class="chat-keyboard-hint">Enter 发送 · Shift + Enter 换行</span>
             <div class="chat-send-controls">
-              <div class="chat-provider-control" @keydown.enter.prevent>
-                <label class="chat-routing-label" for="ai-chat-provider">服务商</label>
-                <ASelect id="ai-chat-provider" :value="selectedProviderId" class="chat-model-select" :options="providerOptions"
-                  :disabled="routingLocked" :bordered="false" :dropdown-match-select-width="false" placement="topRight" @change="chooseProvider" />
-              </div>
               <div class="chat-model-control" @keydown.enter.prevent>
-                <label class="chat-routing-label" for="ai-chat-model">模型</label>
-                <ASelect id="ai-chat-model" v-model:value="model" class="chat-model-select" :options="providerModels"
-                  :disabled="routingLocked" :bordered="false" :dropdown-match-select-width="false" placement="topRight" />
+                <label class="sr-only" for="ai-chat-model">选择模型</label>
+                <ASelect id="ai-chat-model" v-model:value="model" class="chat-model-select" :options="modelGroups"
+                  :disabled="routingLocked" :bordered="false" :dropdown-match-select-width="false" :list-height="280"
+                  popup-class-name="chat-model-popup"
+                  :dropdown-style="{ minWidth: 'min(224px, calc(100vw - 24px))', maxWidth: 'calc(100vw - 24px)' }"
+                  placement="topRight" show-search placeholder="选择模型" option-label-prop="label" option-filter-prop="searchLabel"
+                  not-found-content="没有匹配的模型">
+                  <template #option="{ label, providerId }">
+                    <span v-if="providerId" class="chat-model-group-label"><AiProviderIcon :provider-id="providerId" />{{ label }}</span>
+                    <template v-else>{{ label }}</template>
+                  </template>
+                </ASelect>
               </div>
               <AButton v-if="generating" html-type="button" class="chat-send" aria-label="停止生成" title="停止生成" :loading="busy" @click="stop"><Square :size="16" aria-hidden="true" /></AButton>
               <AButton v-else class="chat-send" type="primary" html-type="submit" :aria-label="pending ? '重试原消息' : '发送'" :title="pending ? '重试原消息' : '发送'" :loading="busy" :disabled="!draft.trim() || !model || !!pendingRegeneration || versionReading"><ArrowUp :size="20" aria-hidden="true" /></AButton>
@@ -744,15 +767,16 @@ onBeforeUnmount(() => {
 .ai-composer-box textarea:focus { box-shadow: none; }
 .ai-composer-tools { display: flex; align-items: center; gap: 10px; padding-top: 8px; }
 .chat-keyboard-hint { color: var(--color-text-muted); font-size: 11px; }
-.chat-send-controls { display: flex; align-items: flex-end; gap: 8px; min-width: 0; margin-left: auto; }
-.chat-provider-control, .chat-model-control { display: grid; gap: 1px; min-width: 0; }
-.chat-provider-control { width: 114px; }
-.chat-model-control { width: 156px; }
-.chat-routing-label { padding-inline: 11px 0; color: var(--color-text-muted); font-size: 11px; }
-.chat-model-select { width: 100%; font-size: 13px; border-radius: 10px; }
+.chat-send-controls { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
+.chat-model-control { min-width: 0; max-width: min(220px, calc(100vw - 110px)); }
+.chat-model-select { max-width: 100%; font-size: 13px; border-radius: 10px; }
+.chat-model-select.ant-select-open { min-width: min(156px, calc(100vw - 110px)); }
 .chat-model-select:not(.ant-select-disabled):hover { background: var(--color-selection); }
 .chat-model-select :deep(.ant-select-selector) { background: transparent !important; }
 .chat-model-select:focus-within { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+:global(.chat-model-popup .ant-select-item-group) { color: var(--color-text-muted); font-weight: 600; }
+.chat-model-group-label { display: flex; align-items: center; gap: 8px; white-space: normal; overflow-wrap: anywhere; }
+:global(.chat-model-popup .ant-select-item-option-content) { white-space: normal; overflow-wrap: anywhere; }
 .ai-composer-tools .chat-send { flex: none; width: 38px; min-height: 38px; padding: 0; border-radius: 50%; }
 .chat-copy-notice { display: block; max-width: 760px; margin: 8px auto 0; font-size: 12px; color: var(--color-text-muted); }
 .chat-thinking { display: flex; gap: 5px; align-items: center; height: 22px; }
@@ -777,9 +801,7 @@ onBeforeUnmount(() => {
   .chat-answer-actions .ant-btn, .chat-version-navigation .ant-btn { width: 44px; }
   .ai-composer-tools .chat-send { width: 44px; min-height: 44px; }
   .chat-model-select :deep(.ant-select-selector) { min-height: 44px; align-items: center; }
-  .chat-send-controls { width: min(100%, 338px); }
-  .chat-provider-control { flex: 2; width: auto; }
-  .chat-model-control { flex: 3; width: auto; }
+  :global(.chat-model-popup .ant-select-item-option) { align-items: center; min-height: 44px; }
   .ai-prompt { max-width: 92%; }
   .ai-turn { margin-bottom: 28px; }
   .ai-empty h3 { font-size: 25px; }

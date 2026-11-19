@@ -8,6 +8,8 @@ export interface Conversation {
   updatedAt: string
   pinned: boolean
   providerId: string
+  connectionId: string
+  credentialRevision: number
 }
 
 export interface ChatTurn {
@@ -27,6 +29,8 @@ export interface ChatTurn {
   version: number
   revision: number
   providerId: string
+  connectionId: string
+  credentialRevision: number
 }
 
 export interface ChatVersion { turnId: string; answerId: string; version: number }
@@ -42,7 +46,9 @@ export interface ChatSend {
   modelId: string
   text: string
   providerId: string
-  confirmedProviderId?: string
+  connectionId: string
+  credentialRevision: number
+  confirmedConnectionId?: string
 }
 export type ChatRegenerate = Omit<ChatSend, 'text'>
 

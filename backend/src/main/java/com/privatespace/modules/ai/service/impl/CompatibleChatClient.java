@@ -6,6 +6,16 @@ import com.privatespace.modules.ai.dto.AiChat.Message;
 import com.privatespace.modules.ai.dto.AiRequests.Result;
 import com.privatespace.modules.ai.dto.AiRequests.Usage;
 import com.privatespace.modules.ai.service.AiService.DeltaSink;
+import jakarta.annotation.PreDestroy;
+import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
+import org.apache.hc.client5.http.config.ConnectionConfig;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
+import org.apache.hc.core5.util.Timeout;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -13,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 import javax.net.ssl.HttpsURLConnection;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.InterruptedIOException;
 import java.net.Proxy;
@@ -30,19 +41,30 @@ class CompatibleChatClient {
     private static final int MAX_RESPONSE_CHARS = 2_000_000;
     private final ObjectMapper json;
     private final Semaphore slots = new Semaphore(2);
+    private final CloseableHttpClient customClient = HttpClients.custom()
+            .setConnectionManager(PoolingHttpClientConnectionManagerBuilder.create()
+                    .setDnsResolver(new PublicAiDnsResolver())
+                    .setDefaultConnectionConfig(ConnectionConfig.custom().setConnectTimeout(Timeout.ofSeconds(8))
+                            .setSocketTimeout(Timeout.ofSeconds(25)).build())
+                    .build())
+            .setDefaultRequestConfig(RequestConfig.custom().setConnectionRequestTimeout(Timeout.ofSeconds(8))
+                    .setResponseTimeout(Timeout.ofSeconds(25)).build())
+            .setConnectionReuseStrategy((request, response, context) -> false)
+            .disableRedirectHandling().disableAutomaticRetries().disableCookieManagement()
+            .disableAuthCaching().disableContentCompression().build();
 
     CompatibleChatClient(ObjectMapper json) {
         this.json = json;
     }
 
+    @PreDestroy
+    void closeCustomClient() throws IOException { customClient.close(); }
+
     List<Model> listModels(AiProvider endpoint, String key) {
         acquireSlot();
-        HttpsURLConnection connection = null;
         long started = System.nanoTime();
         try {
-            connection = connect(endpoint, "/models", key, "application/json");
-            verifyResponse(connection, "application/json");
-            try (var reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            return exchange(endpoint, "/models", key, "application/json", null, reader -> {
                 JsonNode data = parse(readBody(new BoundedResponse(reader, started))).path("data");
                 if (!data.isArray()) throw protocolError();
                 var models = new LinkedHashMap<String, Model>();
@@ -63,13 +85,12 @@ class CompatibleChatClient {
                     models.putIfAbsent(id, new Model(id, name));
                 }
                 return List.copyOf(models.values());
-            }
+            });
         } catch (SocketTimeoutException ignored) {
             throw new ApiException(504, "AI_UPSTREAM_TIMEOUT", "读取服务商模型列表超时。");
         } catch (IOException ignored) {
             throw new ApiException(502, "AI_UPSTREAM_CONNECTION", "无法读取服务商模型列表，请检查后端网络出口。");
         } finally {
-            if (connection != null) connection.disconnect();
             slots.release();
         }
     }
@@ -77,7 +98,6 @@ class CompatibleChatClient {
     Result complete(AiProvider endpoint, String key, String provider, String model, List<Message> messages, int maxTokens,
                     DeltaSink delta) throws IOException {
         acquireSlot();
-        HttpsURLConnection connection = null;
         long started = System.nanoTime();
         try {
             var request = new LinkedHashMap<String, Object>(Map.of(
@@ -88,20 +108,11 @@ class CompatibleChatClient {
             }
             byte[] body = json.writeValueAsBytes(request);
             String expected = delta == null ? "application/json" : "text/event-stream";
-            connection = connect(endpoint, "/chat/completions", key, expected);
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Content-Type", "application/json");
-            connection.setDoOutput(true);
-            connection.setFixedLengthStreamingMode(body.length);
             if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException();
-            try (var output = connection.getOutputStream()) {
-                output.write(body);
-            }
-            verifyResponse(connection, expected);
-            try (var reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            return exchange(endpoint, "/chat/completions", key, expected, body, reader -> {
                 var response = new BoundedResponse(reader, started);
                 return delta == null ? regular(response, provider, started) : streaming(response, provider, started, delta);
-            }
+            });
         } catch (SocketTimeoutException ignored) {
             throw new ApiException(504, "AI_UPSTREAM_TIMEOUT", "服务商响应超时。");
         } catch (DownstreamClosed closed) {
@@ -109,7 +120,6 @@ class CompatibleChatClient {
         } catch (IOException ignored) {
             throw new ApiException(502, "AI_UPSTREAM_CONNECTION", "无法读取服务商响应，请检查后端网络出口。");
         } finally {
-            if (connection != null) connection.disconnect();
             slots.release();
         }
     }
@@ -117,6 +127,44 @@ class CompatibleChatClient {
     private void acquireSlot() {
         if (!slots.tryAcquire()) throw new ApiException(429, "AI_BUSY", "已有 AI 请求正在运行，请稍后重试。");
     }
+
+    private <T> T exchange(AiProvider endpoint, String path, String key, String expected, byte[] body,
+                           ReadResponse<T> read) throws IOException {
+        if (endpoint.custom) {
+            var request = new HttpUriRequestBase(body == null ? "GET" : "POST", URI.create(endpoint.baseUrl + path));
+            request.setHeader("Accept", expected);
+            if (key != null) request.setHeader("Authorization", "Bearer " + key);
+            if (body != null) request.setEntity(new ByteArrayEntity(body, ContentType.APPLICATION_JSON));
+            try (var response = customClient.executeOpen(null, request, null)) {
+                var entity = response.getEntity();
+                verifyResponse(response.getCode(), entity == null ? null : entity.getContentType(), expected);
+                return readResponse(entity.getContent(), read);
+            }
+        }
+        var connection = connect(endpoint, path, key, expected);
+        try {
+            if (body != null) {
+                connection.setRequestMethod("POST");
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(body.length);
+                try (var output = connection.getOutputStream()) { output.write(body); }
+            }
+            verifyResponse(connection.getResponseCode(), connection.getContentType(), expected);
+            return readResponse(connection.getInputStream(), read);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static <T> T readResponse(InputStream input, ReadResponse<T> read) throws IOException {
+        try (var reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return read.read(reader);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ReadResponse<T> { T read(BufferedReader reader) throws IOException; }
 
     private static HttpsURLConnection connect(AiProvider endpoint, String path, String key, String accept) throws IOException {
         var connection = (HttpsURLConnection) URI.create(endpoint.baseUrl + path).toURL().openConnection(Proxy.NO_PROXY);
@@ -128,10 +176,8 @@ class CompatibleChatClient {
         return connection;
     }
 
-    private static void verifyResponse(HttpsURLConnection connection, String expected) throws IOException {
-        int status = connection.getResponseCode();
+    private static void verifyResponse(int status, String contentType, String expected) {
         if (status != 200) throw upstreamError(status);
-        String contentType = connection.getContentType();
         if (contentType == null || !expected.equalsIgnoreCase(contentType.split(";", 2)[0].strip())) {
             throw protocolError();
         }
