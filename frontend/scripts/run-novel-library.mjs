@@ -21,11 +21,14 @@ try{
  const command=async(action,values={},operation=crypto.randomUUID())=>{const state=await catalog();return api('/reader/library','POST',{baseRevision:state.revision,action,...values},operation)}
  const add=async(file,parentId='')=>{const response=await command('add-book',{id:file.id,parentId});assert.equal(response.status,200);return response}
  const upload=async(name,data)=>page.evaluate(async({name,data})=>{const {apiResponse}=await import('/src/shared/api/client.ts');const bytes=Uint8Array.from(atob(data),char=>char.charCodeAt(0)),form=new FormData();form.append('path',name);form.append('file',new Blob([bytes]),name);return (await apiResponse('/files',{method:'POST',body:form,headers:{'Idempotency-Key':crypto.randomUUID()}})).json()},{name,data:Buffer.from(data).toString('base64')})
- const open=async name=>{
+ const open=async (name, keepContents=false)=>{
    const back=page.getByRole('button',{name:'返回书目',exact:true});if(await back.count())await back.click()
    await page.getByRole('textbox',{name:'搜索阅读书目',exact:true}).fill(name)
    await page.locator(`[data-reading-path="${name}"]`).click()
    await page.waitForFunction(()=>document.querySelector('.reader-scroll')?.getAttribute('aria-busy')==='false')
+   const contents=page.getByRole('complementary',{name:'书籍章节目录'})
+   await contents.waitFor()
+   if(!keepContents) await contents.getByRole('button',{name:'关闭章节目录',exact:true}).click()
  }
  const captureDialog=async label=>{
    await page.getByRole('dialog').waitFor()
@@ -39,8 +42,8 @@ try{
  if(phase==='novel-library-restart'){
    const saved=JSON.parse(await readFile(output+'/novel-library-result.json','utf8'))
    const state=await catalog();assert.ok(state.books.some(book=>book.fileId===saved.md.id));assert.ok(state.folders.some(folder=>folder.name==='书籍分类'))
-   await nav('阅读');await open(saved.md.path)
-   await page.getByRole('button',{name:'章节目录',exact:true}).click();await page.getByRole('tree').getByText('第三章 新增',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭阅读面板',exact:true}).click()
+   await nav('阅读');await open(saved.md.path,true)
+   await page.getByRole('tree').getByText('第三章 新增',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭章节目录',exact:true}).click()
    assert.equal((await progress(saved.md.id)).sourceHash,saved.md.sha256)
    console.log('PASS: account-sessions-novel-library-restart genuine references and updated source survived backend restart')
  }else{
@@ -72,7 +75,7 @@ try{
    assert.equal(updated.id,md.id)
    await waitProgress(md.id,item=>item.sourceHash===updated.sha256)
    assert.ok(await page.evaluate(()=>document.fullscreenElement!==null),'Automatic source refresh must retain the reader/fullscreen root')
-   await page.getByRole('button',{name:'章节目录',exact:true}).click();await page.getByRole('tree').getByText('第三章 新增',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭阅读面板',exact:true}).click()
+   await page.getByRole('button',{name:'章节目录',exact:true}).click();await page.getByRole('tree').getByText('第三章 新增',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭章节目录',exact:true}).click()
    assert.ok(await page.locator('[data-reader-block]').filter({hasText:'唯一定位段落 ALPHA'}).evaluate(element=>{const view=element.closest('.reader-scroll').getBoundingClientRect(),rect=element.getBoundingClientRect();return rect.bottom>view.top&&rect.top<view.bottom}))
    await page.getByRole('button',{name:'退出沉浸阅读',exact:true}).click()
    await page.screenshot({path:output+'/novel-reference-updated.png',fullPage:true})
@@ -87,7 +90,7 @@ try{
    await page.getByRole('button',{name:'刷新书目',exact:true}).click();await open(txt.path)
    const txtNew=(await api(`/files/${txt.id}/text`,'PUT',{baseVersion:txt.version,path:txt.path,content:'第一章 全新正文\nTXT 自动同步的新内容。',encoding:'UTF-8',bom:false})).value
    await page.getByText('TXT 自动同步的新内容。',{exact:true}).waitFor({timeout:20000});assert.equal(txtNew.id,txt.id)
-   await page.getByRole('button',{name:'返回书目',exact:true}).click();await open(epub.path);await page.getByRole('button',{name:'章节目录',exact:true}).click();await page.getByRole('tree').getByText('第一部 起程',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭阅读面板',exact:true}).click()
+   await page.getByRole('button',{name:'返回书目',exact:true}).click();await open(epub.path,true);await page.getByRole('tree').getByText('第一部 起程',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭章节目录',exact:true}).click()
    await page.getByRole('button',{name:'返回书目',exact:true}).click();await page.getByRole('textbox',{name:'搜索阅读书目',exact:true}).fill('')
    await page.screenshot({path:output+'/novel-independent-library.png',fullPage:true})
    await page.setViewportSize({width:375,height:850});await page.screenshot({path:output+'/novel-independent-narrow.png',fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.setViewportSize({width:1440,height:900})
@@ -112,13 +115,15 @@ try{
    await page.locator('.reader-settings label').filter({hasText:'背景'}).locator('.ant-select').click()
    await page.getByText('夜间',{exact:true}).last().click()
    await page.screenshot({path:output+'/reader-mobile-night-settings.png',animations:'disabled'})
-   await page.getByRole('button',{name:'关闭阅读面板',exact:true}).click()
+   await page.locator('.reader-panel-backdrop').click({position:{x:20,y:160}})
+   await page.getByRole('dialog',{name:'书籍阅读设置'}).waitFor({state:'detached'})
    await page.getByRole('button',{name:'收起阅读菜单',exact:true}).click()
    await page.screenshot({path:output+'/reader-mobile-immersive-night.png',animations:'disabled'})
    assert.equal(await reader.evaluate(element=>getComputedStyle(element).backgroundColor),'rgb(32, 37, 34)')
    await page.getByRole('button',{name:'显示阅读菜单',exact:true}).click()
    await page.getByRole('button',{name:'章节目录',exact:true}).click()
-   await page.getByRole('dialog',{name:'书籍章节目录'}).getByRole('tree').getByText('第二章 归来',{exact:true}).click()
+   await page.getByRole('complementary',{name:'书籍章节目录'}).getByRole('tree').getByText('第二章 归来',{exact:true}).click()
+   await page.getByRole('button',{name:'关闭章节目录',exact:true}).click()
    await page.getByRole('button',{name:'退出沉浸阅读',exact:true}).click()
    await page.setViewportSize({width:1440,height:900});await page.getByRole('button',{name:'返回书目',exact:true}).click()
    const picker=page.waitForEvent('filechooser');await page.getByRole('button',{name:'上传书籍',exact:true}).click();await(await picker).setFiles({name:'uploaded-novel.txt',mimeType:'text/plain',buffer:Buffer.from('第一章 上传验证\n通过真实页面上传到书籍分类。')})

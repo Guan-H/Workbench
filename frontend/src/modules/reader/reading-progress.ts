@@ -22,8 +22,8 @@ export class ReadingProgress {
     if (!file.sha256) throw new Error('书籍缺少内容指纹，请刷新目录后重试。')
     this.key = `private-space:reading:${username}:${file.id}`
   }
-  async open(): Promise<{ location?: ReadingLocator; previousLocation?: ReadingLocator; changed: boolean }> {
-    const server = await api<ProgressResponse>(`/reader/files/${this.file.id}/progress`)
+  async open(signal?: AbortSignal): Promise<{ location?: ReadingLocator; previousLocation?: ReadingLocator; changed: boolean }> {
+    const server = await api<ProgressResponse>(`/reader/files/${this.file.id}/progress`, { signal })
     this.revision = server.revision
     this.confirmed = server.sourceHash === this.file.sha256 ? server.locator || '' : ''
     let location = parseLocator(this.confirmed)

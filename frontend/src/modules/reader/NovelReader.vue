@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { Alert as AAlert, Button as AButton, ConfigProvider as AConfigProvider, Input as AInput, Select as ASelect, Slider as ASlider, Spin as ASpin, Tree as ATree, theme as antTheme } from 'ant-design-vue'
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Expand, List, Settings, Shrink, X } from 'lucide-vue-next'
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, Expand, List, Settings, Shrink, X } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { apiResponse, type Note } from '../../shared/api/client'
 import type { ReadingBlock, ReadingBook, ReadingChapter, ReadingLocator } from './book'
 import { epubBook } from './epub'
 import { ReadingProgress } from './reading-progress'
 import ReaderImage from './ReaderImage.vue'
+import BookHeading from './BookHeading.vue'
 
-const props = defineProps<{ file: Note; username: string }>()
-const emit = defineEmits<{ updated: [precise: boolean] }>()
+const props = defineProps<{ file: Note; username: string; bookTitle: string }>()
+const emit = defineEmits<{ back: []; updated: [precise: boolean] }>()
 const root = ref<HTMLElement>(), scroller = ref<HTMLDivElement>()
 const book = shallowRef<ReadingBook>(), busy = ref(true), loadingText = ref('正在读取书籍…'), error = ref(''), warning = ref('')
 const progressText = ref(''), progressConflict = ref(false), savedLocation = shallowRef<ReadingLocator>()
 const progressNeedsAttention = computed(() => !!progressText.value && !['阅读进度已保存', '阅读位置自动保存'].includes(progressText.value))
-const encoding = ref('auto'), immersive = ref(false), fullscreen = ref(false), panel = ref<'contents' | 'settings'>(), chapterQuery = ref('')
+const encoding = ref('auto'), immersive = ref(false), fullscreen = ref(false), contentsOpen = ref(false), settingsOpen = ref(false), chapterQuery = ref('')
 const compactQuery = window.matchMedia('(max-width: 600px)')
 const compact = ref(compactQuery.matches), controlsVisible = ref(false)
 const minimal = computed(() => immersive.value && compact.value)
@@ -43,11 +44,11 @@ function endTap(event: PointerEvent) {
   tapStart = undefined
 }
 function toggleReadingControls(event: MouseEvent) {
-  if (!minimal.value || panel.value || busy.value || (event.detail > 0 && !tapReady) || !window.getSelection()?.isCollapsed) return
+  if (!minimal.value || contentsOpen.value || settingsOpen.value || busy.value || (event.detail > 0 && !tapReady) || !window.getSelection()?.isCollapsed) return
   controlsVisible.value = !controlsVisible.value
 }
 function readerKeys(event: KeyboardEvent) {
-  if (panel.value || !minimal.value) return
+  if (contentsOpen.value || settingsOpen.value || !minimal.value) return
   if (event.key === 'Escape' && controlsVisible.value) { event.preventDefault(); controlsVisible.value = false }
   if (event.key === 'Enter' && event.target === scroller.value) { event.preventDefault(); controlsVisible.value = !controlsVisible.value }
 }
@@ -63,7 +64,7 @@ let disposed = false, restoring = true, worker: Worker | undefined, scrollFrame 
 let resize: ResizeObserver | undefined, chunkResize: ResizeObserver | undefined, epoch = 0
 let layoutEpoch = 0, lastWidth = 0
 const positions = new Map<string, { chunk: number; block: number }>()
-let priorFocus: HTMLElement | null = null
+let settingsTrigger: HTMLElement | null = null
 const chunks = computed(() => book.value?.chunks || [])
 const visible = computed(() => chunks.value.slice(first.value, last.value + 1).map((chunk, offset) => ({ ...chunk, index: first.value + offset })))
 const before = computed(() => heights.value.slice(0, first.value).reduce((sum, height) => sum + height, 0))
@@ -101,7 +102,6 @@ const percentage = computed(() => {
   const inside = (chunks.value[current.chunk]?.blocks || []).slice(0, current.block).reduce((sum, item) => sum + item.text.length, 0)
   return total ? Math.min(100, Math.round((prefix + inside + (location.value?.offset || 0)) / total * 1000) / 10) : 0
 })
-const title = computed(() => props.file.path.split('/').at(-1))
 
 function locate(target: ReadingLocator) {
   return positions.get(`${target.part}:${target.block}`)
@@ -228,18 +228,27 @@ function setting() {
   catch { progressText.value = '阅读设置未能保存在本机。' }
   void reflow()
 }
-function openPanel(value: 'contents' | 'settings') {
-  priorFocus = document.activeElement as HTMLElement; panel.value = value
+function openContents(focus = false) {
+  contentsOpen.value = true
   nextTick(() => {
-    root.value?.querySelector<HTMLElement>('.reader-panel input, .reader-panel button')?.focus()
-    if (value === 'contents') root.value?.querySelector('.ant-tree-node-selected')?.scrollIntoView({ block: 'center' })
+    if (focus) root.value?.querySelector<HTMLElement>('.reader-contents input')?.focus({ preventScroll: true })
+    root.value?.querySelector('.reader-contents .ant-tree-node-selected')?.scrollIntoView({ block: 'nearest' })
   })
 }
-function closePanel() { panel.value = undefined; priorFocus?.focus() }
-function panelKeys(event: KeyboardEvent) {
-  if (event.key === 'Escape') { event.stopPropagation(); closePanel() }
+function closeContents() {
+  contentsOpen.value = false
+  root.value?.querySelector<HTMLElement>('button[aria-label="章节目录"]')?.focus({ preventScroll: true })
+}
+function openSettings() {
+  settingsTrigger = document.activeElement as HTMLElement
+  settingsOpen.value = true
+  nextTick(() => root.value?.querySelector<HTMLElement>('.reader-panel-backdrop button')?.focus({ preventScroll: true }))
+}
+function closeSettings() { settingsOpen.value = false; settingsTrigger?.focus({ preventScroll: true }) }
+function settingsKeys(event: KeyboardEvent) {
+  if (event.key === 'Escape') { event.stopPropagation(); closeSettings() }
   if (event.key === 'Tab') {
-    const elements = [...root.value!.querySelectorAll<HTMLElement>('.reader-panel button:not(:disabled), .reader-panel input, .reader-panel [tabindex="0"]')]
+    const elements = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button:not(:disabled), input, [tabindex="0"]')]
     if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements.at(-1)?.focus() }
     else if (!event.shiftKey && document.activeElement === elements.at(-1)) { event.preventDefault(); elements[0]?.focus() }
   }
@@ -250,7 +259,7 @@ async function chooseChapter(key: string) {
   }
   const chapter = find(book.value?.chapters || [])
   if (!chapter?.location) { warning.value = '该目录没有可用的正文位置。'; return }
-  await jump({ ...chapter.location, encoding: encoding.value }); closePanel(); scroller.value?.focus()
+  await jump({ ...chapter.location, encoding: encoding.value })
 }
 async function adjacent(delta: number) {
   const chapter = flatChapters.value[Math.max(0, currentChapter.value + delta)]
@@ -353,6 +362,7 @@ onMounted(async () => {
     if (resume.location) encoding.value = resume.location.encoding
     if (resume.changed && !resume.previousLocation) warning.value = '书籍内容已变化，旧位置无法匹配，可从头阅读或选择章节。'
     await load()
+    if (!disposed && book.value) openContents()
     if (resume.changed && !resume.previousLocation) warning.value = '书籍内容已变化，旧位置无法匹配，可从头阅读或选择章节。'
   } catch (cause) { if (!disposed) { error.value = cause instanceof Error ? cause.message : '读取阅读进度失败。'; busy.value = false } }
 })
@@ -380,53 +390,61 @@ defineExpose({ flush: () => tracker.flush(), isLoading: () => busy.value })
 <template>
   <AConfigProvider :theme="readerAntTheme" :get-popup-container="popupContainer">
   <section ref="root" class="novel-reader" :class="[`reader-${theme}`, { 'reader-immersive': immersive, 'reader-minimal': minimal }]" :style="{ '--reader-font-size': `${fontSize}px`, '--reader-line-height': lineHeight, '--reader-font': font === 'serif' ? 'Georgia, SimSun, serif' : 'system-ui, sans-serif', '--reader-bg': readerColors.background, '--reader-text': readerColors.text, '--reader-border': readerColors.border }" aria-label="书籍阅读器" @keydown="readerKeys">
-    <header v-show="!minimal || controlsVisible" class="reader-toolbar">
+    <header v-show="!minimal || controlsVisible" class="reader-toolbar" aria-label="书籍阅读工具">
       <AButton v-if="immersive" aria-label="退出沉浸阅读" title="退出沉浸阅读" @click="exitImmersive"><ArrowLeft :size="18" /></AButton>
-      <strong>{{ title }}</strong>
-      <AButton title="章节目录" aria-label="章节目录" :disabled="busy" @click="openPanel('contents')"><List :size="18" /></AButton>
-      <AButton title="阅读设置" aria-label="阅读设置" @click="openPanel('settings')"><Settings :size="18" /></AButton>
+      <BookHeading class="reader-book-heading" :title="bookTitle" :show-back="!immersive" @back="emit('back')" />
+      <AButton title="章节目录" aria-label="章节目录" :aria-expanded="contentsOpen" :disabled="busy" @click="openContents(true)"><List :size="18" /></AButton>
+      <AButton title="阅读设置" aria-label="阅读设置" :aria-expanded="settingsOpen" @click="openSettings"><Settings :size="18" /></AButton>
+      <AButton v-if="!immersive" :href="`/api/v1/files/${file.id}/content?version=${file.version}`" target="_blank" rel="noopener noreferrer" title="下载原文件" aria-label="下载原文件"><Download :size="18" /></AButton>
       <AButton v-if="!minimal" title="全屏阅读" aria-label="全屏阅读" @click="toggleFullscreen"><Shrink v-if="fullscreen" :size="18" /><Expand v-else :size="18" /></AButton>
       <AButton v-else title="收起阅读菜单" aria-label="收起阅读菜单" @click="controlsVisible=false"><X :size="18" /></AButton>
     </header>
     <AAlert v-if="error" type="error" show-icon :message="error" />
     <AAlert v-if="warning" type="info" show-icon :message="warning" closable @close="warning = ''" />
     <div v-if="progressConflict" class="reader-conflict"><span>其他页面或设备已更新阅读位置，本机位置已保留。</span><AButton @click="adopt(true)">采用服务器位置</AButton><AButton @click="adopt(false)">采用本机位置</AButton></div>
-    <div ref="scroller" class="reader-scroll" tabindex="0" aria-label="书籍正文" :aria-busy="busy" @scroll.passive="scroll" @pointerdown="startTap" @pointerup="endTap" @pointercancel="tapStart=undefined;tapReady=false" @click="toggleReadingControls">
-      <div v-if="busy" class="reader-loading" role="status"><ASpin /><p>{{ loadingText }}</p></div>
-      <div v-else-if="book" class="reader-content">
-        <div aria-hidden="true" :style="{ height: `${before}px` }" />
-        <div v-for="chunk in visible" :key="chunk.index" class="reader-chunk" :data-chunk="chunk.index">
-          <template v-for="block in chunk.blocks" :key="key(block)">
-            <div v-if="block.image && book.image" data-reader-block :data-part="block.part" :data-block="block.index"><ReaderImage :load="() => book!.image!(block.image!)" :alt="block.text" /></div>
-            <h2 v-else-if="block.heading" data-reader-block :data-part="block.part" :data-block="block.index">{{ block.text }}</h2>
-            <p v-else data-reader-block :data-part="block.part" :data-block="block.index">{{ block.text }}</p>
-          </template>
+    <div class="reader-body">
+      <Transition name="reading-drawer">
+        <aside v-if="contentsOpen" class="reader-panel reader-contents" aria-label="书籍章节目录">
+          <header><h2>章节目录</h2><AButton type="text" aria-label="关闭章节目录" title="关闭章节目录" @click="closeContents"><X :size="17" /></AButton></header>
+          <AInput v-model:value="chapterQuery" aria-label="搜索章节名称" placeholder="搜索章节名称" allow-clear />
+          <div class="reader-panel-scroll"><ATree v-if="chapterTree.length" :tree-data="chapterTree" :selected-keys="flatChapters[currentChapter] ? [flatChapters[currentChapter]!.key] : selected" default-expand-all block-node @select="(_keys, info) => chooseChapter(String(info.node.key))" /><p v-else>未找到章节。</p></div>
+          <AButton v-if="location" @click="jump(location, false)">回到当前阅读位置</AButton>
+        </aside>
+      </Transition>
+      <div ref="scroller" class="reader-scroll" tabindex="0" aria-label="书籍正文" :aria-busy="busy" @scroll.passive="scroll" @pointerdown="startTap" @pointerup="endTap" @pointercancel="tapStart=undefined;tapReady=false" @click="toggleReadingControls">
+        <div v-if="busy" class="reader-loading" role="status"><ASpin /><p>{{ loadingText }}</p></div>
+        <div v-else-if="book" class="reader-content">
+          <div aria-hidden="true" :style="{ height: `${before}px` }" />
+          <div v-for="chunk in visible" :key="chunk.index" class="reader-chunk" :data-chunk="chunk.index">
+            <template v-for="block in chunk.blocks" :key="key(block)">
+              <div v-if="block.image && book.image" data-reader-block :data-part="block.part" :data-block="block.index"><ReaderImage :load="() => book!.image!(block.image!)" :alt="block.text" /></div>
+              <h2 v-else-if="block.heading" data-reader-block :data-part="block.part" :data-block="block.index">{{ block.text }}</h2>
+              <p v-else data-reader-block :data-part="block.part" :data-block="block.index">{{ block.text }}</p>
+            </template>
+          </div>
+          <div aria-hidden="true" :style="{ height: `${after}px` }" />
         </div>
-        <div aria-hidden="true" :style="{ height: `${after}px` }" />
       </div>
     </div>
     <footer v-show="!minimal || controlsVisible" class="reader-footer"><AButton aria-label="上一章" title="上一章" :disabled="busy || currentChapter <= 0" @click="adjacent(-1)"><ChevronLeft :size="17" /></AButton><span class="reader-current-chapter">{{ flatChapters[currentChapter]?.title || '正文' }} · {{ percentage }}%</span><AButton aria-label="下一章" title="下一章" :disabled="busy || currentChapter + 1 >= flatChapters.length" @click="adjacent(1)"><ChevronRight :size="17" /></AButton><button class="reader-progress-status" type="button" title="重试保存阅读位置" @click="retryProgress">{{ progressText || '阅读位置自动保存' }}</button></footer>
-    <div v-if="minimal && !controlsVisible && !panel" class="reader-minimal-bar" :class="{ 'reader-needs-attention': progressNeedsAttention }"><span :aria-hidden="progressNeedsAttention ? undefined : true" :role="progressNeedsAttention ? 'status' : undefined">{{ progressNeedsAttention ? progressText : `${flatChapters[currentChapter]?.title || '正文'} · ${percentage}%` }}</span><button type="button" aria-label="显示阅读菜单" @click="controlsVisible=true"><List :size="17" />菜单</button></div>
-    <div v-if="panel" class="reader-panel-backdrop" @keydown="panelKeys">
-      <section class="reader-panel" role="dialog" aria-modal="true" :aria-label="panel === 'contents' ? '书籍章节目录' : '书籍阅读设置'">
-        <header><h2><BookOpen :size="19" />{{ panel === 'contents' ? '章节目录' : '阅读设置' }}</h2><AButton aria-label="关闭阅读面板" @click="closePanel"><X :size="18" /></AButton></header>
-        <template v-if="panel === 'contents'">
-          <AInput v-model:value="chapterQuery" aria-label="搜索章节名称" placeholder="搜索章节名称" allow-clear />
-          <div class="reader-panel-scroll"><ATree v-if="chapterTree.length" :tree-data="chapterTree" :selected-keys="flatChapters[currentChapter] ? [flatChapters[currentChapter]!.key] : selected" default-expand-all block-node @select="(_keys, info) => chooseChapter(String(info.node.key))" /><p v-else>未找到章节，可关闭目录继续阅读。</p></div>
-          <AButton v-if="location" @click="closePanel(); jump(location, false)">回到当前阅读位置</AButton>
-        </template>
-        <div v-else class="reader-settings reader-panel-scroll">
-          <label>字号 {{ fontSize }}<ASlider v-model:value="fontSize" :min="14" :max="32" @after-change="setting" /></label>
-          <label>行距 {{ lineHeight }}<ASlider v-model:value="lineHeight" :min="1.4" :max="2.6" :step="0.1" @after-change="setting" /></label>
-          <label>字体<ASelect v-model:value="font" :options="[{value:'sans',label:'系统字体'},{value:'serif',label:'衬线字体'}]" @change="setting" /></label>
-          <label>背景<ASelect v-model:value="theme" :options="[{value:'paper',label:'护眼纸色'},{value:'light',label:'浅色'},{value:'night',label:'夜间'}]" @change="setting" /></label>
-          <label v-if="isText && !isMarkdown">文本编码<ASelect v-model:value="encoding" :options="['auto','UTF-8','GB18030','UTF-16LE','UTF-16BE'].map(value=>({value,label:value === 'auto' ? '自动（BOM / UTF-8）' : value}))" @change="savedLocation = undefined; load()" /></label>
-          <AButton @click="closePanel(); immersive = !immersive; reflow()">{{ immersive ? '退出沉浸模式' : '进入沉浸模式' }}</AButton>
-          <AButton v-if="savedLocation" @click="closePanel(); jump(savedLocation, false)">回到上次阅读位置</AButton>
-          <p>阅读不会修改原文件。全屏受浏览器支持情况限制；本版不缓存整本书供离线打开。</p>
-        </div>
-      </section>
-    </div>
+    <div v-if="minimal && !controlsVisible && !contentsOpen && !settingsOpen" class="reader-minimal-bar" :class="{ 'reader-needs-attention': progressNeedsAttention }"><span :aria-hidden="progressNeedsAttention ? undefined : true" :role="progressNeedsAttention ? 'status' : undefined">{{ progressNeedsAttention ? progressText : `${flatChapters[currentChapter]?.title || '正文'} · ${percentage}%` }}</span><button type="button" aria-label="显示阅读菜单" @click="controlsVisible=true"><List :size="17" />菜单</button></div>
+    <Transition name="reader-settings-drawer">
+      <div v-if="settingsOpen" class="reader-panel-backdrop" @keydown="settingsKeys" @click.self="closeSettings">
+        <section class="reader-panel" role="dialog" aria-modal="true" aria-label="书籍阅读设置">
+          <header><h2><Settings :size="19" />阅读设置</h2><AButton type="text" title="关闭阅读设置" aria-label="关闭阅读面板" @click="closeSettings"><X :size="18" /></AButton></header>
+          <div class="reader-settings reader-panel-scroll">
+            <label>字号 {{ fontSize }}<ASlider v-model:value="fontSize" :min="14" :max="32" @after-change="setting" /></label>
+            <label>行距 {{ lineHeight }}<ASlider v-model:value="lineHeight" :min="1.4" :max="2.6" :step="0.1" @after-change="setting" /></label>
+            <label>字体<ASelect v-model:value="font" :options="[{value:'sans',label:'系统字体'},{value:'serif',label:'衬线字体'}]" @change="setting" /></label>
+            <label>背景<ASelect v-model:value="theme" :options="[{value:'paper',label:'护眼纸色'},{value:'light',label:'浅色'},{value:'night',label:'夜间'}]" @change="setting" /></label>
+            <label v-if="isText && !isMarkdown">文本编码<ASelect v-model:value="encoding" :options="['auto','UTF-8','GB18030','UTF-16LE','UTF-16BE'].map(value=>({value,label:value === 'auto' ? '自动（BOM / UTF-8）' : value}))" @change="savedLocation = undefined; load()" /></label>
+            <AButton @click="closeSettings(); immersive = !immersive; reflow()">{{ immersive ? '退出沉浸模式' : '进入沉浸模式' }}</AButton>
+            <AButton v-if="savedLocation" @click="closeSettings(); jump(savedLocation, false)">回到上次阅读位置</AButton>
+            <p>阅读不会修改原文件。全屏受浏览器支持情况限制；本版不缓存整本书供离线打开。</p>
+          </div>
+        </section>
+      </div>
+    </Transition>
   </section>
   </AConfigProvider>
 </template>
@@ -436,10 +454,11 @@ defineExpose({ flush: () => tracker.flush(), isLoading: () => busy.value })
 .reader-light { --reader-bg: #fff; --reader-text: #252a28; }
 .reader-night { --reader-bg: #202522; --reader-text: #d9dfd9; color-scheme: dark; }
 .novel-reader.reader-immersive, .novel-reader:fullscreen { position: fixed; inset: 0; z-index: 90; width: 100%; height: 100dvh; }
-.reader-toolbar { display: flex; align-items: center; flex-shrink: 0; gap: 8px; padding: max(8px, env(safe-area-inset-top)) 12px 8px; border-bottom: 1px solid #8883; }
-.reader-toolbar strong { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.reader-toolbar { display: flex; align-items: center; flex-shrink: 0; gap: 6px; padding: max(6px, env(safe-area-inset-top)) 12px 6px; border-bottom: 1px solid var(--reader-border); }
+.reader-book-heading { flex: 1; }
 .novel-reader :deep(.ant-btn) { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; }
-.reader-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; scroll-behavior: auto; }
+.reader-body { display: grid; grid-template-columns: var(--reading-directory-width) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; position: relative; }
+.reader-scroll { grid-column: 2; grid-row: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; scroll-behavior: auto; }
 .reader-scroll:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .reader-content { max-width: 760px; margin: auto; padding: 24px 24px max(24px, calc(var(--reader-viewport, 70vh) - 100px)); font-family: var(--reader-font); font-size: var(--reader-font-size); line-height: var(--reader-line-height); overflow-wrap: anywhere; }
 .reader-chunk { display: flow-root; }
@@ -449,9 +468,18 @@ defineExpose({ flush: () => tracker.flush(), isLoading: () => busy.value })
 .reader-current-chapter { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .reader-progress-status { border: 0; background: transparent; color: inherit; font-size: 11px; cursor: pointer; max-width: 100%; white-space: normal; text-align: left; }
 .reader-loading { padding: 60px 24px; text-align: center; }
-.reader-panel-backdrop { position: absolute; inset: 0; z-index: 10; display: flex; background: #0005; }
+.reader-panel-backdrop { position: absolute; inset: 0; z-index: 10; display: flex; justify-content: flex-end; background: #0005; }
 .novel-reader { position: relative; }
 .reader-panel { display: flex; flex-direction: column; gap: 16px; width: min(360px, 94%); height: 100%; padding: 20px; background: var(--reader-bg); color: var(--reader-text); box-shadow: 4px 0 16px #0002; }
+.reader-panel-backdrop > .reader-panel { width: min(360px, calc(100% - 48px)); box-shadow: -4px 0 16px #0002; }
+.reader-settings-drawer-enter-active, .reader-settings-drawer-leave-active { transition: background-color 180ms ease; }
+.reader-settings-drawer-enter-active > .reader-panel, .reader-settings-drawer-leave-active > .reader-panel { transition: transform 180ms ease; }
+.reader-settings-drawer-enter-from, .reader-settings-drawer-leave-to { background-color: transparent; }
+.reader-settings-drawer-enter-from > .reader-panel, .reader-settings-drawer-leave-to > .reader-panel { transform: translateX(100%); }
+.reader-settings-drawer-leave-active { pointer-events: none; }
+.reader-contents { grid-column: 1; grid-row: 1; width: 100%; min-width: 0; min-height: 0; gap: 10px; padding: 12px 14px; box-shadow: none; }
+.reader-contents h2 { font-size: 14px; }
+.reader-contents > header :deep(.ant-btn) { min-width: 36px; min-height: 36px; padding-inline: 0; }
 .reader-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reader-panel h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px; }
 .reader-panel-scroll { flex: 1; overflow: auto; min-height: 0; }
@@ -472,12 +500,20 @@ defineExpose({ flush: () => tracker.flush(), isLoading: () => busy.value })
 .reader-minimal-bar > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 76px; min-height: 44px; padding: 8px 14px; border: 1px solid var(--reader-border); border-radius: 24px; background: var(--reader-bg); color: var(--reader-text); cursor: pointer; pointer-events: auto; }
 .reader-minimal-bar > button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .reader-conflict { padding: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+@media (width >= 900px) {
+  .reader-scroll { border-inline-start: 1px solid color-mix(in srgb, var(--reader-border) 75%, transparent); }
+}
+@media (width < 900px) {
+  .reader-body { grid-template-columns: minmax(0, 1fr); }
+  .reader-scroll { grid-column: 1; }
+  .reader-contents { position: absolute; inset: 0 auto 0 0; z-index: 2; width: min(320px, calc(100% - 48px)); box-shadow: 4px 0 16px #0002; }
+}
 @media (max-width: 600px) {
-  .reader-toolbar { gap: 8px; padding-inline: 8px; }
-  .reader-toolbar strong { font-size: 12px; }
+  .reader-toolbar { gap: 4px; padding-inline: 6px; }
   .novel-reader :deep(.ant-btn) { min-width: 44px; min-height: 44px; padding-inline: 8px; }
   .reader-footer { padding-inline: 8px; }
   .reader-progress-status { flex-basis: 100%; }
   .reader-panel { padding: 16px; }
+  .reader-contents > header :deep(.ant-btn) { min-width: 44px; min-height: 44px; }
 }
 </style>

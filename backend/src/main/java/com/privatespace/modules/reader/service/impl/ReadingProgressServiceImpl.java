@@ -61,6 +61,10 @@ public class ReadingProgressServiceImpl implements ReadingProgressService {
                     || !java.util.Set.of("auto", "UTF-8", "GB18030", "UTF-16LE", "UTF-16BE").contains(locator.path("encoding").asText())) {
                 throw new IllegalArgumentException();
             }
+            if ("pdf".equals(request.format()) && (!"pdf".equals(locator.path("part").asText())
+                    || locator.path("offset").asLong() != 0 || !"auto".equals(locator.path("encoding").asText()))) {
+                throw new IllegalArgumentException();
+            }
             hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(json.writeValueAsString(request).getBytes(StandardCharsets.UTF_8)));
         } catch (Exception exception) { throw new ApiException(400, "INVALID_PROGRESS", "阅读位置格式无效。"); }
         mapper.ensure(id);

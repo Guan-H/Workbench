@@ -1,0 +1,2 @@
+ALTER TABLE novel_book
+    ADD COLUMN title VARCHAR(120) NULL;

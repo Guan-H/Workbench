@@ -9,7 +9,8 @@ import { apiResponse } from '../../shared/api/client'
 import PdfThumbnail from './PdfThumbnail.vue'
 import { preparePdfPrint } from './pdf-print'
 
-const props = defineProps<{ id: string; version: string; name: string }>()
+const props = defineProps<{ id: string; version: string; name: string; initialPage?: number; bookshelf?: boolean }>()
+const emit = defineEmits<{ pageChange: [page: number] }>()
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 type OutlineItem = Awaited<ReturnType<pdfjs.PDFDocumentProxy['getOutline']>>[number]
 interface OutlineNode { key: string; title: string; children?: OutlineNode[] }
@@ -17,15 +18,17 @@ const root = ref<HTMLElement>(), container = ref<HTMLDivElement>(), surface = re
 const pdf = shallowRef<pdfjs.PDFDocumentProxy>()
 const page = ref(1), pages = ref(0), busy = ref(true), ready = ref(false), error = ref('')
 const pageInput = ref<number | string>(1)
-const sidebar = ref(window.innerWidth >= 900), sidebarTab = ref('outline'), outline = ref<OutlineNode[]>([]), selectedKeys = ref<string[]>([])
+const sidebar = ref(props.bookshelf || window.innerWidth >= 900), sidebarTab = ref('outline'), outline = ref<OutlineNode[]>([]), selectedKeys = ref<string[]>([])
 const query = ref(''), findVisible = ref(false)
 const matches = ref({ current: 0, total: 0 }), findState = ref(''), scale = ref('page-width'), percent = ref(100), rotation = ref(0)
 const printing = ref(false), printPage = ref(0), printAllowed = ref(true)
 const abort = new AbortController(), bus = new EventBus(), destinations = new Map<string, OutlineItem>()
 let viewer: PDFViewer | undefined, links: PDFLinkService | undefined, finder: PDFFindController | undefined
-let loading: pdfjs.PDFDocumentLoadingTask | undefined, disposed = false, objectUrl: string | undefined
+let loading: pdfjs.PDFDocumentLoadingTask | undefined, disposed = false
+const objectUrl = ref('')
 let printAbort: AbortController | undefined, printJob: Awaited<ReturnType<typeof preparePdfPrint>> | undefined
 let resize: ResizeObserver | undefined, resizeFrame = 0
+let reportPageChanges = false
 watch(page, value => { pageInput.value = value })
 
 function navigate(value: number | string | null | undefined) {
@@ -72,8 +75,13 @@ async function selectOutline(keys: (string | number)[]) {
       if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) throw new Error('此目录链接类型不支持，请下载原文件后查看。')
       window.open(url.href, '_blank', 'noopener,noreferrer')
     }
-    if (window.innerWidth < 700) sidebar.value = false
+    if (!props.bookshelf && window.innerWidth < 700) sidebar.value = false
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '无法跳转到该目录位置。' }
+}
+
+function closeSidebar() {
+  sidebar.value = false
+  root.value?.querySelector<HTMLElement>('button[aria-label="目录与缩略图"]')?.focus({ preventScroll: true })
 }
 
 function search(again = false, previous = false) {
@@ -102,9 +110,9 @@ function keyboard(event: KeyboardEvent) {
 }
 
 function download() {
-  if (!objectUrl) return
+  if (!objectUrl.value) return
   const anchor = document.createElement('a')
-  anchor.href = objectUrl; anchor.download = props.name.split('/').at(-1) || 'document.pdf'; anchor.click()
+  anchor.href = objectUrl.value; anchor.download = props.name.split('/').at(-1) || 'document.pdf'; anchor.click()
 }
 
 async function print() {
@@ -133,13 +141,23 @@ onMounted(async () => {
     }
     viewer = new PDFViewer(options)
     links.setViewer(viewer)
-    bus.on('pagesinit', () => { if (!disposed) { ready.value = true; viewer!.currentScaleValue = scale.value } })
+    bus.on('pagesinit', () => {
+      if (disposed) return
+      ready.value = true
+      viewer!.currentScaleValue = scale.value
+      if (props.initialPage) navigate(Math.min(props.initialPage, pages.value))
+      reportPageChanges = true
+    })
     bus.on('pagerendered', (event: { error?: unknown }) => {
       if (disposed) return
       busy.value = false
       if (event.error) error.value = '部分页面渲染失败，可切换页面重试或下载原文件。'
     })
-    bus.on('pagechanging', (event: { pageNumber: number }) => { if (!disposed) page.value = event.pageNumber })
+    bus.on('pagechanging', (event: { pageNumber: number }) => {
+      if (disposed) return
+      page.value = event.pageNumber
+      if (reportPageChanges) emit('pageChange', event.pageNumber)
+    })
     bus.on('scalechanging', (event: { scale: number }) => { if (!disposed) percent.value = Math.round(event.scale * 100) })
     bus.on('updatefindmatchescount', (event: { matchesCount: { current: number; total: number } }) => { if (!disposed) matches.value = event.matchesCount })
     bus.on('updatefindcontrolstate', (event: { state: number; matchesCount: { current: number; total: number } }) => {
@@ -150,7 +168,7 @@ onMounted(async () => {
     const response = await apiResponse(`/files/${props.id}/content?version=${props.version}`, { signal: abort.signal })
     const bytes = new Uint8Array(await response.arrayBuffer())
     if (disposed) return
-    objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+    objectUrl.value = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
     loading = pdfjs.getDocument({ data: bytes, enableXfa: false, cMapUrl: '/pdfjs/cmaps/', cMapPacked: true,
       standardFontDataUrl: '/pdfjs/standard_fonts/', wasmUrl: '/pdfjs/wasm/' })
     loading.onPassword = () => { error.value = '该 PDF 需要密码，本版请下载原文件后打开。'; busy.value = false; void loading?.destroy() }
@@ -178,16 +196,19 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposed = true; abort.abort(); printAbort?.abort(); printJob?.dispose(); resize?.disconnect(); cancelAnimationFrame(resizeFrame)
   viewer?.setDocument(null); links?.setDocument(null); void viewer?.l10n?.destroy(); void loading?.destroy()
-  if (objectUrl) URL.revokeObjectURL(objectUrl)
+  if (objectUrl.value) URL.revokeObjectURL(objectUrl.value)
 })
+
+defineExpose({ goToPage: navigate, isLoading: () => busy.value })
 </script>
 
 <template>
-  <section ref="root" class="pdf-document-view" aria-label="PDF 只读预览" @keydown="keyboard">
+  <section ref="root" class="pdf-document-view" :class="{ 'pdf-book-layout': bookshelf }" aria-label="PDF 只读预览" @keydown="keyboard">
     <link rel="stylesheet" :href="`/pdfjs/viewer.css?v=${pdfjs.version}`">
     <div class="pdf-toolbar" role="toolbar" aria-label="PDF 阅读工具">
+      <div v-if="$slots['book-heading']" class="pdf-book-heading"><slot name="book-heading" /></div>
       <div class="pdf-tool-group">
-        <AButton title="目录与缩略图" aria-label="目录与缩略图" :aria-expanded="sidebar" :type="sidebar ? 'primary' : 'default'" @click="sidebar = !sidebar"><List :size="17" /></AButton>
+        <AButton title="目录与缩略图" aria-label="目录与缩略图" :aria-expanded="sidebar" :type="sidebar ? 'primary' : 'default'" @click="sidebar = bookshelf || !sidebar"><List :size="17" /></AButton>
         <AButton title="上一页" aria-label="上一页" :disabled="!ready || page <= 1" @click="navigate(page - 1)"><ChevronLeft :size="17" /></AButton>
         <label class="pdf-page-label">页码 <AInputNumber v-model:value="pageInput" aria-label="PDF 页码" :min="1" :max="pages || 1" :disabled="!ready" :controls="false" @press-enter="navigate(pageInput)" @blur="navigate(pageInput)" /></label>
         <span class="pdf-page-count">/ {{ pages }}</span>
@@ -201,7 +222,7 @@ onBeforeUnmount(() => {
       <div class="pdf-tool-group pdf-tool-actions">
         <AButton title="查找文字（Ctrl+F）" aria-label="查找文字" :disabled="!ready" @click="showFind"><Search :size="16" /></AButton>
         <AButton title="顺时针旋转" aria-label="顺时针旋转" :disabled="!ready" @click="rotate"><RotateCw :size="16" /></AButton>
-        <AButton title="下载 PDF" aria-label="下载 PDF" :disabled="!pdf" @click="download"><Download :size="16" /></AButton>
+        <AButton title="下载 PDF" aria-label="下载 PDF" :disabled="!objectUrl" @click="download"><Download :size="16" /></AButton>
         <AButton :title="printAllowed ? '打印 PDF（Ctrl+P）' : '文档限制打印'" aria-label="打印 PDF" :disabled="!ready || !printAllowed" :loading="printing" @click="print"><Printer v-if="!printing" :size="16" /></AButton>
       </div>
     </div>
@@ -215,10 +236,12 @@ onBeforeUnmount(() => {
     <AAlert v-if="error" type="error" show-icon :message="error" />
     <div v-if="printing" class="pdf-print-progress" role="status">正在准备打印 {{ printPage }} / {{ pages }} 页… <AButton size="small" @click="printAbort?.abort()">取消准备</AButton></div>
     <div class="pdf-reader-body">
+      <Transition name="reading-drawer" :css="!!bookshelf">
       <aside v-if="sidebar" class="pdf-sidebar" aria-label="PDF 导航侧栏">
         <div class="pdf-sidebar-tabs" role="group" aria-label="PDF 导航方式">
           <AButton :type="sidebarTab === 'outline' ? 'primary' : 'default'" @click="sidebarTab = 'outline'"><BookOpen :size="15" />目录</AButton>
           <AButton :type="sidebarTab === 'thumbnails' ? 'primary' : 'default'" @click="sidebarTab = 'thumbnails'">缩略图</AButton>
+          <AButton v-if="bookshelf" type="text" title="关闭 PDF 目录" aria-label="关闭 PDF 目录" @click="closeSidebar"><X :size="16" /></AButton>
         </div>
         <div class="pdf-sidebar-scroll">
           <template v-if="sidebarTab === 'outline'">
@@ -231,6 +254,7 @@ onBeforeUnmount(() => {
           </template>
         </div>
       </aside>
+      </Transition>
       <div class="pdf-main">
         <div ref="container" class="pdf-pages" tabindex="0" aria-label="PDF 连续阅读区" :aria-busy="busy">
           <div ref="surface" class="pdfViewer" />
@@ -245,6 +269,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .pdf-document-view { min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .pdf-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); }
+.pdf-book-layout .pdf-toolbar { gap: 6px 12px; padding-block: 6px; }
+.pdf-book-heading { flex: 1 1 180px; min-width: 0; }
 .pdf-tool-group { display: flex; align-items: center; gap: 6px; }
 .pdf-tool-actions { margin-left: auto; }
 .pdf-toolbar :deep(.ant-btn), .pdf-findbar :deep(.ant-btn) { display: inline-flex; align-items: center; justify-content: center; padding-inline: 9px; min-width: 34px; }
@@ -259,6 +285,8 @@ onBeforeUnmount(() => {
 .pdf-sidebar { width: 230px; max-width: 70%; display: flex; flex-direction: column; flex-shrink: 0; border-right: 1px solid var(--color-border); background: var(--color-surface, white); z-index: 2; }
 .pdf-sidebar-tabs { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--color-border); }
 .pdf-sidebar-tabs :deep(.ant-btn) { display: inline-flex; align-items: center; gap: 6px; }
+.pdf-book-layout .pdf-sidebar-tabs { gap: 6px; padding-block: 8px; border-bottom-color: color-mix(in srgb, var(--color-border) 65%, transparent); }
+.pdf-book-layout .pdf-sidebar-tabs :deep(.ant-btn-text) { margin-left: auto; min-width: 36px; min-height: 36px; padding: 0; justify-content: center; }
 .pdf-sidebar-scroll { overflow: auto; flex: 1; min-height: 0; padding: 8px; }
 .pdf-sidebar-scroll :deep(.ant-tree-title) { overflow-wrap: anywhere; white-space: normal; }
 .pdf-sidebar-scroll :deep(.ant-tree-node-content-wrapper) { min-width: 0; }
@@ -269,8 +297,18 @@ onBeforeUnmount(() => {
 .pdf-loading { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; gap: 12px; background: var(--color-background); pointer-events: none; }
 .pdf-reader-status { display: flex; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: 12px; border-top: 1px solid var(--color-border); }
 .pdf-print-progress { padding: 8px 12px; display: flex; align-items: center; gap: 12px; }
+@media (width >= 900px) {
+  .pdf-book-layout .pdf-reader-body { display: grid; grid-template-columns: var(--reading-directory-width) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .pdf-book-layout .pdf-sidebar { grid-column: 1; grid-row: 1; width: auto; max-width: none; border: 0; }
+  .pdf-book-layout .pdf-main { grid-column: 2; grid-row: 1; border-inline-start: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent); }
+}
+@media (width < 900px) {
+  .pdf-book-layout .pdf-sidebar { position: absolute; inset: 0 auto 0 0; width: 270px; max-width: calc(100% - 48px); box-shadow: 4px 0 16px #0002; }
+  .pdf-book-layout .pdf-sidebar-tabs :deep(.ant-btn-text) { min-width: 44px; min-height: 44px; }
+}
 @media (max-width: 700px) {
   .pdf-toolbar { gap: 8px; padding: 8px; }
+  .pdf-book-heading { flex-basis: 100%; }
   .pdf-tool-actions { margin-left: 0; }
   .pdf-sidebar { position: absolute; inset: 0 auto 0 0; width: 230px; box-shadow: 4px 0 16px #0002; }
   .pdf-toolbar :deep(.ant-btn) { min-height: 38px; min-width: 38px; }

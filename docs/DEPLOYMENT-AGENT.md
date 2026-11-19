@@ -32,7 +32,7 @@
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
-- 当前源码迁移最高为 V37。V30–V37 加入 AI 配置、会话与回答版本、服务商、默认模型、多账号连接和网页自定义地址，AI 版本需要前后端配套发布。V25–V29 加入学习来源、词库导入和日历调休与期初余额。NASA 自动同步默认关闭，开启后每 6 小时检查近期最多 5 篇，外网连通性按部署环境核实。发布前从 `database/migrations/` 和现网 Flyway 分别核对源码和实际版本。
+- 当前源码迁移最高为 V38，为 `novel_book` 新增可空的 `title`，书架自定义书名与 PDF 页码功能需要前后端配套发布。升级核对原有书目时按 V37 的列计算数据摘要，并单独验证 `title` 初始为 `NULL`。V30–V37 加入 AI 配置、会话与回答版本、服务商、默认模型、多账号连接和网页自定义地址。V25–V29 加入学习来源、词库导入和日历调休与期初余额。NASA 自动同步默认关闭，开启后每 6 小时检查近期最多 5 篇，外网连通性按部署环境核实。发布前从 `database/migrations/` 和现网 Flyway 分别核对源码和实际版本。
 - 在生产启用 AI 设置前，在发布目录之外准备受限、持久化的 Base64 密钥文件，内含 32 个随机字节的编码。服务器 `.env` 的 `PRIVATE_SPACE_AI_ENCRYPTION_KEY_FILE` 指向该文件绝对路径，启用 AI 时为所有新版 Compose 命令在 `-f compose.yml` 后加 `-f compose.ai.yml`。密钥文件和数据库备份分开保管，升级沿用原文件。用 `docker compose ... config --quiet` 校验配置结构，并核对应用读取密钥后的加密就绪状态。
 - AI 覆盖配置仅让后端额外加入 `ai_egress` 网桥访问公网，原 `private` 网络保留，数据库仍只加入 `private`。后端不发布宿主机端口。以容器内 HTTPS 请求验证模型服务出站；若关闭 AI 覆盖配置，基础 Compose 仍使用内部网络。
 - 用户可在网页新增自定义服务，地址与凭据随连接保存在数据库。已有 `PRIVATE_SPACE_AI_CUSTOM_PROVIDERS` 部署登记继续支持；更改或撤销这类旧登记前确认现有连接影响。线上用有额度的账号分别验证普通与流式回复。

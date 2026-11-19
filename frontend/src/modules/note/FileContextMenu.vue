@@ -48,7 +48,7 @@ onBeforeUnmount(() => { window.removeEventListener('pointerdown', outside); wind
         <AMenuItem key="new-folder" @click="emit('action', 'new-folder')"><FolderPlus :size="16" />{{ note ? '在此新建文件夹' : '新建文件夹' }}</AMenuItem>
       </template>
       <template v-if="note">
-        <AMenuItem key="copy-novel" v-if="note.type!=='folder' && /\.(txt|epub|md)$/i.test(note.path)" @click="emit('action','copy-novel')"><BookOpen :size="16" />复制到书架</AMenuItem>
+        <AMenuItem key="copy-novel" v-if="note.type!=='folder' && /\.(txt|epub|md|pdf)$/i.test(note.path)" @click="emit('action','copy-novel')"><BookOpen :size="16" />复制到书架</AMenuItem>
         <AMenuItem key="rename" @click="emit('action', 'rename')"><Pencil :size="16" />重命名</AMenuItem>
         <AMenuItem key="move" @click="emit('action', 'move')"><FolderInput :size="16" />移动到…</AMenuItem>
         <AMenuItem key="delete" danger class="danger-action" @click="emit('action', 'delete')"><Trash2 :size="16" />删除</AMenuItem>

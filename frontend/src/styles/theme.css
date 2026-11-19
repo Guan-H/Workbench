@@ -60,6 +60,10 @@ svg { flex-shrink: 0; }
 .login-note { margin-top: 24px; }
 .workspace { height: 100dvh; display: flex; overflow: hidden; font-size: 14px; }
 /* Clip the sliding card without resizing its contents on each frame. */
+.reading-drawer-enter-active, .reading-drawer-leave-active { transition: transform 180ms ease, opacity 180ms ease; }
+.reading-drawer-enter-from, .reading-drawer-leave-to { transform: translateX(-100%); opacity: 0; }
+.reading-drawer-leave-active { pointer-events: none; }
+
 .workspace-panel-viewport {
   --panel-duration: 220ms;
   --panel-easing: cubic-bezier(.2, .75, .25, 1);

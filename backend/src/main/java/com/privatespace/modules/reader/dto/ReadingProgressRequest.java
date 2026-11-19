@@ -9,6 +9,6 @@ public record ReadingProgressRequest(
         @Pattern(regexp = "0|[1-9][0-9]{0,17}") String baseRevision,
         @Pattern(regexp = "[1-9][0-9]{0,17}") String sourceVersion,
         @Pattern(regexp = "[a-f0-9]{64}") String sourceHash,
-        @Pattern(regexp = "txt|epub|md") String format,
+        @Pattern(regexp = "txt|epub|md|pdf") String format,
         @NotBlank @Size(max = 2048) String locator) {
 }

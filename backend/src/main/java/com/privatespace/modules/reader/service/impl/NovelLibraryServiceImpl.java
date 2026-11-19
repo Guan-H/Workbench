@@ -22,7 +22,7 @@ public class NovelLibraryServiceImpl implements NovelLibraryService {
     public NovelLibraryServiceImpl(NovelLibraryMapper mapper,NoteService notes,ObjectMapper json) { this.mapper=mapper; this.notes=notes; this.json=json; }
     public static boolean supported(NoteResponse file) {
         String path=file.path().toLowerCase(Locale.ROOT);
-        return !file.deleted() && ((file.type().equals("note") && path.endsWith(".md")) || (file.type().equals("attachment") && path.matches(".*\\.(txt|epub)$")));
+        return !file.deleted() && ((file.type().equals("note") && path.endsWith(".md")) || (file.type().equals("attachment") && path.matches(".*\\.(txt|epub|pdf)$")));
     }
     @Transactional(readOnly=true)
     public NovelLibraryResponse list() {
@@ -33,7 +33,7 @@ public class NovelLibraryServiceImpl implements NovelLibraryService {
                 .stream().filter(NovelLibraryServiceImpl::supported).forEach(file -> sources.put(file.id(), file));
         var books=references.stream().map(book -> {
             NoteResponse file=sources.get(book.fileId());
-            return new NovelLibraryResponse.Book(book.fileId(),book.folderId(),book.sourcePath(),file);
+            return new NovelLibraryResponse.Book(book.fileId(), book.folderId(), book.sourcePath(), book.title(), file);
         }).toList();
         return new NovelLibraryResponse(Long.toString(mapper.revision()),mapper.folders().stream().map(item->new NovelLibraryResponse.Folder(item.id(),item.parentId(),item.name())).toList(),books);
     }
@@ -100,10 +100,18 @@ public class NovelLibraryServiceImpl implements NovelLibraryService {
             }
             case "add-book" -> {
                 parent=folder(request.parentId()); var file=notes.metadata(id);
-                if (!supported(file)) throw new ApiException(400,"NOVEL_FORMAT","仅支持 TXT、EPUB 和 Markdown 笔记。");
+                if (!supported(file)) throw new ApiException(400,"NOVEL_FORMAT","仅支持 TXT、EPUB、Markdown 和 PDF。");
                 if (mapper.book(id)!=null) throw new ApiException(409,"NOVEL_ALREADY_ADDED","该文件已在书籍目录中，不会复制正文；请到阅读页移动分类。");
                 if(mapper.books().size()>=5000) throw new ApiException(413,"NOVEL_LIMIT","书籍书目最多 5000 本。");
                 mapper.add(id,parent,file.path());
+            }
+            case "rename-book" -> {
+                if (mapper.book(id) == null) throw new ApiException(404, "NOT_FOUND", "书目不存在。");
+                String title = request.name() == null ? "" : request.name().strip();
+                if (title.isBlank() || title.codePoints().anyMatch(Character::isISOControl)) {
+                    throw new ApiException(400, "INVALID_TITLE", "请输入有效书名，最多 120 字。");
+                }
+                mapper.renameBook(id, title);
             }
             case "move-book" -> { parent=folder(request.parentId()); if(mapper.book(id)==null) throw new ApiException(404,"NOT_FOUND","书目不存在。"); mapper.move(id,parent); }
             case "remove-book" -> { if(mapper.book(id)==null) throw new ApiException(404,"NOT_FOUND","书目不存在。"); mapper.remove(id); }
@@ -121,7 +129,7 @@ public class NovelLibraryServiceImpl implements NovelLibraryService {
         try { bytesHash=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); } catch(Exception exception) { throw new IllegalStateException(exception); }
         String hash=hash(List.of(revision,parent,filename,bytesHash)); var previous=begin(revision,operation,hash); if(previous!=null) return previous;
         folder(parent);
-        if (!filename.toLowerCase(Locale.ROOT).matches("[^/\\\\]+\\.(txt|epub|md)$")) throw new ApiException(400,"NOVEL_FORMAT","请选择 TXT、EPUB 或 Markdown 文件。");
+        if (!filename.toLowerCase(Locale.ROOT).matches("[^/\\\\]+\\.(txt|epub|md|pdf)$")) throw new ApiException(400,"NOVEL_FORMAT","请选择 TXT、EPUB、Markdown 或 PDF 文件。");
         if(mapper.books().size()>=5000) throw new ApiException(413,"NOVEL_LIMIT","书籍书目最多 5000 本。");
         NoteResponse file;
         if(filename.toLowerCase(Locale.ROOT).endsWith(".md")) {

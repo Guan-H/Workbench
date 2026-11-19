@@ -1,8 +1,8 @@
 import type { Note } from '../../shared/api/client'
 export interface NovelFolder { id: string; parentId: string; name: string }
-export interface NovelBook { fileId: string; folderId: string; sourcePath: string; file: Note | null }
+export interface NovelBook { fileId: string; folderId: string; sourcePath: string; title: string | null; file: Note | null }
 export interface NovelLibrary { revision: string; folders: NovelFolder[]; books: NovelBook[] }
-export interface LibraryChange { baseRevision: string; action: 'create-folder' | 'update-folder' | 'delete-folder' | 'add-book' | 'move-book' | 'remove-book'; id?: string; parentId?: string; name?: string }
+export interface LibraryChange { baseRevision: string; action: 'create-folder' | 'update-folder' | 'delete-folder' | 'add-book' | 'rename-book' | 'move-book' | 'remove-book'; id?: string; parentId?: string; name?: string }
 export function folderPath(id: string, folders: NovelFolder[]): string {
   const names: string[] = [], seen = new Set<string>()
   while (id && !seen.has(id)) { seen.add(id); const item = folders.find(folder => folder.id === id); if (!item) break; names.unshift(item.name); id = item.parentId }

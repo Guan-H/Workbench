@@ -54,9 +54,9 @@ try {
     throw new Error('Reading position never reached the real server')
   }
   async function chapter(title) {
-    await page.getByRole('button', { name: '章节目录', exact: true }).click()
-    await page.getByRole('dialog', { name: '书籍章节目录' }).getByRole('tree').getByText(title, { exact: true }).click()
-    await page.getByRole('dialog', { name: '书籍章节目录' }).waitFor({ state: 'detached' })
+    const contents = page.getByRole('complementary', { name: '书籍章节目录' })
+    await contents.getByRole('tree').getByText(title, { exact: true }).click()
+    await contents.waitFor({ state: 'visible' })
   }
   if (phase === 'reader-restart') {
     const saved = JSON.parse(await readFile(output + '/reader-result.json', 'utf8'))
@@ -90,7 +90,7 @@ try {
     assert.equal(await page.getByRole('region', {name:'书籍阅读器',exact:true}).count(), 0)
     await page.getByRole('navigation', {name:'主要导航'}).getByRole('button', {name:'阅读',exact:true}).click()
     await open('long-novel.txt')
-    await page.getByRole('button', { name: '章节目录', exact: true }).click()
+    await page.getByRole('complementary', { name: '书籍章节目录' }).waitFor()
     assert.equal(await page.getByRole('tree').getByText('他想起第一章的内容，但这行是普通正文。', { exact: true }).count(), 0)
     await page.getByRole('textbox', { name: '搜索章节名称', exact: true }).fill('第12章')
     await page.getByRole('tree').getByText('第12章 测试旅程', { exact: true }).click()
@@ -101,7 +101,10 @@ try {
     await page.getByRole('button', { name: '阅读设置', exact: true }).click()
     const fontSlider = page.getByRole('dialog').getByRole('slider').first()
     await fontSlider.focus(); await fontSlider.press('End'); await fontSlider.press('ArrowLeft')
-    await page.getByRole('button', { name: '关闭阅读面板', exact: true }).click()
+    const settingsBackdrop = page.locator('.reader-panel-backdrop')
+    const bounds = await settingsBackdrop.boundingBox()
+    await settingsBackdrop.click({ position: { x: bounds.width / 2, y: 160 } })
+    await page.getByRole('dialog', { name: '书籍阅读设置' }).waitFor({ state: 'detached' })
     await page.waitForFunction(() => document.querySelector('.reader-current-chapter')?.textContent.includes('第12章'))
     await page.getByRole('button', { name: '下一章', exact: true }).click()
     await page.waitForFunction(() => document.querySelector('.reader-current-chapter')?.textContent.includes('第13章'))
@@ -115,7 +118,7 @@ try {
     await page.setViewportSize({ width: 375, height: 850 })
     await page.getByRole('button', { name: '章节目录', exact: true }).click()
     await page.screenshot({ path: output + '/novel-directory-narrow.png', fullPage: true })
-    await page.getByRole('button', { name: '关闭阅读面板', exact: true }).click()
+    await page.getByRole('button', { name: '关闭章节目录', exact: true }).click()
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
     await page.screenshot({ path: output + '/novel-narrow.png', fullPage: true })
     await page.setViewportSize({ width: 1440, height: 900 })

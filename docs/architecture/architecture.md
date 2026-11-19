@@ -1433,6 +1433,8 @@ TXT/PDF 最终批次 sessions-6ba1a649-219e-41d0-af30-39b5bec2a528，data/docume
 
 ## 71. PDF 阅读器交互补齐（2026-11-10）
 
+书架 PDF 入口复用 `PdfDocumentView` 和现有文件版本接口。书架直接上传或引用笔记中的同一文件 ID；页码使用已有 `reading_progress` 存储，`format=pdf`、`part=pdf`、`block=页码减一`、`offset=0`、`encoding=auto`。继续使用内容指纹与进度版本检查，不增加数据库迁移或依赖。笔记中的预览不写入书架页码。
+
 用户确认接近 Edge 的常用阅读体验，继续沿用锁定的 PDF.js 6.5.438，未新增依赖、后端接口或迁移。以 PDFViewer/PDFLinkService/PDFFindController/EventBus 组合连续阅读、文字层、内部目标与搜索高亮；外围沿用 Ant Design Vue 工具栏和目录树。目录直接读取 getOutline，保留层级和命名目标；无书签如实提示，不做 OCR 或推测目录。外部链接新标签打开并移除 opener/referrer，PDF JavaScript、XFA、交互表单和注释编辑不启用。
 
 正文采用上游可见页渲染队列及画布缓冲，每张画布上限 1600 万像素；侧栏缩略图使用 IntersectionObserver，进入可见范围生成、离开释放画布，取消旧渲染。切换文档销毁加载任务、阅读器监听/观察器、画布、下载与打印对象 URL。PDF.js 样式由已有资产准备脚本复制到本地，并用原生 CSS @scope 限定到 .pdf-document-view，避免 textLayer/annotationLayer 及 :root 变量影响笔记和保险库；目标为支持该特性的现代浏览器。资源仍全部自托管，不引入 CDN 或在线预览服务。
@@ -1508,6 +1510,12 @@ V18 新增 novel_folder、novel_book、novel_library_state 和 novel_library_ope
 reader 的 NovelLibraryService 通过 NoteService 新增 metadata 公开方法读取不带正文的源文件元信息，不跨模块使用 NoteMapper；集合列表在只读事务中返回自己的 folders/books/revision，缺失源文件返回空 file 字段。5000 目录/5000 书目的首版保护上限、同级目录重名、自身/子目录移动校验均由真实后端执行。每个修改锁定小说目录状态行，比较全局 revision，避免旧删除确认移除后来加入的条目；UUID 操作/请求摘要/结果收据用于幂等重试。源文件正常编辑不改变小说目录 revision。
 
 WEB Cookie/CSRF/Origin/no-store 接口：GET `/api/v1/reader/library` 返回 revision/folders/books，Book 含 fileId/folderId/sourcePath/file；GET `/reader/library/files/{id}` 返回当前源文件元信息，未加入或源不可用返回 404。POST library 接收 baseRevision/action/id/parentId/name 及 Idempotency-Key，动作包括 create-folder/update-folder/delete-folder/add-book/move-book/remove-book，返回 revision/id。POST library/upload 接收 baseRevision/parentId/name/file 与同类操作标识，同事务发布原文件和小说引用；TXT/EPUB 沿用附件，Markdown 通过 NoteService.create 严格 UTF-8 创建笔记并沿用 1 MiB 限制。上传存储仍统一走原文件库，选择的是小说分类，不是笔记目录。
+
+V38 给 `novel_book` 增加可空的 `title` 列，已有书目继续显示源文件名。GET `/api/v1/reader/library` 的 Book 补充 `title`，POST 同一路径新增 `rename-book`（`baseRevision`、`id`、`name` 和 `Idempotency-Key`），复用版本锁与幂等收据。更新仅写书目标题，文件路径、版本、内容与以文件 ID 关联的进度继续由各自模块维护。
+
+书架阅读器加载后默认展开左侧目录抽屉。桌面端用固定栏位隔离目录过渡与正文滚动容器，窄屏用绝对定位抽屉覆盖正文左侧，避免更改正文宽度。书签与章节点击只负责跳转；目录通过「×」关闭。文字阅读设置是独立的右侧抽屉，使用滑入过渡，退出时恢复焦点。笔记预览继续使用共享 PDF 组件原有的目录行为。
+
+书架以统一的 `--reading-directory-width` 控制两类阅读器的桌面目录栏，正文栏承担持续存在的分隔线。`BookHeading` 统一书名与返回入口，合入各自的阅读工具栏。PDF 通过可选插槽接入书架标题；文字正文保留行宽上限，在正文栏内居中。
 
 前端独立目录树/手机目录下拉均只使用小说接口；笔记右键 AddToNovelDialog 显式选择小说分类。重复加入同一 file_id 拒绝而不生成第二份正文或静默移动分类；分类移动在阅读页独立操作。列表保留搜索、10 本分页和内部滚动；删除确认明确源文件/进度保留。笔记源文件重命名/移动不影响引用身份。
 
