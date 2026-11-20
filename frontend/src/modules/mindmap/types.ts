@@ -1,15 +1,32 @@
+export const nodeColors = {
+    blue: { label: '蓝色', background: '#e1ebfc', main: '#cadcf5', text: '#1e3b64', accent: '#537fb6' },
+    green: { label: '绿色', background: '#dfeee0', main: '#cbe5d0', text: '#254733', accent: '#538367' },
+    orange: { label: '橙色', background: '#fce8ce', main: '#f5d9af', text: '#633715', accent: '#a97035' },
+    red: { label: '珊瑚色', background: '#f8dddd', main: '#f2c9c6', text: '#6d2b34', accent: '#b26568' },
+    purple: { label: '紫色', background: '#ece3f8', main: '#dfd0f2', text: '#50376d', accent: '#8669ab' },
+    gray: { label: '灰色', background: '#e7e9ec', main: '#dce1e7', text: '#374151', accent: '#66748a' },
+} as const;
+export const lineStyles = { curve: '曲线', straight: '直线', elbow: '直角折线' } as const;
+export type NodeColor = keyof typeof nodeColors;
+export type LineStyle = keyof typeof lineStyles;
+export interface MapPosition { x: number; y: number }
+export const mapPositionLimit = 20000;
+
 export interface MapNode {
     id: string;
     topic: string;
     children: MapNode[];
     expanded?: boolean;
     direction?: 0 | 1;
+    color?: NodeColor;
+    position?: MapPosition;
 }
 export interface MapDocument {
     format: 'workbench-mindmap';
     schemaVersion: 1;
     direction: 0 | 1 | 2 | 3;
     nodeData: MapNode;
+    lineStyle?: LineStyle;
 }
 export interface Mindmap {
     id: string;
@@ -41,7 +58,7 @@ export interface MapPending {
     body: MapWrite;
 }
 
-export type MapAction = 'child' | 'sibling' | 'before' | 'parent' | 'edit' | 'delete' | 'fold' | 'expand-all' | 'collapse-all' | 'root-child' | 'fit' | 'center' | 'reset';
+export type MapAction = 'child' | 'sibling' | 'before' | 'parent' | 'edit' | 'delete' | 'fold' | 'expand-all' | 'collapse-all' | 'root-child' | 'fit' | 'center' | 'reset' | 'reset-position';
 export interface MapMenuItem {
     key: MapAction;
     label: string;
@@ -60,17 +77,23 @@ function object(value: unknown): Record<string, unknown> { if (!value || typeof 
     throw new Error('导图 JSON 结构无效。'); return value as Record<string, unknown>; }
 function keys(value: Record<string, unknown>, allowed: string[]) { if (Object.keys(value).some(key => !allowed.includes(key)))
     throw new Error('导图包含首版不支持的字段，只接受纯文本节点。'); }
+function coordinate(value: unknown): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && Math.abs(value) <= mapPositionLimit;
+}
 export function parseMap(value: unknown): MapDocument {
     const root = object(value);
-    keys(root, ['format', 'schemaVersion', 'direction', 'nodeData']);
+    keys(root, ['format', 'schemaVersion', 'direction', 'nodeData', 'lineStyle']);
     if (root.format !== 'workbench-mindmap' || root.schemaVersion !== 1 || (root.direction !== 0 && root.direction !== 1 && root.direction !== 2 && root.direction !== 3))
         throw new Error('请选择 Workbench 导出的导图 JSON。');
     if (new TextEncoder().encode(JSON.stringify(value)).length > 1024 * 1024)
         throw new Error('导图 JSON 最多 1 MiB。');
+    const line = root.lineStyle;
+    if (line !== undefined && (typeof line !== 'string' || !Object.hasOwn(lineStyles, line)))
+        throw new Error('导图连线样式无效。');
     const ids = new Set<string>();
     const node = (input: unknown, depth: number): MapNode => {
         const item = object(input);
-        keys(item, ['id', 'topic', 'children', 'expanded', 'direction']);
+        keys(item, ['id', 'topic', 'children', 'expanded', 'direction', 'color', 'position']);
         if (depth > 40 || typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(item.id) || ids.has(item.id) || typeof item.topic !== 'string' || !item.topic.trim() || item.topic.length > 1000 || !Array.isArray(item.children))
             throw new Error('节点无效：ID 须唯一、文本 1–1000 字，最多 1000 个节点/40 层。');
         ids.add(item.id);
@@ -80,8 +103,22 @@ export function parseMap(value: unknown): MapDocument {
             throw new Error('节点折叠状态无效。');
         if (item.direction !== undefined && item.direction !== 0 && item.direction !== 1)
             throw new Error('节点方向无效。');
-        return { id: item.id, topic: item.topic, children: item.children.map(child => node(child, depth + 1)), ...(typeof item.expanded === 'boolean' ? { expanded: item.expanded } : {}), ...(item.direction === 0 || item.direction === 1 ? { direction: item.direction } : {}) };
+        const color = item.color;
+        if (color !== undefined && (typeof color !== 'string' || !Object.hasOwn(nodeColors, color)))
+            throw new Error('节点颜色无效。');
+        let position: MapPosition | undefined;
+        if (item.position !== undefined) {
+            const point = object(item.position);
+            keys(point, ['x', 'y']);
+            if (!coordinate(point.x) || !coordinate(point.y)) throw new Error('节点位置无效。');
+            position = { x: point.x, y: point.y };
+        }
+        return { id: item.id, topic: item.topic, children: item.children.map(child => node(child, depth + 1)),
+            ...(typeof item.expanded === 'boolean' ? { expanded: item.expanded } : {}),
+            ...(item.direction === 0 || item.direction === 1 ? { direction: item.direction } : {}),
+            ...(color === undefined ? {} : { color: color as NodeColor }), ...(position ? { position } : {}) };
     };
-    return { format: 'workbench-mindmap', schemaVersion: 1, direction: root.direction, nodeData: node(root.nodeData, 1) };
+    return { format: 'workbench-mindmap', schemaVersion: 1, direction: root.direction, nodeData: node(root.nodeData, 1),
+        ...(line === undefined ? {} : { lineStyle: line as LineStyle }) };
 }
 export function blankMap(title: string): MapDocument { return { format: 'workbench-mindmap', schemaVersion: 1, direction: 2, nodeData: { id: mapId(), topic: title, children: [] } }; }

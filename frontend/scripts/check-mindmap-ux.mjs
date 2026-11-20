@@ -64,6 +64,153 @@ try{
   await page.keyboard.press('Escape');await maps.getByRole('button',{name:'恢复 100% 缩放',exact:true}).click();assert.equal(await maps.locator('.mindmap-zoom').textContent(),'100%')
   await maps.getByRole('button',{name:'放大画布',exact:true}).click();assert.equal(await maps.locator('.mindmap-zoom').textContent(),'110%')
   await maps.getByRole('button',{name:'缩小画布',exact:true}).click();assert.equal(await maps.locator('.mindmap-zoom').textContent(),'100%')
+  const saveAndRead = async () => { await saved(); return call('/mindmaps/'+id) }
+  snapshot = await saveAndRead()
+  snapshot.document.nodeData.children.push({id:'palette-branch',topic:'另一条主分支',children:Array.from({length:9}, (_, index) => ({
+    id:`palette-leaf-${index}`,topic:`需要校验连线的第 ${index + 1} 个子节点`,children:[],
+  }))})
+  await call('/mindmaps/'+id,'PUT',{baseVersion:snapshot.version,title:snapshot.title,document:snapshot.document})
+  await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'思维导图',exact:true}).click()
+  await list.locator(`[data-map-id="${id}"]`).click();await node('palette-branch').waitFor()
+  const background = id => node(id).evaluate(el=>getComputedStyle(el).backgroundColor)
+  assert.equal(await background('root'), 'rgb(38, 54, 75)')
+  assert.equal(await background('branch'), 'rgb(202, 220, 245)')
+  assert.equal(await background('leaf'), 'rgb(225, 235, 252)')
+  assert.equal(await background('palette-branch'), 'rgb(203, 229, 208)')
+  const paths = canvas.locator('me-nodes > .lines path')
+  const assertPorts = async () => {
+    const errors = await canvas.evaluate(host => {
+      const nodes = [...host.querySelectorAll('me-tpc[data-nodeid]')]
+      const topics = new Map(nodes.map(topic=>[topic.nodeObj.id, topic]))
+      const paths = [...host.querySelectorAll('me-nodes > .lines path')]
+      const children = nodes.filter(topic=>topic.nodeObj.parent)
+      const failures = []
+      if (paths.length !== children.length) return [`Found ${paths.length} paths for ${children.length} visible children`]
+      for (const [index, child] of children.entries()) {
+        const path = paths[index], parent = topics.get(child.nodeObj.parent.id)
+        const childRect = child.getBoundingClientRect(), parentRect = parent.getBoundingClientRect()
+        const direction = child.closest('me-main').className
+        const centerX = box => (box.left + box.right) / 2
+        const centerY = box => (box.top + box.bottom) / 2
+        const expected = direction === 'down' ? [[centerX(parentRect),parentRect.bottom],[centerX(childRect),childRect.top]] :
+          [[direction === 'lhs' ? parentRect.left : parentRect.right,centerY(parentRect)],
+           [direction === 'lhs' ? childRect.right : childRect.left,centerY(childRect)]]
+        const matrix = path.getScreenCTM()
+        const endpoints = [path.getPointAtLength(0),path.getPointAtLength(path.getTotalLength())]
+        const positioned = child.nodeObj.metadata?.position || parent.nodeObj.metadata?.position
+        for (const [end, point] of endpoints.entries()) {
+          const actual = point.matrixTransform(matrix)
+          if (positioned) {
+            const rect = end === 0 ? parentRect : childRect
+            const nearX = Math.min(Math.abs(actual.x-rect.left),Math.abs(actual.x-rect.right))<1.5
+            const nearY = Math.min(Math.abs(actual.y-rect.top),Math.abs(actual.y-rect.bottom))<1.5
+            if (!(nearX && Math.abs(actual.y-centerY(rect))<1.5 || nearY && Math.abs(actual.x-centerX(rect))<1.5))
+              failures.push(`${child.nodeObj.id}: custom endpoint ${end} is detached`)
+          } else if (Math.hypot(actual.x-expected[end][0],actual.y-expected[end][1])>1.5) {
+            failures.push(`${child.nodeObj.id}: ${direction} endpoint ${end} is on the wrong edge`)
+          }
+        }
+      }
+      return failures
+    })
+    assert.deepEqual(errors,[])
+  }
+  assert.deepEqual([...new Set(await paths.evaluateAll(nodes=>nodes.map(node=>node.getAttribute('stroke'))))].sort(), ['#537fb6','#538367'])
+  const styleButton = maps.getByRole('button', {name:'样式',exact:true})
+  const drawer = maps.getByRole('complementary', {name:'导图样式'})
+  const openDrawer = async () => { if (!(await drawer.isVisible())) await styleButton.click(); await drawer.waitFor() }
+  const closeDrawer = async () => { await drawer.getByRole('button',{name:'关闭样式'}).click(); await drawer.waitFor({state:'detached'}) }
+  const chooseLine = async label => {
+    await openDrawer()
+    await drawer.getByRole('button',{name:label,exact:true}).click()
+    return saveAndRead()
+  }
+  await node('branch').click()
+  const rootBeforeDrawer = await node('root').boundingBox()
+  await openDrawer()
+  assert.deepEqual(await node('root').boundingBox(), rootBeforeDrawer)
+  await drawer.getByRole('button', {name:'紫色',exact:true}).click()
+  snapshot = await saveAndRead()
+  assert.equal(snapshot.document.nodeData.children[0].color, 'purple')
+  assert.equal(await node('branch').evaluate(el=>getComputedStyle(el).backgroundColor), 'rgb(236, 227, 248)')
+  assert.equal(await background('leaf'), 'rgb(225, 235, 252)')
+  const chooseLayout = async (label,direction) => {
+    await openDrawer()
+    await drawer.locator('.ant-select-selector').click()
+    await page.locator('.ant-select-dropdown:visible').getByText(label,{exact:true}).click()
+    assert.equal((await saveAndRead()).document.direction,direction)
+  }
+  for (const [label,direction] of [['向下布局',3],['向左布局',0],['向右布局',1],['两侧布局',2]]) {
+    await chooseLayout(label,direction)
+    await assertPorts()
+  }
+  snapshot = await chooseLine('直角折线')
+  assert.equal(snapshot.document.lineStyle, 'elbow')
+  assert.ok((await paths.first().getAttribute('d')).includes(' H '))
+  await assertPorts()
+  snapshot = await chooseLine('直线')
+  assert.equal(snapshot.document.lineStyle, 'straight')
+  const originalPath = await paths.first().getAttribute('d')
+  assert.match(originalPath, /^M .* L /)
+  await page.screenshot({path:output+'/mindmap-style-desktop.png',animations:'disabled'})
+  await closeDrawer()
+
+  const handle = floating().getByRole('button', {name:'自由摆放节点'})
+  const start = await handle.boundingBox(), before = await node('branch').boundingBox()
+  const x = start.x + start.width / 2, y = start.y + start.height / 2
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 135, y + 110, {steps:12}); await page.mouse.up()
+  snapshot = await saveAndRead()
+  const freePosition = snapshot.document.nodeData.children[0].position
+  assert.ok(Number.isInteger(freePosition.x) && Number.isInteger(freePosition.y))
+  assert.ok(snapshot.document.nodeData.children[0].children.some(child=>child.id==='leaf'))
+  const after = await node('branch').boundingBox()
+  assert.ok(Math.abs(after.x - before.x - 135) <= 2 && Math.abs(after.y - before.y - 110) <= 2)
+  assert.notEqual(await paths.first().getAttribute('d'), originalPath)
+  await assertPorts()
+  const download = page.waitForEvent('download')
+  await maps.getByRole('button', {name:'导出 JSON',exact:true}).click()
+  assert.deepEqual(JSON.parse(await readFile(await (await download).path(),'utf8')), snapshot.document)
+  await maps.getByRole('button', {name:'撤销',exact:true}).click()
+  assert.equal((await saveAndRead()).document.nodeData.children[0].position, undefined)
+  await maps.getByRole('button', {name:'重做',exact:true}).click()
+  assert.deepEqual((await saveAndRead()).document.nodeData.children[0].position, freePosition)
+  await page.reload();await page.locator('.global-sidebar').getByRole('button',{name:'思维导图',exact:true}).click()
+  await list.locator(`[data-map-id="${id}"]`).click();await node('branch').waitFor()
+  await page.waitForFunction(({x,y})=>{
+    const root=document.querySelector('[data-nodeid="meroot"]').getBoundingClientRect()
+    const child=document.querySelector('[data-nodeid="mebranch"]').getBoundingClientRect()
+    const scale=Number(document.querySelector('.mindmap-zoom').textContent.replace('%',''))/100
+    return Math.abs(child.x+child.width/2-root.x-root.width/2-x*scale)<3 && Math.abs(child.y+child.height/2-root.y-root.height/2-y*scale)<3
+  },freePosition)
+  assert.equal(await node('branch').evaluate(el=>getComputedStyle(el).backgroundColor), 'rgb(236, 227, 248)')
+  snapshot = await chooseLine('曲线')
+  assert.equal(snapshot.document.lineStyle, undefined)
+  assert.match(await paths.first().getAttribute('d'), /^M .* C /)
+  await chooseLayout('向下布局',3)
+  assert.deepEqual((await call('/mindmaps/'+id)).document.nodeData.children[0].position,freePosition)
+  await assertPorts()
+  await chooseLayout('两侧布局',2)
+  await assertPorts()
+  await closeDrawer()
+
+  const leaf = await node('leaf').boundingBox(), root = await node('root').boundingBox()
+  const fromX = leaf.x + leaf.width / 2, fromY = leaf.y + leaf.height / 2
+  const dropped = page.waitForResponse(response=>response.url().endsWith('/mindmaps/'+id) && response.request().method()==='PUT' && response.ok())
+  await page.mouse.move(fromX, fromY); await page.mouse.down(); await page.mouse.move(fromX+12, fromY+12, {steps:5})
+  await page.mouse.move(root.x + root.width / 2, root.y + root.height / 2, {steps:18}); await page.mouse.up()
+  await dropped
+  snapshot = await saveAndRead()
+  assert.ok(snapshot.document.nodeData.children.some(child=>child.id==='leaf'), 'structural drag reparents the leaf')
+  assert.deepEqual(snapshot.document.nodeData.children.find(child=>child.id==='branch').position, freePosition)
+  await node('branch').click({button:'right'});await menu().getByRole('menuitem',{name:'恢复自动位置'}).click()
+  snapshot = await saveAndRead()
+  assert.equal(snapshot.document.nodeData.children.find(child=>child.id==='branch').position, undefined)
+
+  const invalidStyle = {...document, lineStyle:'forged'}
+  const invalidPoint = {...document, nodeData:{...document.nodeData, position:{x:20001,y:0}}}
+  for (const invalid of [invalidStyle, invalidPoint, {...document, nodeData:{...document.nodeData, color:'url(https://example.invalid)'}}]) {
+    await assert.rejects(call('/mindmaps/'+crypto.randomUUID(),'PUT',{baseVersion:'0',title:'非法样式',document:invalid}), /有效的导图 JSON/)
+  }
   for(let index=0;index<11;index++)await call('/mindmaps/'+crypto.randomUUID(),'PUT',{baseVersion:'0',title:'B 分页 '+index,document})
   await maps.getByRole('button',{name:'刷新列表',exact:true}).click();await footer().getByText(/共 12 份/).waitFor()
   a=await list.boundingBox();b=await footer().boundingBox();assert.ok(Math.abs(a.y+a.height-(b.y+b.height)-16)<3,'pagination must not move when item count changes')
@@ -71,9 +218,12 @@ try{
   await page.screenshot({path:output+'/mindmap-ux-desktop.png',animations:'disabled'})
   await page.setViewportSize({width:1440,height:600});await page.waitForFunction(()=>{const list=document.querySelector('.mindmap-list-scroll');return list.scrollHeight>list.clientHeight});a=await list.boundingBox();b=await footer().boundingBox();assert.ok(Math.abs(a.y+a.height-(b.y+b.height)-16)<3);await page.screenshot({path:output+'/mindmap-ux-short.png',animations:'disabled'})
   await page.setViewportSize({width:375,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth)
+  await openDrawer();assert.ok((await drawer.boundingBox()).width<=375)
+  await page.screenshot({path:output+'/mindmap-style-mobile.png',animations:'disabled'})
+  await closeDrawer()
   await list.scrollIntoViewIfNeeded();await page.screenshot({path:output+'/mindmap-ux-mobile.png',animations:'disabled'})
   a=await list.boundingBox();b=await footer().boundingBox();assert.ok(b.y+b.height<=a.y+a.height+1)
   assert.deepEqual(errors,[]);await writeFile(output+'/ux-result.json',JSON.stringify({paginationBottom:true,realNodeWrites:true,keyboardUndoOnce:true,context:true,zoom:true,scroll,errors},null,2))
-  console.log('PASS mindmap UX: real server-backed edits, bottom pagination, context/floating controls, F2/Ctrl+S/one undo, fold/zoom and 375px')
+  console.log('PASS mindmap UX: real server-backed edits, colors and line styles, free positioning and hierarchy drag, undo/reload, context/folding and 375px')
 }catch(error){if(page)await page.screenshot({path:output+'/failure-ux.png',fullPage:true}).catch(()=>{});throw error}
 finally{await browser?.close();await server.close()}

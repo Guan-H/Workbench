@@ -19,6 +19,9 @@ import tools.jackson.databind.ObjectMapper;
 /** Version-checked, idempotent diagram writes. Untrusted HTML/URLs never reach the renderer. */
 @Service
 public class MindmapServiceImpl implements MindmapService {
+    private static final Set<String> NODE_COLORS = Set.of("blue", "green", "orange", "red", "purple", "gray");
+    private static final Set<String> LINE_STYLES = Set.of("curve", "straight", "elbow");
+    private static final int POSITION_LIMIT = 20000;
     private final MindmapMapper mapper;
     private final ObjectMapper json;
     public MindmapServiceImpl(MindmapMapper mapper, ObjectMapper json) { this.mapper = mapper; this.json = json; }
@@ -43,22 +46,32 @@ public class MindmapServiceImpl implements MindmapService {
         if (!node.isObject()) throw invalid();
         for (String key : node.propertyNames()) if (!allowed.contains(key)) throw invalid();
     }
+    private boolean coordinate(JsonNode value) {
+        return value.isIntegralNumber() && value.canConvertToInt() && Math.abs((long) value.asInt()) <= POSITION_LIMIT;
+    }
     private void node(JsonNode node, int depth, Set<String> ids) {
         if (depth > 40) throw invalid();
-        fields(node, Set.of("id", "topic", "children", "expanded", "direction"));
+        fields(node, Set.of("id", "topic", "children", "expanded", "direction", "color", "position"));
         var id = node.get("id"); var topic = node.get("topic"); var children = node.get("children");
         if (id == null || !id.isString() || !id.asString().matches("[A-Za-z0-9_-]{1,64}") || !ids.add(id.asString()) || ids.size() > 1000
                 || topic == null || !topic.isString() || topic.asString().isBlank() || topic.asString().length() > 1000
                 || children == null || !children.isArray()) throw invalid();
         if (node.has("expanded") && !node.get("expanded").isBoolean()) throw invalid();
         if (node.has("direction") && (!node.get("direction").isIntegralNumber() || node.get("direction").asInt() < 0 || node.get("direction").asInt() > 1)) throw invalid();
+        if (node.has("color") && (!node.get("color").isString() || !NODE_COLORS.contains(node.get("color").asString()))) throw invalid();
+        if (node.has("position")) {
+            var position = node.get("position");
+            fields(position, Set.of("x", "y"));
+            if (!coordinate(position.path("x")) || !coordinate(position.path("y"))) throw invalid();
+        }
         for (var child : children) node(child, depth + 1, ids);
     }
     private String document(JsonNode document) {
         if (document == null || json.writeValueAsBytes(document).length > 1024 * 1024) throw invalid();
-        fields(document, Set.of("format", "schemaVersion", "direction", "nodeData"));
+        fields(document, Set.of("format", "schemaVersion", "direction", "nodeData", "lineStyle"));
         if (!document.path("format").isString() || !document.path("format").asString().equals("workbench-mindmap") || !document.path("schemaVersion").isIntegralNumber() || document.path("schemaVersion").asInt() != 1
                 || !document.path("direction").isIntegralNumber() || document.path("direction").asInt() < 0 || document.path("direction").asInt() > 3 || !document.has("nodeData")) throw invalid();
+        if (document.has("lineStyle") && (!document.get("lineStyle").isString() || !LINE_STYLES.contains(document.get("lineStyle").asString()))) throw invalid();
         node(document.get("nodeData"), 1, new HashSet<>());
         return json.writeValueAsString(document);
     }
