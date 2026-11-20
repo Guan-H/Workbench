@@ -1,5 +1,13 @@
 # 私有空间部署记录
 
+## 2026-11-20 Java4Shell 后端安全更新
+
+北京时间 14:45:56，Workbench 生产后端升级至 Eclipse Temurin 17.0.21.1+2，修复 CVE-2026-114938。生产节点与容器均未暴露漏洞所需的 `avx512vbmi`。当时 Adoptium 的官方 Alpine 容器标签尚未包含补丁，本次从同一生产应用镜像重建，只替换由 Adoptium 正式发布的 x86-64 Alpine JRE。发行包 SHA-256 为 `99fabb8e2517861fbbf1fc26103ee62240ec693340c4c7a812f7043e82acb203`，与官方发布清单一致。[Adoptium 安全公告](https://adoptium.net/en-GB/news/2026/11/temurin-november-2026-cspu-java4shell)
+
+应用来源仍为 `82b0ab0e0faf887fa9c7ac5e857d0cd78e51d416`，JAR 摘要与原发布一致。后端镜像标签为 `preview-20261120-82b0ab0-temurin17.0.21.1_2`，镜像 ID 为 `sha256:3ea6c1fd6dc6fd0ebcf1ccabe544c250d7f3ab01be35add52f44f2c273eba5ab`。通过 `WORKBENCH_BACKEND_VERSION` 单独固定生产后端版本。Web、MySQL 及 WordPress 容器 ID 未改变，Flyway 仍为 V38，失败迁移数为零。
+
+首次切换到新版后，容器内复核进程路径时受权限限制，脚本恢复旧配置和镜像。改由宿主机确认实际 JVM 进程路径后再次切换，停写窗口为 14:45:43–14:45:56，共 13 秒。停写期间完成数据库与附件的一致性备份，压缩读取及摘要校验通过。生产实际 JVM 版本、JAR 摘要、HTTPS 首页 200、就绪状态 UP、原账户初始化状态及匿名导图接口 401 均通过。本机 Docker 单独执行仓库运行时构建步骤，确认官方包下载、SHA-256 校验及非 root Java 运行。本次未登录生产账户执行功能验收，未执行备份恢复演练。
+
 ## 2026-11-20 思维导图样式与连线发布
 
 北京时间 13:54:49 完成生产发布 `preview-20261120-82b0ab0`，来源为已推送 `main` 的 `82b0ab0e0faf887fa9c7ac5e857d0cd78e51d416`。源码归档 SHA-256 为 `8e58b0ae7acab1189b31bf70de173b7b1acd43c0afb63f10904480ec6e262c50`。上线彩色分支、样式抽屉、节点配色、线型切换、层级拖拽及自由摆放，并修复四种布局切换后的连线端点。

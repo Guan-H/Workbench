@@ -26,11 +26,12 @@
 ## 3. 仓库中的部署事实
 
 - `deploy/production/compose.yml`：默认 project 为 `workbench`，服务名为 `mysql`、`backend`、`web`。生产环境不要使用 `deploy/compose.dev.yml` 或集成测试 Compose。
-- `backend/Dockerfile`：构建 Java 17 应用；`backend/docker-entrypoint.sh` 读取文件型 secret 后降权运行。镜像构建跳过后端测试，构建成功不能代替业务验证。
+- `backend/Dockerfile`：构建 Java 17 应用。在官方 Alpine 镜像更新前，x86-64 构建从 Adoptium 下载并校验修复 CVE-2026-114938 的 Temurin 17.0.21.1+2；以容器内 `java -version` 核对实际运行时。`backend/docker-entrypoint.sh` 读取文件型 secret 后降权运行。镜像构建跳过后端测试，构建成功不能代替业务验证。
 - `frontend/Dockerfile`：Node 构建 Vue 静态文件，最终由 Caddy 镜像提供页面和反向代理。数据库运行在独立 MySQL 容器，不在前后端镜像内。
 - 生产端口只由 `web` 映射 80、443/TCP 和 443/UDP。`backend` 与 `mysql` 不映射宿主机端口，内部 API 使用 8080。
 - Compose 的逻辑卷为 `mysql_data`、`file_objects`、`caddy_data`、`caddy_config`。实际名称取决于既有 project，升级时必须复用，不能凭新目录名另建一套空卷。
 - `.env` 至少包含 `WORKBENCH_DOMAIN` 和 `WORKBENCH_VERSION`。域名不带协议或路径；生产 Origin 由 Compose 设置为对应 HTTPS 来源。
+- `WORKBENCH_BACKEND_VERSION` 仅用于后端独立发布。启用后，Web 仍使用 `WORKBENCH_VERSION`，生产版本记录附带 `backend_version`。全量发布时从新目录的 `.env` 移除此覆盖项，并用 `dc config --images` 核对前后端都指向新应用版本。
 - 文件型 secret 为 `secrets/db_password`、`secrets/db_root_password`、`secrets/setup_token`。它们只保存在目标机器受限目录，不能提交、回传到聊天或打入镜像。
 - 当前源码迁移最高为 V38，为 `novel_book` 新增可空的 `title`，书架自定义书名与 PDF 页码功能需要前后端配套发布。升级核对原有书目时按 V37 的列计算数据摘要，并单独验证 `title` 初始为 `NULL`。V30–V37 加入 AI 配置、会话与回答版本、服务商、默认模型、多账号连接和网页自定义地址。V25–V29 加入学习来源、词库导入和日历调休与期初余额。NASA 自动同步默认关闭，开启后每 6 小时检查近期最多 5 篇，外网连通性按部署环境核实。发布前从 `database/migrations/` 和现网 Flyway 分别核对源码和实际版本。
 - 在生产启用 AI 设置前，在发布目录之外准备受限、持久化的 Base64 密钥文件，内含 32 个随机字节的编码。服务器 `.env` 的 `PRIVATE_SPACE_AI_ENCRYPTION_KEY_FILE` 指向该文件绝对路径，启用 AI 时为所有新版 Compose 命令在 `-f compose.yml` 后加 `-f compose.ai.yml`。密钥文件和数据库备份分开保管，升级沿用原文件。用 `docker compose ... config --quiet` 校验配置结构，并核对应用读取密钥后的加密就绪状态。
@@ -125,7 +126,7 @@ docker exec "$MYSQL_ID" sh -c '
 
 将旧 `PROD_DIR` 记录为 `OLD_PROD_DIR`。确定新的源码根目录 `NEW_SOURCE_ROOT`、唯一 `VERSION` 和独立备份目录 `BACKUP_DIR`。备份目录必须位于发布目录之外，受限存储，不能被 Web 服务访问。
 
-将旧 `.env` 与 `secrets/` 以原权限复制到新源码的 `deploy/production/`，仅更新副本中的 `WORKBENCH_VERSION`。保留域名及用户已设置的其他选项。核对 `.env` 实际存在且版本不是占位符，不能用 `.env.example` 覆盖生产配置。
+将旧 `.env` 与 `secrets/` 以原权限复制到新源码的 `deploy/production/`。全量发布时更新副本中的 `WORKBENCH_VERSION` 并移除旧的 `WORKBENCH_BACKEND_VERSION` 覆盖项。保留域名及用户已设置的其他选项。核对 `.env` 实际存在且版本不是占位符，不能用 `.env.example` 覆盖生产配置。
 
 设置 `PROD_DIR="$NEW_SOURCE_ROOT/deploy/production"`，继续使用原 `COMPOSE_PROJECT`。执行：
 

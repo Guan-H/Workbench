@@ -38,7 +38,7 @@ services:
     build:
       context: ../..
       dockerfile: backend/Dockerfile
-    image: workbench-backend:${WORKBENCH_VERSION:?Set WORKBENCH_VERSION in .env}
+    image: workbench-backend:${WORKBENCH_BACKEND_VERSION:-${WORKBENCH_VERSION:?Set WORKBENCH_VERSION in .env}}
     restart: unless-stopped
     read_only: true
     tmpfs:
